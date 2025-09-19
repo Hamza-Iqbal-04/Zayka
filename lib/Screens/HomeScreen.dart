@@ -1875,6 +1875,10 @@ class _MenuItemCardState extends State<MenuItemCard> {
 
   @override
   Widget build(BuildContext context) {
+    final bool hasDiscount = widget.item.discountedPrice != null && widget.item.discountedPrice! > 0;
+    final String displayPrice = (hasDiscount ? widget.item.discountedPrice! : widget.item.price).toStringAsFixed(2);
+    final String? originalPriceString = hasDiscount ? widget.item.price.toStringAsFixed(2) : null;
+
     return Consumer<CartService>(
       builder: (context, cartService, _) {
         final itemCount = _getItemCount(cartService);
@@ -1968,13 +1972,29 @@ class _MenuItemCardState extends State<MenuItemCard> {
                               const SizedBox(height: 12),
                               Row(
                                 children: [
-                                  Text(
-                                    'QAR ${widget.item.price.toStringAsFixed(2)}',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.black87,
-                                    ),
+                                  Row(
+                                    children: [
+                                      Text(
+                                        'QAR $displayPrice',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w700,
+                                          color: hasDiscount ? Colors.blue : Colors.black87, // Highlight discounted price
+                                        ),
+                                      ),
+                                      if (originalPriceString != null) ...[
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'QAR $originalPriceString',
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.normal,
+                                            color: Colors.grey,
+                                            decoration: TextDecoration.lineThrough,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
                                   const SizedBox(width: 8),
                                   if (widget.item.offerText != null &&
@@ -2334,6 +2354,7 @@ class MenuItem {
   final String branchId;
   final String categoryId;
   final String description;
+  final double? discountedPrice;
   final String imageUrl;
   final bool isAvailable;
   final bool isPopular;
@@ -2354,6 +2375,7 @@ class MenuItem {
     required this.isPopular,
     required this.name,
     required this.price,
+    this.discountedPrice,
     required this.sortOrder,
     required this.tags,
     this.variants,
@@ -2372,6 +2394,7 @@ class MenuItem {
       isPopular: data['isPopular'] ?? false,
       name: data['name'] ?? '',
       price: (data['price'] ?? 0).toDouble(),
+      discountedPrice: (data['discountedPrice'] as num?)?.toDouble(),
       sortOrder: data['sortOrder'] ?? 0,
       tags: data['tags'] ?? {},
       variants: data['variants'],
