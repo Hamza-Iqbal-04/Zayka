@@ -13,7 +13,8 @@ import 'package:smooth_page_indicator/smooth_page_indicator.dart';
 import 'package:mitra_da_dhaba/Widgets/models.dart';
 import 'package:mitra_da_dhaba/Screens/Profile.dart';
 import 'package:mitra_da_dhaba/Screens/cartScreen.dart';
-// New constant for active chip color
+import 'package:mitra_da_dhaba/Screens/OrderScreen.dart';
+
 const Color kChipActive = AppColors.primaryBlue;
 
 class HomeScreen extends StatefulWidget {
@@ -235,6 +236,50 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           context,
         );
       }
+    }
+  }
+
+  Future<void> _openOrderDetails(String orderId) async {
+    try {
+      // Optional: light haptic
+      HapticFeedback.lightImpact();
+
+      // If desired, guard unauthenticated users by sending them to Orders list
+      final user = _auth.currentUser;
+      if (user == null || user.email == null) {
+        if (!mounted) return;
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const OrdersScreen()));
+        return;
+      }
+
+      // Fetch the full order document so OrderDetailsScreen has all fields it uses
+      final doc = await _firestore.collection('Orders').doc(orderId).get();
+      if (!mounted) return;
+
+      if (!doc.exists) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Order not found')),
+        );
+        // Fallback: open Orders list
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const OrdersScreen()));
+        return;
+      }
+
+      final data = doc.data() as Map<String, dynamic>;
+      final orderMap = {
+        ...data,
+        'id': doc.id, // handy to keep
+      };
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => OrderDetailsScreen(order: orderMap)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to open order details: $e')),
+      );
     }
   }
 
@@ -902,98 +947,102 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildOrderStatusWidget(Order order) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16.0),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            AppColors.primaryBlue.withOpacity(0.95),
-            AppColors.primaryBlue.withOpacity(0.8),
-            AppColors.primaryBlue.withOpacity(0.9),
-          ],
+    return InkWell(
+      onTap: () => _openOrderDetails(order.id),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16.0),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              AppColors.primaryBlue.withOpacity(0.95),
+              AppColors.primaryBlue.withOpacity(0.8),
+              AppColors.primaryBlue.withOpacity(0.9),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white.withOpacity(0.2), width: 1),
         ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.2), width: 1),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: AnimatedBuilder(
-              animation: _bounceAnimation,
-              builder: (context, child) {
-                return Transform.scale(
-                  scale: _bounceAnimation.value,
-                  child: const Icon(
-                    Icons.delivery_dining_rounded,
-                    color: Colors.white,
-                    size: 22,
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _orderStatusMessage,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  height: 6,
-                  clipBehavior: Clip.antiAlias,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 800),
-                    curve: Curves.easeInOutCubic,
-                    width: MediaQuery.of(context).size.width * 0.6 * (_previousProgress ?? 0),
-                    decoration: BoxDecoration(
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: AnimatedBuilder(
+                animation: _bounceAnimation,
+                builder: (context, child) {
+                  return Transform.scale(
+                    scale: _bounceAnimation.value,
+                    child: const Icon(
+                      Icons.delivery_dining_rounded,
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
+                      size: 22,
                     ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              '${((_previousProgress ?? 0) * 100).toInt()}%',
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-                fontSize: 12,
+                  );
+                },
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _orderStatusMessage,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    height: 6,
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 800),
+                      curve: Curves.easeInOutCubic,
+                      width: MediaQuery.of(context).size.width * 0.6 * (_previousProgress ?? 0),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${((_previousProgress ?? 0) * 100).toInt()}%',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

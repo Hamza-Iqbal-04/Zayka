@@ -10,6 +10,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'dart:ui';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({Key? key}) : super(key: key);
@@ -1070,14 +1071,30 @@ class LiveTrackingMap extends StatefulWidget {
   State<LiveTrackingMap> createState() => _LiveTrackingMapState();
 }
 
-class _LiveTrackingMapState extends State<LiveTrackingMap> {
+class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderStateMixin {
   late final MapController _map;
+  late final AnimationController _pulseController;
+  late final Animation<double> _pulseAnimation;
   LatLng? _driverPos;
 
   @override
   void initState() {
     super.initState();
     _map = MapController();
+
+    // Initialize pulse animation for driver marker
+    _pulseController = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    )..repeat();
+
+    _pulseAnimation = Tween<double>(
+      begin: 0.8,
+      end: 1.2,
+    ).animate(CurvedAnimation(
+      parent: _pulseController,
+      curve: Curves.easeInOut,
+    ));
 
     // listen to driver doc for live GPS
     widget.driverRef.snapshots().listen((snap) {
@@ -1086,7 +1103,6 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> {
       if (geo is GeoPoint) {
         final pos = LatLng(geo.latitude, geo.longitude);
         setState(() => _driverPos = pos);
-
         // Schedule after first frame to avoid accessing camera before build
         WidgetsBinding.instance.addPostFrameCallback((_) {
           try {
@@ -1104,23 +1120,64 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> {
     });
   }
 
-  Widget _badge(IconData icon, Color color) {
-    return Container(
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  Widget _modernBadge(IconData icon, Color color, {bool isPulsing = false}) {
+    Widget badge = Container(
       decoration: BoxDecoration(
-        color: Colors.white, // high-contrast background
+        gradient: LinearGradient(
+          colors: [color, color.withOpacity(0.8)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         shape: BoxShape.circle,
-        border: Border.all(color: color, width: 2),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.25),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+            color: color.withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+            spreadRadius: 1,
+          ),
+          BoxShadow(
+            color: Colors.white.withOpacity(0.8),
+            blurRadius: 4,
+            offset: const Offset(0, -1),
+            spreadRadius: 0,
           ),
         ],
       ),
-      padding: const EdgeInsets.all(6),
-      child: Icon(icon, color: color, size: 18),
+      padding: const EdgeInsets.all(8),
+      child: Icon(
+        icon,
+        color: Colors.white,
+        size: 20,
+        shadows: [
+          Shadow(
+            color: Colors.black.withOpacity(0.3),
+            offset: const Offset(1, 1),
+            blurRadius: 2,
+          ),
+        ],
+      ),
     );
+
+    if (isPulsing) {
+      return AnimatedBuilder(
+        animation: _pulseAnimation,
+        builder: (context, child) {
+          return Transform.scale(
+            scale: _pulseAnimation.value,
+            child: badge,
+          );
+        },
+      );
+    }
+
+    return badge;
   }
 
   void _centerOnDriver() {
@@ -1129,34 +1186,92 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> {
     }
   }
 
+  void _fitAllMarkers() {
+    final points = <LatLng>[];
+
+    if (_driverPos != null) points.add(_driverPos!);
+    if (widget.userGeo != null) {
+      points.add(LatLng(widget.userGeo!.latitude, widget.userGeo!.longitude));
+    }
+    if (widget.restaurantGeo != null) {
+      points.add(LatLng(widget.restaurantGeo!.latitude, widget.restaurantGeo!.longitude));
+    }
+
+    if (points.length > 1) {
+      final bounds = LatLngBounds.fromPoints(points);
+      _map.fitCamera(CameraFit.bounds(
+        bounds: bounds,
+        padding: const EdgeInsets.all(50),
+      ));
+    } else if (points.isNotEmpty) {
+      _map.move(points.first, 15);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_driverPos == null) {
-      return const SizedBox(
-        height: 220,
-        child: Center(child: CircularProgressIndicator()),
+      return Container(
+        height: 250,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            colors: [
+              Colors.grey.shade50,
+              Colors.grey.shade100,
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 40,
+                height: 40,
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    Theme.of(context).primaryColor,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Loading driver location...',
+                style: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
-    // ----- build the three markers -----
-    final markers = <Marker>[
+    // Build the markers with enhanced styling
+    final markers = [
       Marker(
-        // driver
+        // Driver marker with pulsing animation
         point: _driverPos!,
-        width: 40,
-        height: 40,
-        child: _badge(Icons.directions_car_filled, Colors.blue),
+        width: 50,
+        height: 50,
+        child: _modernBadge(Icons.directions_car_filled, Colors.blue, isPulsing: true),
       ),
     ];
 
     if (widget.userGeo != null) {
       markers.add(
         Marker(
-          // customer
+          // Customer marker
           point: LatLng(widget.userGeo!.latitude, widget.userGeo!.longitude),
-          width: 40,
-          height: 40,
-          child: _badge(Icons.home, Colors.green),
+          width: 45,
+          height: 45,
+          child: _modernBadge(Icons.home, Colors.green),
         ),
       );
     }
@@ -1164,54 +1279,254 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> {
     if (widget.restaurantGeo != null) {
       markers.add(
         Marker(
-          // restaurant
+          // Restaurant marker
           point: LatLng(
-              widget.restaurantGeo!.latitude, widget.restaurantGeo!.longitude),
-          width: 40,
-          height: 40,
-          child: _badge(Icons.restaurant, Colors.orange),
+              widget.restaurantGeo!.latitude,
+              widget.restaurantGeo!.longitude
+          ),
+          width: 45,
+          height: 45,
+          child: _modernBadge(Icons.restaurant, Colors.orange),
         ),
       );
     }
 
-    return SizedBox(
-      height: 220,
-      child: Stack(
-        children: [
-          FlutterMap(                      // ← existing map
-            mapController: _map,
-            options: MapOptions(
-              initialCenter: _driverPos!,
-              initialZoom: 15,
-              interactionOptions: const InteractionOptions(
-                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
-              ),
-              maxZoom: 18,
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.example.mitra_da_dhaba',
-              ),
-              MarkerLayer(markers: markers),
-            ],
-          ),
-
-          // --- jump-to-driver FAB ---
-          Positioned(
-            right: 8,
-            bottom: 8,
-            child: FloatingActionButton.small(
-              heroTag: null,                 // avoid hero clashes in lists
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.blue,
-              elevation: 2,
-              onPressed: _centerOnDriver,
-              child: const Icon(Icons.my_location),
-            ),
+    return Container(
+      height: 250,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+            spreadRadius: 0,
           ),
         ],
       ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Stack(
+          children: [
+            FlutterMap(
+              mapController: _map,
+              options: MapOptions(
+                initialCenter: _driverPos!,
+                initialZoom: 15,
+                interactionOptions: const InteractionOptions(
+                  flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+                ),
+                maxZoom: 18,
+                minZoom: 10,
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.example.mitra_da_dhaba',
+                ),
+                MarkerLayer(markers: markers),
+              ],
+            ),
+
+            // Modern glass-morphism header overlay - Fixed backdrop filter
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.black.withOpacity(0.4),
+                      Colors.transparent,
+                    ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.9),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: const BoxDecoration(
+                                  color: Colors.green,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Live Tracking',
+                                style: TextStyle(
+                                  color: Colors.grey.shade800,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Modern floating action buttons with glass effect
+            Positioned(
+              right: 12,
+              bottom: 12,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Fit all markers button
+                  if (markers.length > 1) ...[
+                    _modernFloatingButton(
+                      icon: Icons.fullscreen,
+                      onPressed: _fitAllMarkers,
+                      tooltip: 'Fit all locations',
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+
+                  // Center on driver button
+                  _modernFloatingButton(
+                    icon: Icons.my_location,
+                    onPressed: _centerOnDriver,
+                    tooltip: 'Center on driver',
+                  ),
+                ],
+              ),
+            ),
+
+            // Modern legend at bottom left
+            Positioned(
+              left: 12,
+              bottom: 12,
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _legendItem(Icons.directions_car_filled, Colors.blue, 'Driver'),
+                    if (widget.userGeo != null) ...[
+                      const SizedBox(width: 8),
+                      _legendItem(Icons.home, Colors.green, 'You'),
+                    ],
+                    if (widget.restaurantGeo != null) ...[
+                      const SizedBox(width: 8),
+                      _legendItem(Icons.restaurant, Colors.orange, 'Restaurant'),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _modernFloatingButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+    required String tooltip,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          colors: [
+            Colors.white,
+            Colors.grey.shade50,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+            spreadRadius: 0,
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(25),
+          child: Container(
+            width: 50,
+            height: 50,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              icon,
+              color: Colors.grey.shade700,
+              size: 24,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _legendItem(IconData icon, Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 16,
+          height: 16,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            icon,
+            color: Colors.white,
+            size: 10,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.grey.shade700,
+            fontSize: 10,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
     );
   }
 }
