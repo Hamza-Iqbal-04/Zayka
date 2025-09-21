@@ -289,15 +289,12 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Future<void> _loadEstimatedTime() async {
-    final time = await _restaurantService.getEstimatedTime(_currentBranchId);
+    final time = await _restaurantService.getDynamicEtaForUser(_currentBranchId);
     if (mounted) {
       setState(() => _estimatedTime = time);
     }
   }
 
-  /// --- FIX 1: LAYOUT ---
-  /// The entire build method is replaced with a `Stack`-based layout.
-  /// This robustly handles the floating checkout bar without causing layout gaps or crashes.
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -496,6 +493,7 @@ class _CartScreenState extends State<CartScreen> {
           onTap: () {
             _showAddressBottomSheet((label, fullAddress) {
               setState(() {});
+              _loadEstimatedTime();
             });
           },
           borderRadius: BorderRadius.circular(12),
@@ -999,6 +997,7 @@ class _CartScreenState extends State<CartScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: AppColors.white,
         shape:
         RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text('Clear Cart?', style: AppTextStyles.headline2),

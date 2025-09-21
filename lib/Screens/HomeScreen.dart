@@ -396,66 +396,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _loadEstimatedTime() async {
-    String estimatedTimeString = 'Calculating...';
-    try {
-      final branchDoc = await FirebaseFirestore.instance.collection('Branch').doc(_currentBranchId).get();
-      if (!branchDoc.exists) throw Exception("Branch not found");
-
-      final branchData = branchDoc.data();
-      final addressData = branchData?['address'];
-      if (addressData == null || addressData is! Map) throw Exception("Branch address invalid");
-
-      final storeGeolocationField = addressData['geolocation'];
-      if (storeGeolocationField == null || storeGeolocationField is! GeoPoint) throw Exception("Branch geolocation invalid");
-
-      final double storeLatitude = storeGeolocationField.latitude;
-      final double storeLongitude = storeGeolocationField.longitude;
-
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null || user.email == null) throw Exception("User not logged in");
-
-      final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
-      if (!userDoc.exists) throw Exception("User data not found");
-
-      final userData = userDoc.data();
-      final userAddressesList = userData?['address'] as List?;
-      if (userAddressesList == null || userAddressesList.isEmpty) throw Exception("No user addresses");
-
-      Map<String, dynamic>? defaultAddressMap;
-      try {
-        defaultAddressMap = userAddressesList
-            .firstWhere((addr) => addr is Map && addr['isDefault'] == true)
-            .cast<String, dynamic>();
-      } catch (e) {
-        defaultAddressMap = userAddressesList.isNotEmpty && userAddressesList.first is Map
-            ? Map<String, dynamic>.from(userAddressesList.first as Map)
-            : null;
-      }
-
-      if (defaultAddressMap == null) throw Exception("No default address");
-
-      final userGeolocationField = defaultAddressMap['geolocation'];
-      if (userGeolocationField == null || userGeolocationField is! GeoPoint) throw Exception("User address geolocation invalid");
-
-      final double userLatitude = userGeolocationField.latitude;
-      final double userLongitude = userGeolocationField.longitude;
-      final double distanceInMeters = Geolocator.distanceBetween(userLatitude, userLongitude, storeLatitude, storeLongitude);
-
-      const double basePrepTimeMinutes = 15.0;
-      const double averageSpeedMetersPerMinute = 300.0;
-      final double travelTimeMinutes = distanceInMeters / averageSpeedMetersPerMinute;
-      int totalEstimatedTimeMinutes = (basePrepTimeMinutes + travelTimeMinutes).round().clamp(15, 120);
-
-      estimatedTimeString = '$totalEstimatedTimeMinutes mins';
-    } catch (e) {
-      debugPrint("Error calculating estimated time: $e");
-      estimatedTimeString = '40 mins';
-    }
-
+    final service = RestaurantService();
+    final time = await service.getDynamicEtaForUser(_currentBranchId);
     if (mounted) {
-      setState(() {
-        _estimatedTime = estimatedTimeString;
-      });
+      setState(() => _estimatedTime = time);
     }
   }
 
@@ -2383,18 +2327,77 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
 class RestaurantService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  Future<String> getEstimatedTime(String branchId) async {
+  Future<String> getDynamicEtaForUser(String branchId) async {
+    String result = 'Calculating...';
     try {
-      final doc = await _firestore.collection('Branch').doc(branchId).get();
-      if (doc.exists) {
-        final data = doc.data();
-        return '${data?['estimatedTime'] ?? 40} minutes';
+      // Branch geolocation
+      final branchDoc =
+      await FirebaseFirestore.instance.collection('Branch').doc(branchId).get();
+      if (!branchDoc.exists) throw Exception('Branch not found');
+      final branchData = branchDoc.data();
+      final addressData = branchData?['address'];
+      if (addressData == null || addressData is! Map) {
+        throw Exception('Branch address invalid');
       }
-      return '40 minutes';
+      final storeGeolocationField = addressData['geolocation'];
+      if (storeGeolocationField == null || storeGeolocationField is! GeoPoint) {
+        throw Exception('Branch geolocation invalid');
+      }
+      final double storeLatitude = storeGeolocationField.latitude;
+      final double storeLongitude = storeGeolocationField.longitude;
+
+      // User default address geolocation
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null || user.email == null) throw Exception('User not logged in');
+      final userDoc =
+      await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
+      if (!userDoc.exists) throw Exception('User data not found');
+      final userData = userDoc.data();
+      final userAddressesList = userData?['address'] as List?;
+      if (userAddressesList == null || userAddressesList.isEmpty) {
+        throw Exception('No user addresses');
+      }
+
+      Map<String, dynamic>? defaultAddressMap;
+      try {
+        defaultAddressMap = userAddressesList
+            .firstWhere((addr) => addr is Map && (addr['isDefault'] == true))
+            .cast<String, dynamic>();
+      } catch (_) {
+        defaultAddressMap = userAddressesList.isNotEmpty &&
+            userAddressesList.first is Map
+            ? Map<String, dynamic>.from(userAddressesList.first as Map)
+            : null;
+      }
+      if (defaultAddressMap == null) throw Exception('No default address');
+
+      final userGeolocationField = defaultAddressMap['geolocation'];
+      if (userGeolocationField == null || userGeolocationField is! GeoPoint) {
+        throw Exception('User address geolocation invalid');
+      }
+      final double userLatitude = userGeolocationField.latitude;
+      final double userLongitude = userGeolocationField.longitude;
+
+      // Distance-based ETA
+      final double distanceInMeters = Geolocator.distanceBetween(
+        userLatitude,
+        userLongitude,
+        storeLatitude,
+        storeLongitude,
+      );
+
+      const double basePrepTimeMinutes = 15.0;
+      const double averageSpeedMetersPerMinute = 300.0;
+      final double travelTimeMinutes = distanceInMeters / averageSpeedMetersPerMinute;
+
+      int totalEstimatedTimeMinutes =
+      (basePrepTimeMinutes + travelTimeMinutes).round().clamp(15, 120);
+      result = '$totalEstimatedTimeMinutes mins';
     } catch (e) {
-      debugPrint('Error getting estimated time: $e');
-      return '40 minutes';
+      debugPrint('Error calculating dynamic ETA: $e');
+      result = '40 mins';
     }
+    return result;
   }
 }
 
