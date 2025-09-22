@@ -574,14 +574,11 @@ class _OrderScreenState extends State<OrdersScreen> {
 
 class OrderDetailsScreen extends StatelessWidget {
   final Map<String, dynamic> order;
-
   const OrderDetailsScreen({Key? key, required this.order}) : super(key: key);
 
   void _reorderItems(BuildContext context) {
     final cartService = Provider.of<CartService>(context, listen: false);
-    final items =
-        (order['items'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
-
+    final items = (order['items'] as List? ?? []).cast<Map<String, dynamic>>();
     if (items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('This order has no items to reorder.')),
@@ -592,8 +589,7 @@ class OrderDetailsScreen extends StatelessWidget {
     for (var itemData in items) {
       final dynamic rawAddons = itemData['addons'];
       final List<String> addonsList =
-          rawAddons is List ? rawAddons.map((e) => e.toString()).toList() : [];
-
+      rawAddons is List ? rawAddons.map((e) => e.toString()).toList() : [];
       final menuItem = MenuItem(
         id: itemData['itemId'] ?? UniqueKey().toString(),
         name: itemData['name'] ?? 'Unknown Item',
@@ -608,7 +604,6 @@ class OrderDetailsScreen extends StatelessWidget {
         tags: itemData['tags'] as Map<String, dynamic>? ?? {},
         variants: itemData['variants'] as Map<String, dynamic>? ?? {},
       );
-
       cartService.addToCart(
         menuItem,
         quantity: (itemData['quantity'] as num?)?.toInt() ?? 1,
@@ -628,18 +623,13 @@ class OrderDetailsScreen extends StatelessWidget {
     required String rawPhoneE164NoPlus, // e.g., "9745XXXXXXXX" (no +, no spaces)
     required String message,
   }) async {
-    // Normalize to digits only as per WhatsApp Click-to-Chat requirements
     final phone = rawPhoneE164NoPlus.replaceAll(RegExp(r'[^0-9]'), '');
-
-    // App scheme first (Android/iOS). If not available, fallback to wa.me universal link.
     final appUri = Uri.parse(
       'whatsapp://send?phone=$phone&text=${Uri.encodeComponent(message)}',
     );
     final webUri = Uri.parse(
       'https://wa.me/$phone?text=${Uri.encodeComponent(message)}',
     );
-
-    // Prefer opening the app directly when possible, else use universal link.
     if (await canLaunchUrl(appUri)) {
       await launchUrl(appUri, mode: LaunchMode.externalApplication);
     } else {
@@ -660,20 +650,20 @@ class OrderDetailsScreen extends StatelessWidget {
       builder: (context) {
         return Padding(
           padding:
-              EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
           child: Container(
             padding: const EdgeInsets.all(24),
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(20), topRight: Radius.circular(20)),
+              borderRadius:
+              BorderRadius.only(topLeft: Radius.circular(20), topRight: Radius.circular(20)),
             ),
             child: Wrap(
               runSpacing: 20,
               children: [
                 Text('Contact Support about order #$orderId',
-                    style: const TextStyle(
-                        fontSize: 20, fontWeight: FontWeight.bold)),
+                    style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 Form(
                   key: formKey,
                   child: TextFormField(
@@ -681,12 +671,12 @@ class OrderDetailsScreen extends StatelessWidget {
                     decoration: InputDecoration(
                       hintText: 'Describe your issue...',
                       border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                     maxLines: 4,
-                    validator: (value) => (value == null || value.isEmpty)
-                        ? 'Please enter your message'
-                        : null,
+                    validator: (value) =>
+                    (value == null || value.isEmpty) ? 'Please enter your message' : null,
                   ),
                 ),
                 SizedBox(
@@ -708,14 +698,15 @@ class OrderDetailsScreen extends StatelessWidget {
                           if (context.mounted) {
                             Navigator.pop(context);
                             ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content:
-                                        Text('Your message has been sent.')));
+                              const SnackBar(content: Text('Your message has been sent.')),
+                            );
                           }
                         } catch (e) {
-                          if (context.mounted)
+                          if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Error: $e')));
+                              SnackBar(content: Text('Error: $e')),
+                            );
+                          }
                         }
                       }
                     },
@@ -723,8 +714,8 @@ class OrderDetailsScreen extends StatelessWidget {
                       backgroundColor: AppColors.primaryBlue,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                      shape:
+                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                     child: const Text('SEND MESSAGE'),
                   ),
@@ -738,28 +729,44 @@ class OrderDetailsScreen extends StatelessWidget {
   }
 
   Future<GeoPoint?> _fetchRestaurantGeo(String branchId) async {
-    final doc = await FirebaseFirestore.instance
-        .collection('Branch')
-        .doc(branchId)
-        .get();
+    final doc =
+    await FirebaseFirestore.instance.collection('Branch').doc(branchId).get();
     return doc.data()?['address']?['geolocation'] as GeoPoint?;
+  }
+
+  // New: helper to launch dialer with tel: scheme
+  Future<void> _callDriver(String rawPhone, BuildContext context) async {
+    final phone = rawPhone.replaceAll(RegExp(r'[^0-9+]'), '');
+    final uri = Uri(scheme: 'tel', path: phone);
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the dialer')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final items =
-        (order['items'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    final items = (order['items'] as List? ?? []).cast<Map<String, dynamic>>();
     final status = order['status'] as String? ?? 'pending';
     final statusColor = _getStatusColor(status);
     final orderId = order['orderId'] as String? ?? '';
     final riderId = order['riderId'] as String? ?? '';
-
     final bool showMap =
         riderId.isNotEmpty && status != 'delivered' && status != 'cancelled';
-
+    final bool showDriverInfo =
+        riderId.isNotEmpty && status != 'delivered' && status != 'cancelled';
     final userGeo = order['deliveryAddress']?['geolocation'] as GeoPoint?;
-    final branchId = order['restaurantId'] as String? ??
-        'Old_Airport'; // or whatever is stored in the order
+    final branchId = order['restaurantId'] as String? ?? 'Old_Airport';
     final restaurantGeoFuture = _fetchRestaurantGeo(branchId);
 
     Widget liveMapSection = const SizedBox.shrink();
@@ -787,6 +794,92 @@ class OrderDetailsScreen extends StatelessWidget {
       );
     }
 
+    // New: driver details section wrapped with the same card UI
+    Widget driverDetailsSection = const SizedBox.shrink();
+    if (showDriverInfo) {
+      driverDetailsSection =
+          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('Drivers')
+              .doc(riderId)
+              .snapshots(),
+          builder: (context, snap) {
+            if (!snap.hasData || !(snap.data?.exists ?? false)) {
+              return const SizedBox.shrink();
+            }
+            final data = snap.data!.data()!;
+            final name = (data['name'] as String?)?.trim().isNotEmpty == true
+                ? (data['name'] as String)
+                : 'Driver';
+            final phone = (data['phone'] ?? '').toString();
+            final imageUrl = (data['profileImageUrl'] as String?) ?? '';
+
+            return _buildSectionCard(
+              title: 'Driver Details',
+              children: [
+                Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 24,
+                      backgroundColor: Colors.grey.shade200,
+                      backgroundImage:
+                      imageUrl.isNotEmpty ? NetworkImage(imageUrl) : null,
+                      child: imageUrl.isEmpty
+                          ? const Icon(Icons.person, color: Colors.grey)
+                          : null,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            phone.isEmpty ? 'No phone available' : phone,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey.shade700,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton.icon(
+                      onPressed:
+                      phone.isEmpty ? null : () => _callDriver(phone, context),
+                      icon: const Icon(Icons.phone, size: 18),
+                      label: const Text('CALL'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryBlue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 10,
+                          horizontal: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+          );
+    }
+
     return Scaffold(
       backgroundColor: Colors.grey[100],
       body: CustomScrollView(
@@ -798,10 +891,7 @@ class OrderDetailsScreen extends StatelessWidget {
             foregroundColor: Colors.white,
             elevation: 0,
             flexibleSpace: FlexibleSpaceBar(
-              // --- CHANGE HERE ---
-              // Added titlePadding to create more space between the title and the bottom banner.
-              titlePadding:
-                  const EdgeInsets.only(left: 16, right: 16, bottom: 60),
+              titlePadding: const EdgeInsets.only(left: 16, right: 16, bottom: 60),
               title: Text(
                 'Order #${orderId.split('-').last.padLeft(3, '0')}',
                 style: const TextStyle(
@@ -820,9 +910,10 @@ class OrderDetailsScreen extends StatelessWidget {
                   child: Text(
                     _formatOrderStatus(status).toUpperCase(),
                     style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.2),
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.2,
+                    ),
                   ),
                 ),
               ),
@@ -833,12 +924,19 @@ class OrderDetailsScreen extends StatelessWidget {
             sliver: SliverList(
               delegate: SliverChildListDelegate([
                 liveMapSection,
+                if (showDriverInfo) ...[
+                  driverDetailsSection,
+                  const SizedBox(height: 16),
+                ],
                 _buildSectionCard(
-                    title: 'Order Items', children: _buildOrderItems(items)),
+                  title: 'Order Items',
+                  children: _buildOrderItems(items),
+                ),
                 const SizedBox(height: 16),
                 _buildSectionCard(
-                    title: 'Payment Summary',
-                    children: [_buildPaymentSummary()]),
+                  title: 'Payment Summary',
+                  children: [_buildPaymentSummary()],
+                ),
                 const SizedBox(height: 16),
               ]),
             ),
@@ -851,15 +949,14 @@ class OrderDetailsScreen extends StatelessWidget {
 
   // --- ALL HELPER WIDGETS ARE INCLUDED ---
 
-  Widget _buildSectionCard(
-      {required String title, required List<Widget> children}) {
+  Widget _buildSectionCard({required String title, required List<Widget> children}) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
         ],
       ),
       child: Column(
@@ -867,9 +964,7 @@ class OrderDetailsScreen extends StatelessWidget {
         children: [
           Text(title.toUpperCase(),
               style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey)),
+                  fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey)),
           const Divider(height: 24),
           ...children,
         ],
@@ -885,7 +980,6 @@ class OrderDetailsScreen extends StatelessWidget {
       final price = (item['price'] as num?)?.toDouble() ?? 0.0;
       final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
       final itemTotal = price * quantity;
-
       return Padding(
         padding: const EdgeInsets.only(bottom: 12.0),
         child: Row(
@@ -894,8 +988,7 @@ class OrderDetailsScreen extends StatelessWidget {
             Expanded(
               child: Text(
                 '$quantity x ${item['name'] ?? 'Item'}',
-                style:
-                    const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
               ),
             ),
             Text(
@@ -911,7 +1004,6 @@ class OrderDetailsScreen extends StatelessWidget {
   Widget _buildPaymentSummary() {
     final subtotal = (order['subtotal'] as num?)?.toDouble() ?? 0.0;
     final totalAmount = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
-
     return Column(
       children: [
         _buildPriceRow('Subtotal', subtotal),
@@ -920,17 +1012,15 @@ class OrderDetailsScreen extends StatelessWidget {
       ],
     );
   }
-  // OrderDetailsScreen (near the bottom of the file)
 
   String _formatOrderType(String? raw) {
     if (raw == null || raw.isEmpty) return 'Order';
     final pretty = raw
         .replaceAll('_', ' ')
         .split(' ')
-        .map(
-            (w) => w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '')
+        .map((w) => w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '')
         .join(' ');
-    return pretty; // e.g. "take_away" → "Take Away"
+    return pretty;
   }
 
   Widget _buildPriceRow(String label, double amount, {bool isBold = false}) {
@@ -961,9 +1051,10 @@ class OrderDetailsScreen extends StatelessWidget {
           const SizedBox(width: 16),
           Text(title, style: TextStyle(fontSize: 15, color: Colors.grey[700])),
           const Spacer(),
-          Text(value,
-              style:
-                  const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+          ),
         ],
       ),
     );
@@ -972,7 +1063,11 @@ class OrderDetailsScreen extends StatelessWidget {
   Widget _buildActionButtons(BuildContext context) {
     return Container(
       padding: EdgeInsets.fromLTRB(
-          16, 16, 16, MediaQuery.of(context).padding.bottom + 16),
+        16,
+        16,
+        16,
+        MediaQuery.of(context).padding.bottom + 16,
+      ),
       color: Colors.white,
       child: Row(
         children: [
@@ -985,35 +1080,43 @@ class OrderDetailsScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12)),
                 side: BorderSide(color: Colors.grey.shade300),
               ),
-              child: const Text('REORDER',
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold, color: Colors.black87)),
+              child: const Text(
+                'REORDER',
+                style:
+                TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
+              ),
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: ElevatedButton.icon(
               onPressed: () {
-                final dailyOrderNumber = order['dailyOrderNumber']?.toString() ?? '';
-                const supportNumber = '919152822169'; // E.164 digits only, no '+' or spaces
+                final dailyOrderNumber =
+                    order['dailyOrderNumber']?.toString() ?? '';
+                const supportNumber =
+                    '919152822169'; // E.164 digits only, no '+' or spaces
                 final msg = 'Hello, I need help with order #$dailyOrderNumber';
                 _contactOnWhatsApp(
                   rawPhoneE164NoPlus: supportNumber,
                   message: msg,
                 );
               },
-              icon: const FaIcon(FontAwesomeIcons.whatsapp, color: Colors.white, size: 18),
+              icon: const FaIcon(
+                FontAwesomeIcons.whatsapp,
+                color: Colors.white,
+                size: 18,
+              ),
               label: const Text('CONTACT US'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF25D366), // WhatsApp light green
+                backgroundColor: const Color(0xFF25D366),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 elevation: 0,
               ),
             ),
           ),
-
         ],
       ),
     );
