@@ -3,7 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:webview_flutter/webview_flutter.dart';
-import 'models.dart';
+import '../Widgets/models.dart';
 
 class PaymentService {
   static const String _apiKey = '3ebee910-5232-488b-a7c0-6d5dbcd67a32';

@@ -1,87 +1,127 @@
+// bottom_nav.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:convex_bottom_bar/convex_bottom_bar.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // For SystemNavigator.pop()
+import 'package:mitra_da_dhaba/Screens/Profile.dart';
 import 'package:provider/provider.dart';
 import 'package:mitra_da_dhaba/Screens/CouponsScreen.dart';
-import 'package:mitra_da_dhaba/Screens/DineInScreen.dart';
 import 'package:mitra_da_dhaba/Screens/HomeScreen.dart';
 import 'package:mitra_da_dhaba/Screens/OrderScreen.dart';
-import 'package:mitra_da_dhaba/Screens/Takeaway Screen.dart';
 import 'package:mitra_da_dhaba/Screens/cartScreen.dart';
 import 'models.dart';
 
 class MainApp extends StatefulWidget {
-  const MainApp({Key? key}) : super(key: key);
+  final int? initialIndex;
+  const MainApp({Key? key, this.initialIndex}) : super(key: key);
+
   @override
   State<MainApp> createState() => _MainAppState();
 }
 
 class _MainAppState extends State<MainApp> {
-  int _currentIndex = 0;
+  late int _currentIndex;
   final String _currentBranchId = 'Old_Airport';
 
   @override
+  void initState() {
+    super.initState();
+    // Use initialIndex if provided, otherwise default to 0
+    _currentIndex = widget.initialIndex ?? 0;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final cart = Provider.of<CartService>(context, listen: false);   // OK here
+    final cartService = Provider.of<CartService>(context, listen: false);
 
     final screens = <Widget>[
       HomeScreen(),
       const OrdersScreen(),
-      CouponsScreen(cartService: cart),                               // Offers
-      const TakeAwayScreen(),
-      const DineInScreen(),
+      CouponsScreen(cartService: cartService), // Offers
+      const CartScreen(),
+      const ProfileScreen(),
     ];
 
-    return StreamBuilder<DocumentSnapshot>(
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance
           .collection('Branch')
           .doc(_currentBranchId)
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
-        }
-        if (snapshot.hasError) {
-          return Scaffold(body: Center(child: Text('Error: ${snapshot.error}')));
-        }
-        if (!snapshot.hasData || !snapshot.data!.exists) {
-          return const Scaffold(body: Center(child: Text('Branch not found')));
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
         }
 
-        final data = snapshot.data!.data() as Map<String, dynamic>;
+        if (snapshot.hasError) {
+          return Scaffold(
+            body: Center(child: Text('Error: ${snapshot.error}')),
+          );
+        }
+
+        if (!snapshot.hasData || !snapshot.data!.exists) {
+          return const Scaffold(
+            body: Center(child: Text('Branch not found')),
+          );
+        }
+
+        final data = snapshot.data!.data()!;
         final bool isOpen = data['isOpen'] ?? true;
         if (!isOpen) return const ClosedRestaurantScreen();
 
-        return Scaffold(
-          extendBody: true, // let body show under the bulged center [4]
-          body: IndexedStack(index: _currentIndex, children: screens),
-          // IMPORTANT: no ClipRRect around the bar [16]
-          bottomNavigationBar: ConvexAppBar(
-            style: TabStyle.fixedCircle,                          // center bulge [29]
-            height: 64,
-            curveSize: 90,
-            top: -28,
-            cornerRadius: 20,                                      // rounded top, no ClipRRect [29]
-            backgroundColor: Colors.white,
-            color: Colors.grey,                               // other tabs (unselected) [7]
-            activeColor: AppColors.primaryBlue,                    // other tabs (selected) [7]
-            items: [
-              const TabItem(icon: Icons.home_outlined, title: 'Home'),
-              const TabItem(icon: Icons.newspaper_outlined, title: 'Orders'),
-              // Center tab: always-blue circle
-              TabItem(
-                title: 'Offers',
-                icon: _offersIcon(),            // same for both states -> always blue [29]
-                activeIcon: _offersIcon(),      // prevent tint change [29]
-              ),
-              const TabItem(icon: Icons.takeout_dining_outlined, title: 'Pick Up'),
-              const TabItem(icon: Icons.local_restaurant_outlined, title: 'Dine In'),
-            ],
-            initialActiveIndex: _currentIndex,
-            onTap: (i) => setState(() => _currentIndex = i),
+        // Wrap main Scaffold with PopScope to handle Android back properly.
+        // Behavior:
+        // - If not on Home (index != 0): switch to Home and consume back.
+        // - If already on Home (index == 0): minimize app to Android launcher.
+        return PopScope(
+          // Prevent Navigator from popping this route; handle back manually.
+          canPop: false,
+          onPopInvoked: (didPop) {
+            // didPop will be false because canPop is false.
+            if (_currentIndex != 0) {
+              setState(() => _currentIndex = 0);
+              return;
+            }
+            // Already on Home: send app to background (Android launcher).
+            SystemNavigator.pop();
+          },
+          child: Scaffold(
+            extendBody: true,
+            body: IndexedStack(index: _currentIndex, children: screens),
+            bottomNavigationBar:
+            Consumer<CartService>(builder: (context, cart, child) {
+              return ConvexAppBar(
+                style: TabStyle.fixedCircle,
+                height: 64,
+                curveSize: 90,
+                top: -28,
+                cornerRadius: 20,
+                backgroundColor: Colors.white,
+                color: Colors.grey,
+                activeColor: AppColors.primaryBlue,
+                items: [
+                  const TabItem(icon: Icons.home_outlined, title: 'Home'),
+                  const TabItem(icon: Icons.newspaper_outlined, title: 'Orders'),
+                  // Center tab: always-blue circle
+                  TabItem(
+                    title: 'Offers',
+                    icon: _offersIcon(),
+                    activeIcon: _offersIcon(),
+                  ),
+                  // Cart tab with badge
+                  TabItem(
+                    icon: _cartIconWithBadge(cart.itemCount),
+                    title: 'Cart',
+                  ),
+                  const TabItem(icon: Icons.person, title: 'Profile'),
+                ],
+                initialActiveIndex: _currentIndex,
+                onTap: (i) => setState(() => _currentIndex = i),
+              );
+            }),
           ),
         );
-
       },
     );
   }
@@ -91,22 +131,46 @@ class _MainAppState extends State<MainApp> {
     height: 48,
     decoration: BoxDecoration(
       shape: BoxShape.circle,
-      color: AppColors.primaryBlue,                       // always blue
-      border: Border.all(color: Colors.white, width: 6),  // white ring
-      boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 2))],
+      color: AppColors.primaryBlue,
+      border: Border.all(color: Colors.white, width: 6),
+      boxShadow: const [
+        BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 2))
+      ],
     ),
     child: const Icon(Icons.local_offer, color: Colors.white, size: 22),
   );
 
-  Widget _decoratedIcon(IconData icon, int index) {
-    final isActive = _currentIndex == index;
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: isActive ? AppColors.primaryBlue.withOpacity(0.2) : Colors.transparent,
-      ),
-      child: Icon(icon, size: 24, color: isActive ? AppColors.primaryBlue : null),
+  Widget _cartIconWithBadge(int itemCount) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        const Icon(Icons.shopping_cart, size: 24),
+        if (itemCount > 0)
+          Positioned(
+            right: -4,
+            top: -4,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: const BoxDecoration(
+                color: Colors.red,
+                shape: BoxShape.circle,
+              ),
+              constraints: const BoxConstraints(
+                minWidth: 16,
+                minHeight: 16,
+              ),
+              child: Text(
+                itemCount > 9 ? '9+' : itemCount.toString(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -135,7 +199,7 @@ class ClosedRestaurantScreen extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(
-                  Icons.lock_clock_rounded, // Modern closed icon
+                  Icons.lock_clock_rounded,
                   size: 80,
                   color: AppColors.primaryBlue,
                 ),
@@ -162,7 +226,6 @@ class ClosedRestaurantScreen extends StatelessWidget {
                 const SizedBox(height: 32),
                 ElevatedButton.icon(
                   onPressed: () {
-                    // Refresh the app or re-check status (forces a rebuild)
                     Navigator.pushReplacement(
                       context,
                       MaterialPageRoute(builder: (context) => const MainApp()),
@@ -173,8 +236,11 @@ class ClosedRestaurantScreen extends StatelessWidget {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryBlue,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
               ],
@@ -185,4 +251,3 @@ class ClosedRestaurantScreen extends StatelessWidget {
     );
   }
 }
-

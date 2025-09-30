@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../Widgets/bottom_nav.dart';
 import 'cartScreen.dart';
 import '../Screens/HomeScreen.dart';
 import '../Widgets/models.dart';
@@ -205,11 +206,8 @@ class _OrderScreenState extends State<OrdersScreen> {
   }
 
   void _navigateToOrderDetails(Map<String, dynamic> order) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => OrderDetailsScreen(order: order),
-      ),
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 3)),
     );
   }
 
@@ -544,12 +542,8 @@ class _OrderScreenState extends State<OrdersScreen> {
                             .toList(),
                       );
                     }
-
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const CartScreen(),
-                      ),
+                    Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 3)),
                     );
                   },
                   icon: const Icon(Icons.replay, size: 18),
@@ -612,8 +606,9 @@ class OrderDetailsScreen extends StatelessWidget {
       );
     }
 
-    Navigator.push(
-        context, MaterialPageRoute(builder: (context) => const CartScreen()));
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 3)),
+    );
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Items added to your cart!')),
     );

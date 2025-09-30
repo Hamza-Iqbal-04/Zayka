@@ -123,27 +123,42 @@ class CartModel {
   final String name;
   final String imageUrl;
   final double price;
+  final double? discountedPrice;
   int quantity;
   final Map<String, dynamic> variants;
   final List<String>? addons;
-  String? couponCode;  // Changed from final to mutable
-  double? couponDiscount; // Changed from final to mutable
-  String? couponId;  // Changed from final to mutable
+  String? couponCode;
+  String? couponId;
+  double? couponDiscount;
 
   CartModel({
     required this.id,
     required this.name,
     required this.imageUrl,
     required this.price,
-    this.quantity = 1,
+    required this.quantity,
+    this.discountedPrice,
     this.variants = const {},
     this.addons,
     this.couponCode,
-    this.couponDiscount,
     this.couponId,
+    this.couponDiscount,
   });
 
-  double get totalPrice => (price * quantity) - (couponDiscount ?? 0);
+  // CORRECTED: This getter should use discountedPrice when available
+  double get finalPrice {
+    return discountedPrice ?? price;
+  }
+
+  // CORRECTED: This should use finalPrice for total calculation
+  double get total {
+    double baseTotal = finalPrice * quantity;
+    // Subtract coupon discount if applied
+    if (couponDiscount != null) {
+      baseTotal -= couponDiscount!;
+    }
+    return baseTotal.clamp(0, double.infinity);
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -151,27 +166,29 @@ class CartModel {
       'name': name,
       'imageUrl': imageUrl,
       'price': price,
+      'discountedPrice': discountedPrice,
       'quantity': quantity,
       'variants': variants,
       'addons': addons,
       'couponCode': couponCode,
-      'couponDiscount': couponDiscount,
       'couponId': couponId,
+      'couponDiscount': couponDiscount,
     };
   }
 
   factory CartModel.fromMap(Map<String, dynamic> map) {
     return CartModel(
-      id: map['id'],
-      name: map['name'],
-      imageUrl: map['imageUrl'],
-      price: map['price'].toDouble(),
-      quantity: map['quantity'],
-      variants: map['variants'] ?? {},
+      id: map['id'] ?? '',
+      name: map['name'] ?? '',
+      imageUrl: map['imageUrl'] ?? '',
+      price: (map['price'] ?? 0).toDouble(),
+      discountedPrice: map['discountedPrice']?.toDouble(),
+      quantity: map['quantity'] ?? 1,
+      variants: Map<String, dynamic>.from(map['variants'] ?? {}),
       addons: map['addons'] != null ? List<String>.from(map['addons']) : null,
       couponCode: map['couponCode'],
-      couponDiscount: map['couponDiscount']?.toDouble(),
       couponId: map['couponId'],
+      couponDiscount: map['couponDiscount']?.toDouble(),
     );
   }
 }

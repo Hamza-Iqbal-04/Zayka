@@ -8,12 +8,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:collection/collection.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:smooth_page_indicator/smooth_page_indicator.dart';
 import 'package:mitra_da_dhaba/Widgets/models.dart';
 import 'package:mitra_da_dhaba/Screens/Profile.dart';
 import 'package:mitra_da_dhaba/Screens/cartScreen.dart';
 import 'package:mitra_da_dhaba/Screens/OrderScreen.dart';
+
+import '../Widgets/bottom_nav.dart';
 
 const Color kChipActive = AppColors.primaryBlue;
 
@@ -1119,77 +1122,77 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ),
                   ),
                 ),
-                actions: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 12.0),
-                    child: Builder(
-                      builder: (context) {
-                        final userEmail = FirebaseAuth.instance.currentUser?.email;
-                        if (userEmail == null) {
-                          return GestureDetector(
-                            onTap: () {
-                              Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen()));
-                            },
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(14),
-                              child: BackdropFilter(
-                                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                                child: Container(
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.75),
-                                    borderRadius: BorderRadius.circular(14),
-                                    border: Border.all(color: const Color(0xFF1E88E5).withOpacity(0.12), width: 1.5),
-                                  ),
-                                  child: const CircleAvatar(
-                                    radius: 14,
-                                    backgroundColor: Color(0x261E88E5),
-                                    child: Icon(Icons.person, color: Colors.blue, size: 18),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          );
-                        }
-                        return StreamBuilder<DocumentSnapshot>(
-                          stream: FirebaseFirestore.instance.collection('Users').doc(userEmail).snapshots(),
-                          builder: (context, snap) {
-                            String? imageUrl;
-                            if (snap.hasData && snap.data!.exists) {
-                              final data = snap.data!.data() as Map<String, dynamic>?;
-                              imageUrl = data?['imageUrl'] as String?;
-                            }
-                            return GestureDetector(
-                              onTap: () {
-                                Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen()));
-                              },
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(14),
-                                child: BackdropFilter(
-                                  filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(6),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(0.75),
-                                      borderRadius: BorderRadius.circular(14),
-                                      border: Border.all(color: const Color(0xFF1E88E5).withOpacity(0.12), width: 1.5),
-                                    ),
-                                    child: CircleAvatar(
-                                      radius: 14,
-                                      backgroundColor: Colors.blue.withOpacity(0.15),
-                                      backgroundImage: (imageUrl != null && imageUrl.isNotEmpty) ? CachedNetworkImageProvider(imageUrl) : null,
-                                      child: (imageUrl == null || imageUrl.isEmpty) ? const Icon(Icons.person, color: Colors.blue, size: 18) : null,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ],
+                // actions: [
+                //   Padding(
+                //     padding: const EdgeInsets.only(right: 12.0),
+                //     child: Builder(
+                //       builder: (context) {
+                //         final userEmail = FirebaseAuth.instance.currentUser?.email;
+                //         if (userEmail == null) {
+                //           return GestureDetector(
+                //             onTap: () {
+                //               Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen()));
+                //             },
+                //             child: ClipRRect(
+                //               borderRadius: BorderRadius.circular(14),
+                //               child: BackdropFilter(
+                //                 filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                //                 child: Container(
+                //                   padding: const EdgeInsets.all(6),
+                //                   decoration: BoxDecoration(
+                //                     color: Colors.white.withOpacity(0.75),
+                //                     borderRadius: BorderRadius.circular(14),
+                //                     border: Border.all(color: const Color(0xFF1E88E5).withOpacity(0.12), width: 1.5),
+                //                   ),
+                //                   child: const CircleAvatar(
+                //                     radius: 14,
+                //                     backgroundColor: Color(0x261E88E5),
+                //                     child: Icon(Icons.person, color: Colors.blue, size: 18),
+                //                   ),
+                //                 ),
+                //               ),
+                //             ),
+                //           );
+                //         }
+                //         return StreamBuilder<DocumentSnapshot>(
+                //           stream: FirebaseFirestore.instance.collection('Users').doc(userEmail).snapshots(),
+                //           builder: (context, snap) {
+                //             String? imageUrl;
+                //             if (snap.hasData && snap.data!.exists) {
+                //               final data = snap.data!.data() as Map<String, dynamic>?;
+                //               imageUrl = data?['imageUrl'] as String?;
+                //             }
+                //             return GestureDetector(
+                //               onTap: () {
+                //                 Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen()));
+                //               },
+                //               child: ClipRRect(
+                //                 borderRadius: BorderRadius.circular(14),
+                //                 child: BackdropFilter(
+                //                   filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                //                   child: Container(
+                //                     padding: const EdgeInsets.all(6),
+                //                     decoration: BoxDecoration(
+                //                       color: Colors.white.withOpacity(0.75),
+                //                       borderRadius: BorderRadius.circular(14),
+                //                       border: Border.all(color: const Color(0xFF1E88E5).withOpacity(0.12), width: 1.5),
+                //                     ),
+                //                     child: CircleAvatar(
+                //                       radius: 14,
+                //                       backgroundColor: Colors.blue.withOpacity(0.15),
+                //                       backgroundImage: (imageUrl != null && imageUrl.isNotEmpty) ? CachedNetworkImageProvider(imageUrl) : null,
+                //                       child: (imageUrl == null || imageUrl.isEmpty) ? const Icon(Icons.person, color: Colors.blue, size: 18) : null,
+                //                     ),
+                //                   ),
+                //                 ),
+                //               ),
+                //             );
+                //           },
+                //         );
+                //       },
+                //     ),
+                //   ),
+                // ],
               ),
               // Carousel
               SliverToBoxAdapter(
@@ -1354,6 +1357,18 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   Widget _buildPersistentCartBar(CartService cart) {
     if (cart.itemCount == 0) return const SizedBox.shrink();
 
+    // DEBUG: Print to verify calculations
+    debugPrint('Cart Summary:');
+    debugPrint('  Item Count: ${cart.itemCount}');
+    debugPrint('  Total Amount: ${cart.totalAmount}');
+    debugPrint('  Coupon Discount: ${cart.couponDiscount}');
+    debugPrint('  Total After Discount: ${cart.totalAfterDiscount}');
+
+    // Print individual items for debugging
+    for (var item in cart.items) {
+      debugPrint('  Item: ${item.name} - Price: ${item.price} - Discounted: ${item.discountedPrice} - Final: ${item.finalPrice} - Qty: ${item.quantity}');
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: TweenAnimationBuilder<double>(
@@ -1365,7 +1380,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             child: GestureDetector(
               onTap: () {
                 HapticFeedback.lightImpact();
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const CartScreen()));
+                // Navigate to MainApp and set cart screen as active
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 3)),
+                );
               },
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -1427,9 +1445,24 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           const Icon(Icons.monetization_on_rounded, color: Colors.white, size: 18),
                           const SizedBox(width: 4),
                           Text(
-                            'QAR ${cart.totalAmount.toStringAsFixed(2)}',
+                            'QAR ${cart.totalAfterDiscount.toStringAsFixed(2)}',
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16),
                           ),
+                          // Show discount badge if there's any discount
+                          if (cart.totalAfterDiscount < cart.totalAmount) ...[
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.green,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Text(
+                                'SAVED',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -1442,7 +1475,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       ),
     );
   }
-
   Widget _buildMenuContent() {
     if (_errorMessage != null) {
       return Center(child: Padding(padding: const EdgeInsets.symmetric(vertical: 24), child: Text(_errorMessage!)));
@@ -2144,12 +2176,111 @@ class DishDetailsBottomSheet extends StatefulWidget {
 
 class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
   late int quantity;
+  bool _isInitialized = false;
 
   @override
   void initState() {
     super.initState();
-    // Set initial quantity. Will be updated in build if already in cart.
-    quantity = 1;
+    // Initialize with current cart quantity instead of always 1
+    final cart = context.read<CartService>();
+    final index = cart.items.indexWhere((cartItem) => cartItem.id == widget.item.id);
+    quantity = index != -1 ? cart.items[index].quantity : 1;
+    _isInitialized = true;
+  }
+
+  void _showRemoveConfirmationDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent),
+            const SizedBox(width: 12),
+            Text('Remove Item?',
+                style: AppTextStyles.headline2.copyWith(fontSize: 20)),
+          ],
+        ),
+        content: Text(
+            'Are you sure you want to remove ${widget.item.name} from your cart?',
+            style: AppTextStyles.bodyText1),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel',
+                style:
+                AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final cart = context.read<CartService>();
+              cart.removeFromCart(widget.item.id);
+              Navigator.pop(context); // Close confirmation dialog
+              Navigator.pop(context); // Close bottom sheet
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('${widget.item.name} removed from cart.'),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: AppColors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            child: Text('Remove',
+                style: AppTextStyles.buttonText.copyWith(fontSize: 14)),
+          ),
+        ],
+        actionsPadding:
+        const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      ),
+    );
+  }
+
+  void _handleQuantityChange(int newQuantity, CartService cart) {
+    if (newQuantity == 0) {
+      // Show confirmation dialog when quantity reaches 0
+      _showRemoveConfirmationDialog();
+    } else {
+      setState(() {
+        quantity = newQuantity;
+      });
+    }
+  }
+
+  void _handleAddOrUpdateItem(CartService cart, int existingQty) {
+    if (quantity == 0) {
+      // If quantity is 0, show remove confirmation
+      _showRemoveConfirmationDialog();
+      return;
+    }
+
+    if (existingQty == 0) {
+      cart.addToCart(widget.item, quantity: quantity);
+    } else if (quantity > 0) {
+      cart.updateQuantity(widget.item.id, quantity);
+    } else {
+      cart.removeFromCart(widget.item.id);
+    }
+
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '${quantity}x ${widget.item.name} ${existingQty == 0 ? "added" : "updated"}',
+          style: const TextStyle(fontSize: 14),
+        ),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
@@ -2158,16 +2289,13 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     final index = cart.items.indexWhere((cartItem) => cartItem.id == widget.item.id);
     final existingQty = index != -1 ? cart.items[index].quantity : 0;
 
-    // Sync local quantity state on first build if item is in cart
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && existingQty > 0 && quantity == 1) {
-        setState(() {
-          quantity = existingQty;
-        });
-      }
-    });
+    // REMOVED the problematic WidgetsBinding.instance.addPostFrameCallback
+    // This was causing the quantity to reset to cart quantity on every rebuild
 
-    // FIX: Replaced DraggableScrollableSheet with a content-wrapping layout
+    // Check if item has discount
+    final bool hasDiscount = widget.item.discountedPrice != null;
+    final double displayPrice = hasDiscount ? widget.item.discountedPrice! : widget.item.price;
+
     return SingleChildScrollView(
       child: Container(
         padding: const EdgeInsets.only(top: 16, left: 16, right: 16),
@@ -2176,7 +2304,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: Column(
-          mainAxisSize: MainAxisSize.min, // Make column wrap its content
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // Drag handle
@@ -2215,6 +2343,53 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
             ),
             const SizedBox(height: 8),
 
+            // Price - Show discounted price if available
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  Text(
+                    'QAR ${displayPrice.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: hasDiscount ? Colors.green : AppColors.primaryBlue,
+                    ),
+                  ),
+                  if (hasDiscount) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      'QAR ${widget.item.price.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.grey,
+                        decoration: TextDecoration.lineThrough,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.green),
+                      ),
+                      child: Text(
+                        'SAVE ${(widget.item.price - widget.item.discountedPrice!).toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+
             // Description
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2226,6 +2401,20 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               ),
             ),
             const SizedBox(height: 24),
+
+            // Current cart quantity indicator
+            if (existingQty > 0 && existingQty != quantity)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Text(
+                  'Current in cart: $existingQty',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.orange.shade700,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
 
             // Bottom Action Bar (Quantity and Add/Update button)
             Padding(
@@ -2242,12 +2431,13 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         IconButton(
-                          icon: const Icon(Icons.remove, color: Colors.black87),
+                          icon: Icon(Icons.remove,
+                              color: quantity > 1 ? Colors.black87 : Colors.grey),
                           onPressed: () {
                             if (quantity > 1) {
-                              setState(() {
-                                quantity--;
-                              });
+                              _handleQuantityChange(quantity - 1, cart);
+                            } else if (quantity == 1) {
+                              _handleQuantityChange(0, cart);
                             }
                           },
                           padding: EdgeInsets.zero,
@@ -2265,9 +2455,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                         IconButton(
                           icon: const Icon(Icons.add, color: Colors.black87),
                           onPressed: () {
-                            setState(() {
-                              quantity++;
-                            });
+                            _handleQuantityChange(quantity + 1, cart);
                           },
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
@@ -2280,34 +2468,16 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                     height: 52,
                     child: ElevatedButton(
                       onPressed: () {
-                        if (existingQty == 0) {
-                          cart.addToCart(widget.item, quantity: quantity);
-                        } else if (quantity > 0) {
-                          cart.updateQuantity(widget.item.id, quantity);
-                        } else {
-                          cart.removeFromCart(widget.item.id);
-                        }
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              '${quantity}x ${widget.item.name} ${existingQty == 0 ? "added" : "updated"}',
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            duration: const Duration(seconds: 2),
-                          ),
-                        );
+                        _handleAddOrUpdateItem(cart, existingQty);
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryBlue,
+                        backgroundColor: quantity == 0 ? Colors.redAccent : AppColors.primaryBlue,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         elevation: 0,
                       ),
                       child: Text(
-                        existingQty == 0 ? 'ADD ITEM' : 'UPDATE ITEM',
+                        quantity == 0 ? 'REMOVE ITEM' : (existingQty == 0 ? 'ADD ITEM' : 'UPDATE ITEM'),
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -2327,12 +2497,30 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
 class RestaurantService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  Future<String> getDynamicEtaForUser(String branchId) async {
+  Future<String> getDynamicEtaForUser(String branchId,
+      {String orderType = 'delivery'}) async {
     String result = 'Calculating...';
     try {
+      if (orderType == 'pickup') {
+        // For pickup orders, only consider preparation time
+        return await _calculatePickupTime(branchId);
+      } else {
+        // For delivery orders, calculate distance-based ETA
+        return await _calculateDeliveryTime(branchId);
+      }
+    } catch (e) {
+      debugPrint('Error calculating dynamic ETA: $e');
+      return orderType == 'delivery' ? '40 mins' : '20 mins';
+    }
+  }
+
+  Future<String> _calculateDeliveryTime(String branchId) async {
+    try {
       // Branch geolocation
-      final branchDoc =
-      await FirebaseFirestore.instance.collection('Branch').doc(branchId).get();
+      final branchDoc = await FirebaseFirestore.instance
+          .collection('Branch')
+          .doc(branchId)
+          .get();
       if (!branchDoc.exists) throw Exception('Branch not found');
       final branchData = branchDoc.data();
       final addressData = branchData?['address'];
@@ -2348,9 +2536,12 @@ class RestaurantService {
 
       // User default address geolocation
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null || user.email == null) throw Exception('User not logged in');
-      final userDoc =
-      await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
+      if (user == null || user.email == null)
+        throw Exception('User not logged in');
+      final userDoc = await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(user.email)
+          .get();
       if (!userDoc.exists) throw Exception('User data not found');
       final userData = userDoc.data();
       final userAddressesList = userData?['address'] as List?;
@@ -2364,8 +2555,8 @@ class RestaurantService {
             .firstWhere((addr) => addr is Map && (addr['isDefault'] == true))
             .cast<String, dynamic>();
       } catch (_) {
-        defaultAddressMap = userAddressesList.isNotEmpty &&
-            userAddressesList.first is Map
+        defaultAddressMap =
+        userAddressesList.isNotEmpty && userAddressesList.first is Map
             ? Map<String, dynamic>.from(userAddressesList.first as Map)
             : null;
       }
@@ -2388,16 +2579,44 @@ class RestaurantService {
 
       const double basePrepTimeMinutes = 15.0;
       const double averageSpeedMetersPerMinute = 300.0;
-      final double travelTimeMinutes = distanceInMeters / averageSpeedMetersPerMinute;
+      final double travelTimeMinutes =
+          distanceInMeters / averageSpeedMetersPerMinute;
 
       int totalEstimatedTimeMinutes =
       (basePrepTimeMinutes + travelTimeMinutes).round().clamp(15, 120);
-      result = '$totalEstimatedTimeMinutes mins';
+      return '$totalEstimatedTimeMinutes mins';
     } catch (e) {
-      debugPrint('Error calculating dynamic ETA: $e');
-      result = '40 mins';
+      debugPrint('Error calculating delivery ETA: $e');
+      return '40 mins';
     }
-    return result;
+  }
+
+  Future<String> _calculatePickupTime(String branchId) async {
+    try {
+      // For pickup, only consider preparation time and current kitchen load
+      const double basePrepTimeMinutes = 15.0;
+
+      // Get current order count to estimate kitchen load
+      final now = DateTime.now();
+      final today = DateFormat('yyyy-MM-dd').format(now);
+      final ordersSnapshot = await FirebaseFirestore.instance
+          .collection('Orders')
+          .where('branchId', isEqualTo: branchId)
+          .where('date', isEqualTo: today)
+          .where('status', whereIn: ['preparing', 'pending', 'accepted']).get();
+
+      final activeOrderCount = ordersSnapshot.docs.length;
+
+      // Adjust preparation time based on kitchen load (5 minutes per active order)
+      final loadAdjustment = (activeOrderCount * 5).toDouble();
+      final totalPrepTime = basePrepTimeMinutes + loadAdjustment;
+
+      int totalEstimatedTimeMinutes = totalPrepTime.round().clamp(10, 60);
+      return '$totalEstimatedTimeMinutes mins';
+    } catch (e) {
+      debugPrint('Error calculating pickup ETA: $e');
+      return '20 mins';
+    }
   }
 }
 

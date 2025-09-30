@@ -9,7 +9,7 @@ import 'package:mitra_da_dhaba/Screens/splash_screen.dart';
 import 'package:mitra_da_dhaba/Screens/welcome_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'Widgets/NotificationService.dart';
+import 'Services/NotificationService.dart';
 import 'Widgets/appbar.dart';
 import 'Widgets/authentication.dart';
 import 'Widgets/bottom_nav.dart';
@@ -17,6 +17,8 @@ import 'Screens/cartScreen.dart';
 import 'firebase_options.dart';
 import 'Widgets/models.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'Services/AddressService.dart';
+import 'Services/BranchService.dart';
 
 const Color kChipActive = Color(0xFF1E88E5);
 
@@ -29,11 +31,22 @@ void main() async {
   await NotificationService.initialize();
 
   runApp(
-    // Provide the CartService at the root of your application
-    ChangeNotifierProvider(
-      create: (context) => CartService(),
-      child: const MyApp(),
-    ),
+      MultiProvider(
+        providers: [
+          // 1️⃣  Streams the user’s default/saved address
+          ChangeNotifierProvider(create: (_) => AddressService()),
+
+          // 2️⃣  Computes the nearest branch from that address
+          ChangeNotifierProxyProvider<AddressService, BranchLocator>(
+            create: (ctx) => BranchLocator(ctx.read<AddressService>()),
+            update: (ctx, addrSvc, locator) => locator!..recompute(),
+          ),
+
+          // 3️⃣  Your cart logic (no constructor args needed)
+          ChangeNotifierProvider(create: (_) => CartService()),
+        ],
+        child: const MyApp(),
+      ),
   );
 }
 

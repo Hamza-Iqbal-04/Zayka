@@ -36,6 +36,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   File? _profileImage;
   bool _isLoggingOut = false;
 
+  get pickImage => null;
+
   Future<void> _pickImage() async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
@@ -104,7 +106,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       slivers: [
         // Modern App Bar with Gradient
         SliverAppBar(
-          expandedHeight: 280.0,
+          expandedHeight: 220.0,
           floating: false,
           pinned: true,
           elevation: 0,
@@ -161,14 +163,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     String email = user.email ?? 'No email available';
     String? imageUrl = userData['imageUrl'];
 
+    // In buildModernHeader
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(20.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const SizedBox(height: 20),
-            // Profile Image with Modern Design
+            const SizedBox(height: 12), // CHANGED: was 20
+
+            // Profile Image
             Stack(
               children: [
                 Container(
@@ -186,17 +190,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: GestureDetector(
                     onTap: _pickImage,
                     child: CircleAvatar(
-                      radius: 55,
+                      radius: 40, // CHANGED: was 55
                       backgroundColor: Colors.white,
                       backgroundImage: _profileImage != null
                           ? FileImage(_profileImage!)
                           : (imageUrl != null ? NetworkImage(imageUrl) : null) as ImageProvider?,
                       child: (_profileImage == null && imageUrl == null)
-                          ? Icon(Icons.person, size: 60, color: Colors.grey.shade400)
+                          ? Icon(Icons.person, size: 36, color: Colors.grey.shade400) // CHANGED: was 60
                           : null,
                     ),
                   ),
                 ),
+
                 Positioned(
                   bottom: 0,
                   right: 0,
@@ -213,27 +218,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ],
                     ),
                     child: IconButton(
-                      icon: const Icon(Icons.camera_alt, color: AppColors.primaryBlue, size: 20),
-                      onPressed: _pickImage,
+                      icon: const Icon(Icons.camera_alt),
+                      color: AppColors.primaryBlue,
+                      iconSize: 18, // slightly smaller for proportional look
+                      onPressed: pickImage,
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 20),
-            // Name with modern typography
+
+            const SizedBox(height: 12), // CHANGED: was 20
+
+            // Name
             Text(
               displayName,
+              textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w700,
+                fontSize: 20, // CHANGED: was 28
+                fontWeight: FontWeight.w600, // CHANGED: was w700
                 color: Colors.white,
-                letterSpacing: -0.5,
+                letterSpacing: -0.2,
               ),
             ),
-            const SizedBox(height: 8),
+
+            const SizedBox(height: 6), // CHANGED: was 8
+
+            // Email chip
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), // CHANGED: was 12 & 6
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.2),
                 borderRadius: BorderRadius.circular(20),
@@ -241,7 +254,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Text(
                 email,
                 style: const TextStyle(
-                  fontSize: 14,
+                  fontSize: 12, // CHANGED: was 14
                   color: Colors.white,
                   fontWeight: FontWeight.w500,
                 ),
@@ -251,6 +264,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
     );
+
   }
 
   Widget _buildModernProfileMenu(BuildContext context, User user) {

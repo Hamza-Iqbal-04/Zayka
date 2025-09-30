@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../Widgets/bottom_nav.dart';
 import '../Widgets/models.dart';
 import 'cartScreen.dart';
 
@@ -678,9 +679,13 @@ class _CouponsScreenState extends State<CouponsScreen> {
               ),
               ElevatedButton(
                 onPressed: () {
+                  // First, close the success dialog
                   Navigator.of(ctx).pop();
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const CartScreen()),
+
+                  // Then, replace the current screen with MainApp, starting at the Cart tab (index 3)
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (context) => const MainApp(initialIndex: 3)),
                   );
                 },
                 style: ElevatedButton.styleFrom(
