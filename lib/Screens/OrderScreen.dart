@@ -206,8 +206,10 @@ class _OrderScreenState extends State<OrdersScreen> {
   }
 
   void _navigateToOrderDetails(Map<String, dynamic> order) {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 3)),
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => OrderDetailsScreen(order: order),
+      ),
     );
   }
 
