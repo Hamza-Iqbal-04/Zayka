@@ -667,26 +667,11 @@ class _CouponsScreenState extends State<CouponsScreen> {
               ),
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text(
-                  'Continue',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey,
-                  ),
-                ),
-              ),
               ElevatedButton(
                 onPressed: () {
-                  // First, close the success dialog
-                  Navigator.of(ctx).pop();
-
-                  // Then, replace the current screen with MainApp, starting at the Cart tab (index 3)
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (context) => const MainApp(initialIndex: 3)),
-                  );
+                  Navigator.of(ctx).pop(); // close dialog
+                  BottomNavController.index.value = 3; // Cart tab
+                  Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryBlue,

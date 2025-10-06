@@ -45,7 +45,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() {
         _profileImage = File(pickedFile.path);
       });
-      // TODO: Upload image to Firebase Storage and update user's imageUrl
+
     }
   }
 

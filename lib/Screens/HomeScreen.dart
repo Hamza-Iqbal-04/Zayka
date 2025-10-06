@@ -58,7 +58,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   List<Map<String, dynamic>> _allAddresses = [];
 
   // Order status bar
-  Stream<Order?>? _orderStream;
+  Stream<List<Order>>? ordersStream;
   String _orderStatusMessage = '';
   late AnimationController _bounceController;
   late Animation<double> _bounceAnimation;
@@ -161,31 +161,33 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _loadUserAddresses();
     _loadEstimatedTime();
     _loadCarouselImages();
-    _setupOrderStream();
+    _setupOrdersStream();
     await _loadMenuData();
   }
 
-  void _setupOrderStream() {
+  void _setupOrdersStream() {
     final user = _auth.currentUser;
-    if (user != null && user.email != null) {
-      _orderStream = _firestore
-          .collection('Orders')
-          .where('customerId', isEqualTo: user.email)
-          .where('status', whereNotIn: ['delivered', 'cancelled'])
-          .orderBy('timestamp', descending: true)
-          .limit(1)
-          .snapshots()
-          .map((snapshot) {
-        if (snapshot.docs.isNotEmpty) {
-          return Order.fromFirestore(snapshot.docs.first);
-        }
-        return null;
-      }).handleError((error) {
-        debugPrint("Error loading order stream: $error");
-        return null;
-      });
+    if (user == null || user.email == null) {
+      ordersStream = Stream.value(const <Order>[]);
+      return;
     }
+
+    ordersStream = _firestore
+        .collection('Orders')
+        .where('customerId', isEqualTo: user.email)
+        .where('status', whereNotIn: ['delivered', 'cancelled'])
+        .orderBy('timestamp', descending: true)
+        .limit(5)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) => Order.fromFirestore(doc)).toList();
+    })
+        .handleError((error) {
+      debugPrint('Error loading orders: $error');
+      return <Order>[];
+    });
   }
+
 
   Future<void> _loadMenuData() async {
     await _loadCategories();
@@ -818,32 +820,24 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
 
-  Widget _buildCartAndOrderBar() {
+  Widget buildCartAndOrderBar() {
     final pageController = PageController();
-    return StreamBuilder<Order?>(
-      stream: _orderStream,
-      builder: (context, orderSnapshot) {
-        Widget? orderBar;
-        if (orderSnapshot.connectionState == ConnectionState.waiting) {
-          orderBar = null;
-        } else if (orderSnapshot.hasError) {
-          orderBar = _buildOrderErrorWidget();
-        } else if (orderSnapshot.data != null) {
-          final order = orderSnapshot.data!;
-          _orderStatusMessage = _getStatusMessage(order.status);
-          final currentProgress = _getProgressValue(order.status);
 
-          if (_previousStatus != order.status) {
-            _previousProgress = currentProgress;
-            _previousStatus = order.status;
-          }
-          orderBar = _buildOrderStatusWidget(order);
-        } else {
-          _previousStatus = null;
-          _previousProgress = null;
-          orderBar = null;
+    return StreamBuilder<List<Order>>(
+      stream: ordersStream,
+      builder: (context, orderSnapshot) {
+        // Build zero-or-more order status bars
+        List<Widget> orderBars = const [];
+        if (orderSnapshot.connectionState == ConnectionState.waiting) {
+          orderBars = const [];
+        } else if (orderSnapshot.hasError) {
+          orderBars = [_buildOrderErrorWidget()];
+        } else if (orderSnapshot.hasData && orderSnapshot.data!.isNotEmpty) {
+          final orders = orderSnapshot.data!;
+          orderBars = orders.map((o) => _buildOrderStatusWidget(o)).toList();
         }
 
+        // Build cart bar if items exist
         return Consumer<CartService>(
           builder: (context, cart, _) {
             Widget? cartBar;
@@ -851,24 +845,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               cartBar = _buildPersistentCartBar(cart);
             }
 
-            final pages = [
-              if (orderBar != null) orderBar,
+            // Merge pages: every active order + optional cart bar
+            final pages = <Widget>[
+              ...orderBars,
               if (cartBar != null) cartBar,
             ];
 
-            if (pages.isEmpty) {
-              return const SizedBox.shrink();
-            }
+            if (pages.isEmpty) return const SizedBox.shrink();
+            if (pages.length == 1) return pages.first;
 
-            if (pages.length == 1) {
-              return pages.first;
-            }
-
+            // Show PageView + dots when 2+ pages (e.g., 2+ orders, or order + cart)
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 SizedBox(
-                  height: 100, // Fixed height for PageView
+                  height: 100, // preserve existing height
                   child: PageView(
                     controller: pageController,
                     children: pages,
@@ -1347,7 +1338,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             bottom: mainNavBarHeight - buffer,
             left: 0,
             right: 0,
-            child: _buildCartAndOrderBar(),
+            child: buildCartAndOrderBar(),
           ),
         ],
       ),

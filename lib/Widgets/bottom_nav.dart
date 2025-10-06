@@ -11,6 +11,10 @@ import 'package:mitra_da_dhaba/Screens/OrderScreen.dart';
 import 'package:mitra_da_dhaba/Screens/cartScreen.dart';
 import 'models.dart';
 
+class BottomNavController {
+  static final ValueNotifier<int> index = ValueNotifier<int>(0);
+}
+
 class MainApp extends StatefulWidget {
   final int? initialIndex;
   const MainApp({Key? key, this.initialIndex}) : super(key: key);
@@ -26,15 +30,16 @@ class _MainAppState extends State<MainApp> {
   @override
   void initState() {
     super.initState();
-    // Use initialIndex if provided, otherwise default to 0
     _currentIndex = widget.initialIndex ?? 0;
+    BottomNavController.index.value = _currentIndex; // keep notifier in sync
+    // Removed the duplicate assignment that re-set _currentIndex again
   }
 
   @override
   Widget build(BuildContext context) {
     final cartService = Provider.of<CartService>(context, listen: false);
 
-    final screens = <Widget>[
+    final screens = [
       HomeScreen(),
       const OrdersScreen(),
       CouponsScreen(cartService: cartService), // Offers
@@ -70,56 +75,73 @@ class _MainAppState extends State<MainApp> {
         final bool isOpen = data['isOpen'] ?? true;
         if (!isOpen) return const ClosedRestaurantScreen();
 
-        // Wrap main Scaffold with PopScope to handle Android back properly.
-        // Behavior:
+        // Back handling:
         // - If not on Home (index != 0): switch to Home and consume back.
-        // - If already on Home (index == 0): minimize app to Android launcher.
+        // - If already on Home (index == 0): exit/minimize via SystemNavigator.pop().
         return PopScope(
-          // Prevent Navigator from popping this route; handle back manually.
-          canPop: false,
-          onPopInvoked: (didPop) {
-            // didPop will be false because canPop is false.
+          canPop: _currentIndex == 0,
+          onPopInvokedWithResult: (bool didPop, Object? result) {
+            if (didPop) return; // A nested route handled the pop already.
+
             if (_currentIndex != 0) {
               setState(() => _currentIndex = 0);
+              BottomNavController.index.value = 0; // keep notifier aligned
               return;
             }
-            // Already on Home: send app to background (Android launcher).
+
             SystemNavigator.pop();
           },
           child: Scaffold(
             extendBody: true,
-            body: IndexedStack(index: _currentIndex, children: screens),
-            bottomNavigationBar:
-            Consumer<CartService>(builder: (context, cart, child) {
-              return ConvexAppBar(
-                style: TabStyle.fixedCircle,
-                height: 64,
-                curveSize: 90,
-                top: -28,
-                cornerRadius: 20,
-                backgroundColor: Colors.white,
-                color: Colors.grey,
-                activeColor: AppColors.primaryBlue,
-                items: [
-                  const TabItem(icon: Icons.home_outlined, title: 'Home'),
-                  const TabItem(icon: Icons.newspaper_outlined, title: 'Orders'),
-                  // Center tab: always-blue circle
-                  TabItem(
-                    title: 'Offers',
-                    icon: _offersIcon(),
-                    activeIcon: _offersIcon(),
-                  ),
-                  // Cart tab with badge
-                  TabItem(
-                    icon: _cartIconWithBadge(cart.itemCount),
-                    title: 'Cart',
-                  ),
-                  const TabItem(icon: Icons.person, title: 'Profile'),
-                ],
-                initialActiveIndex: _currentIndex,
-                onTap: (i) => setState(() => _currentIndex = i),
-              );
-            }),
+            body: ValueListenableBuilder<int>(
+              valueListenable: BottomNavController.index,
+              builder: (_, idx, __) {
+                if (idx != _currentIndex) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!mounted) return;
+                    setState(() => _currentIndex = idx);
+                  });
+                }
+                return IndexedStack(index: _currentIndex, children: screens);
+              },
+            ),
+            bottomNavigationBar: Consumer<CartService>(
+              builder: (context, cart, child) {
+                return ConvexAppBar(
+                  // UI PROPS UNCHANGED
+                  style: TabStyle.fixedCircle,
+                  height: 64,
+                  curveSize: 90,
+                  top: -28,
+                  cornerRadius: 20,
+                  backgroundColor: Colors.white,
+                  color: Colors.grey,
+                  activeColor: AppColors.primaryBlue,
+                  items: [
+                    const TabItem(icon: Icons.home_outlined, title: 'Home'),
+                    const TabItem(icon: Icons.newspaper_outlined, title: 'Orders'),
+                    // Center tab: always-blue circle
+                    TabItem(
+                      title: 'Offers',
+                      icon: _offersIcon(),
+                      activeIcon: _offersIcon(),
+                    ),
+                    // Cart tab with badge
+                    TabItem(
+                      icon: _cartIconWithBadge(cart.itemCount),
+                      title: 'Cart',
+                    ),
+                    const TabItem(icon: Icons.person, title: 'Profile'),
+                  ],
+                  initialActiveIndex: _currentIndex,
+                  onTap: (i) {
+                    if (_currentIndex == i) return;
+                    setState(() => _currentIndex = i);
+                    BottomNavController.index.value = i; // sync notifier to avoid snap-back
+                  },
+                );
+              },
+            ),
           ),
         );
       },
