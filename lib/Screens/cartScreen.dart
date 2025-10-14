@@ -3,8 +3,6 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 import 'package:geolocator/geolocator.dart';
-import '../Services/BranchService.dart'; // adjust path if needed
-import 'package:provider/provider.dart'; // already used elsewhere
 import '../Screens/HomeScreen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,6 +14,7 @@ import '../Widgets/bottom_nav.dart';
 import 'CouponsScreen.dart';
 import 'Profile.dart';
 import '../Widgets/models.dart';
+import 'package:shimmer/shimmer.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({Key? key}) : super(key: key);
@@ -24,36 +23,66 @@ class CartScreen extends StatefulWidget {
 }
 
 class _CartScreenState extends State<CartScreen> {
-  // ─────────────────────────── data ───────────────────────────
   final RestaurantService _restaurantService = RestaurantService();
   String _estimatedTime = 'Loading...';
   double deliveryFee = 0;
   bool _isFindingNearestBranch = false;
   String _currentBranchId = 'OldAirport';
-  List<Map<String, String>> _allBranches = []; // ← new
-  String _nearestBranchId = ''; // last result from BranchLocator
+  List<Map<String, String>> _allBranches = [];
+  String _nearestBranchId = '';
   bool _isDefaultNearest = true;
   final TextEditingController _notesController = TextEditingController();
   List<MenuItem> _drinksItems = [];
   bool _isLoadingDrinks = true;
   bool _isCheckingOut = false;
-  String _orderType = 'delivery';// 'delivery' | 'pickup'
-  String _paymentType = 'Cash on Delivery'; // 'Cash on Delivery' | 'Card' | 'Apple Pay' | 'Google Pay'
+  String _orderType = 'delivery';
+  String _paymentType = 'Cash on Delivery';
+  bool _isInitialized = false;
 
+  // Solution 1: Add address caching variables
+  Map<String, dynamic>? _cachedAddress;
+  bool _isLoadingAddress = false;
 
-  // ─────────────────────────── lifecycle ───────────────────────────
   @override
   void initState() {
     super.initState();
-    _loadAvailableBranches(); // ← fetch list once
-    _setNearestBranch(); // ← keep your existing nearest-logic
-    _loadInitialData();
+    _initializeData();
+    CartService().addListener(_onCartChanged);
   }
 
   @override
   void dispose() {
+    CartService().removeListener(_onCartChanged);
     _notesController.dispose();
     super.dispose();
+  }
+
+  void _onCartChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _initializeData() async {
+    try {
+      await _loadAvailableBranches();
+      await _setNearestBranch();
+      await Future.wait([
+        _loadDrinks(),
+        _loadEstimatedTime(),
+      ]);
+
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
+    } catch (e) {
+      debugPrint('Initialization error: $e');
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
+    }
   }
 
   Future<void> _loadAvailableBranches() async {
@@ -68,97 +97,269 @@ class _CartScreenState extends State<CartScreen> {
       'name': d['name'] as String? ?? d.id,
     })
         .toList();
-
-    setState(() {}); // rebuild PopupMenu once data arrives
   }
 
-  // ─────────────────────────── branch selection ───────────────────────────
   Future<void> _setNearestBranch() async {
     if (!mounted) return;
+
     setState(() => _isFindingNearestBranch = true);
 
     try {
-      // BranchLocator already knows the closest branch to the user’s default address
-      final branchId = context.read<BranchLocator>().branchId ?? 'OldAirport';
+      // Use the same format as in _getBranchDisplayName
+      final branchId = 'Old_Airport'; // Changed to match
 
       if (mounted) {
-        setState(() {
-          _currentBranchId = branchId;
-          _nearestBranchId = branchId;
-          _isDefaultNearest = true;
-          _isFindingNearestBranch = false;
-        });
-        // reload UI pieces that depend on the branch
-        _loadDrinks();
+        _currentBranchId = branchId;
+        _nearestBranchId = branchId;
+        _isDefaultNearest = true;
+        _isFindingNearestBranch = false;
+
+        if (_isInitialized) {
+          setState(() {});
+        }
+
         await loadDeliveryFee(branchId);
-        _loadEstimatedTime();
       }
     } catch (e) {
       debugPrint('Error setting nearest branch: $e');
-      if (mounted) setState(() => _isFindingNearestBranch = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Using default branch.')),
-      );
+      if (mounted) {
+        _isFindingNearestBranch = false;
+        if (_isInitialized) {
+          setState(() {});
+        }
+      }
     }
   }
-
   void _refreshBranchSelection() => _setNearestBranch();
-
-  // ─────────────────────────── initial loads ───────────────────────────
-  void _loadInitialData() {
-    _loadEstimatedTime();
-    _loadDrinks();
-  }
 
   Future<void> _loadEstimatedTime() async {
     final time = await _restaurantService.getDynamicEtaForUser(
       _currentBranchId,
       orderType: _orderType,
     );
-    if (mounted) setState(() => _estimatedTime = time);
+    if (mounted) {
+      setState(() {
+        _estimatedTime = time;
+      });
+    }
   }
+
+// In your CartScreen, update the _loadDrinks method and the build method:
 
   Future<void> _loadDrinks() async {
     if (!mounted) return;
+
     setState(() => _isLoadingDrinks = true);
 
     try {
+      print('Loading drinks for branch: $_currentBranchId'); // DEBUG
+
       final snap = await FirebaseFirestore.instance
           .collection('menu_items')
           .where('categoryId', isEqualTo: 'Drinks')
           .where('branchId', isEqualTo: _currentBranchId)
+          .where('isAvailable', isEqualTo: true)
           .orderBy('sortOrder')
           .limit(10)
           .get();
 
-      _drinksItems = snap.docs.map((d) {
-        final data = d.data();
-        return MenuItem(
-          id: d.id,
-          name: data['name'] ?? 'Unknown Drink',
-          price: (data['price'] ?? 0).toDouble(),
-          discountedPrice: data['discountedPrice']?.toDouble(),
-          imageUrl: data['imageUrl'] ?? '',
-          description: data['description'] ?? '',
-          categoryId: data['categoryId'] ?? '',
-          branchId: data['branchId'] ?? _currentBranchId,
-          isAvailable: data['isAvailable'] ?? true,
-          isPopular: data['isPopular'] ?? false,
-          sortOrder: data['sortOrder'] ?? 0,
-          variants:
-          (data['variants'] is Map) ? Map.from(data['variants']) : const {},
-          tags: (data['tags'] is Map) ? Map.from(data['tags']) : const {},
-        );
-      }).toList();
+      print('Found ${snap.docs.length} drinks'); // DEBUG
+
+      if (mounted) {
+        setState(() {
+          _drinksItems = snap.docs.map((d) {
+            final data = d.data();
+            print('Drink: ${data['name']}, Available: ${data['isAvailable']}'); // DEBUG
+            return MenuItem(
+              id: d.id,
+              name: data['name'] ?? 'Unknown Drink',
+              price: (data['price'] ?? 0).toDouble(),
+              discountedPrice: data['discountedPrice']?.toDouble(),
+              imageUrl: data['imageUrl'] ?? '',
+              description: data['description'] ?? '',
+              categoryId: data['categoryId'] ?? '',
+              branchId: data['branchId'] ?? _currentBranchId,
+              isAvailable: data['isAvailable'] ?? true,
+              isPopular: data['isPopular'] ?? false,
+              sortOrder: data['sortOrder'] ?? 0,
+              variants: (data['variants'] is Map) ? Map.from(data['variants']) : const {},
+              tags: (data['tags'] is Map) ? Map.from(data['tags']) : const {},
+            );
+          }).toList();
+        });
+      }
     } catch (e) {
       debugPrint('Error loading drinks: $e');
-      _drinksItems = [];
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to load drink suggestions.')),
+      if (mounted) {
+        setState(() {
+          _drinksItems = [];
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingDrinks = false);
+      }
+    }
+  }
+
+  // Solution 1: Add address loading method
+  Future<void> _loadUserAddress(String userEmail) async {
+    if (_isLoadingAddress) return;
+
+    setState(() => _isLoadingAddress = true);
+
+    try {
+      final address = await _getUserAddressFuture(userEmail);
+      if (mounted) {
+        setState(() {
+          _cachedAddress = address;
+          _isLoadingAddress = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading user address: $e');
+      if (mounted) {
+        setState(() => _isLoadingAddress = false);
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>?> _getUserAddressFuture(String userEmail) async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(userEmail)
+          .get();
+
+      if (!doc.exists) return null;
+
+      final userData = doc.data() as Map<String, dynamic>?;
+      final addresses = (userData?['address'] as List?)?.whereType<Map<String, dynamic>>().toList() ?? [];
+
+      Map<String, dynamic>? defaultAddress;
+      try {
+        defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true);
+      } catch (e) {
+        defaultAddress = addresses.isNotEmpty ? addresses.first : null;
+      }
+
+      return defaultAddress;
+    } catch (e) {
+      debugPrint('Error fetching address: $e');
+      return null;
+    }
+  }
+
+// Also update the _buildYouMightAlsoLikeSection method:
+  Widget _buildYouMightAlsoLikeSection() {
+    // Add debug info
+    print('_isLoadingDrinks: $_isLoadingDrinks');
+    print('_drinksItems length: ${_drinksItems.length}');
+    print('_currentBranchId: $_currentBranchId');
+
+    if (_isLoadingDrinks) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('You might also like', style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 260,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: 3,
+                itemBuilder: (context, index) => Container(
+                  width: 160,
+                  margin: EdgeInsets.only(right: 16, left: index == 0 ? 0 : 0),
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: AppColors.lightGrey,
+                            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: double.infinity,
+                              height: 16,
+                              color: AppColors.lightGrey,
+                            ),
+                            const SizedBox(height: 8),
+                            Container(
+                              width: 60,
+                              height: 14,
+                              color: AppColors.lightGrey,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       );
     }
 
-    if (mounted) setState(() => _isLoadingDrinks = false);
+    if (_drinksItems.isEmpty) {
+      return Padding( // Changed from SizedBox.shrink to show when empty
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('You might also like', style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.white,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                'No drinks available for $_currentBranchId branch',
+                style: AppTextStyles.bodyText1,
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          child: Text('You might also like', style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+        ),
+        SizedBox(
+          height: 260,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            clipBehavior: Clip.none,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _drinksItems.length,
+            itemBuilder: (_, i) => _DrinkCard(drink: _drinksItems[i]),
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> loadDeliveryFee(String branchId) async {
@@ -168,17 +369,16 @@ class _CartScreenState extends State<CartScreen> {
         .get();
 
     if (!mounted) return;
+
     setState(() {
       deliveryFee = (snap.data()?['deliveryFee'] ?? 0).toDouble();
     });
   }
 
-
-  // ─────────────────────────── UI helpers (unchanged) ───────────────────────────
   void _onOrderTypeChanged(String newType) {
     if (newType != _orderType) {
       setState(() => _orderType = newType);
-      _setNearestBranch(); // ensure branch & ETA are current
+      _setNearestBranch();
     }
   }
 
@@ -195,32 +395,63 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  String _getBranchAddress(String branchId) {
-    switch (branchId) {
-      case 'Old_Airport':
-        return '123 Old Airport Road\nDoha, Qatar';
-      case 'City_Center':
-        return '456 City Center Mall\nDoha, Qatar';
-      case 'West_Bay':
-        return '789 West Bay Area\nDoha, Qatar';
-      default:
-        return 'Unknown Location';
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final double bottomInset = MediaQuery.of(context).padding.bottom;
-    return ListenableBuilder(
-      listenable: CartService(),
-      builder: (_, __) {
-        final cartService = CartService();
-        return Scaffold(
-          backgroundColor: AppColors.lightGrey,
-          appBar: _buildAppBar(cartService),
-          body: cartService.items.isEmpty
-              ? _buildEmptyCartView()
-              : ListView(
+    final cartService = CartService();
+
+    return Scaffold(
+      backgroundColor: AppColors.lightGrey,
+      appBar: _buildAppBar(cartService),
+      body: !_isInitialized
+          ? _buildLoadingShimmer()
+          : cartService.items.isEmpty
+          ? _buildEmptyCartView()
+          : _buildCartContent(cartService),
+    );
+  }
+
+  Widget _buildLoadingShimmer() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _buildShimmerCard(height: 200),
+        const SizedBox(height: 24),
+        _buildShimmerCard(height: 80),
+        const SizedBox(height: 16),
+        ...List.generate(3, (index) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: _buildShimmerCard(height: 100),
+        )),
+        const SizedBox(height: 16),
+        _buildShimmerCard(height: 120),
+        const SizedBox(height: 16),
+        _buildShimmerCard(height: 200),
+      ],
+    );
+  }
+
+  Widget _buildShimmerCard({double height = 100}) {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: Container(
+        width: double.infinity,
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCartContent(CartService cartService) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
             padding: EdgeInsets.only(bottom: 16 + bottomInset),
             children: [
               const SizedBox(height: 16),
@@ -237,88 +468,177 @@ class _CartScreenState extends State<CartScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: ListView.separated(
-                  itemCount: cartService.items.length,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  padding: EdgeInsets.zero,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (_, i) => _buildCartItem(cartService.items[i], cartService),
-                ),
-              ),
+              _buildCartItemsSection(cartService),
               const SizedBox(height: 16),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _buildNotesSection(),
               ),
               const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _buildYouMightAlsoLikeSection(),
-              ),
+              _buildYouMightAlsoLikeSection(),
+              const SizedBox(height: 24),
+              _buildCartTotalsSection(cartService),
               const SizedBox(height: 24),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _buildCouponSection(cartService),
-              ),
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _buildBillRow('Subtotal', cartService.totalAmount),
-              ),
-              if (_orderType == 'delivery' && deliveryFee > 0 && cartService.items.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _buildBillRow('Delivery Fee', deliveryFee),
-                ),
-              if (cartService.couponDiscount > 0) ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _buildBillRow('Coupon Discount', -cartService.couponDiscount, isDiscount: true),
-                ),
-                const Divider(height: 24, thickness: 0.5),
-              ],
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _buildBillRow(
-                  'Total Amount',
-                  cartService.items.isEmpty
-                      ? 0.0
-                      : (cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0))
-                      .clamp(0, double.infinity),
-                  isTotal: true,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _proceedToCheckout,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryBlue,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: Text('PLACE ORDER', style: AppTextStyles.buttonText.copyWith(color: AppColors.white)),
-                  ),
-                ),
+                child: _buildPlaceOrderButton(),
               ),
               const SizedBox(height: 32),
             ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCartItemsSection(CartService cartService) {
+    return ListenableBuilder(
+      listenable: cartService,
+      builder: (context, _) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: ListView.separated(
+            itemCount: cartService.items.length,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (_, i) => _CartItemWidget(
+              item: cartService.items[i],
+              cartService: cartService,
+              onRemove: (item) {
+                cartService.removeFromCart(item.id);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('${item.name} removed from cart.'),
+                    behavior: SnackBarBehavior.floating,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    action: SnackBarAction(
+                      label: 'UNDO',
+                      textColor: AppColors.accentBlue,
+                      onPressed: () {
+                        cartService.addToCart(
+                          MenuItem(
+                            id: item.id,
+                            name: item.name,
+                            imageUrl: item.imageUrl,
+                            price: item.price,
+                            discountedPrice: item.discountedPrice,
+                            description: '',
+                            branchId: '',
+                            categoryId: '',
+                            isAvailable: true,
+                            isPopular: false,
+                            sortOrder: 0,
+                            tags: {},
+                            variants: {},
+                          ),
+                          quantity: item.quantity,
+                        );
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
         );
       },
     );
   }
 
+  Widget _buildCartTotalsSection(CartService cartService) {
+    return ListenableBuilder(
+      listenable: cartService,
+      builder: (context, _) {
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildCouponSection(cartService),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildBillRow('Subtotal', cartService.totalAmount),
+            ),
+            if (_orderType == 'delivery' && deliveryFee > 0 && cartService.items.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _buildBillRow('Delivery Fee', deliveryFee),
+              ),
+            if (cartService.couponDiscount > 0) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _buildBillRow('Coupon Discount', -cartService.couponDiscount, isDiscount: true),
+              ),
+              const Divider(height: 24, thickness: 0.5),
+            ],
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildBillRow(
+                'Total Amount',
+                cartService.items.isEmpty
+                    ? 0.0
+                    : (cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0))
+                    .clamp(0, double.infinity),
+                isTotal: true,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildPlaceOrderButton() {
+    return SizedBox(
+      width: double.infinity,
+      child: _isCheckingOut
+          ? ElevatedButton(
+        onPressed: null,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primaryBlue.withOpacity(0.7),
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(AppColors.white),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'PROCESSING...',
+              style: AppTextStyles.buttonText.copyWith(color: AppColors.white),
+            ),
+          ],
+        ),
+      )
+          : ElevatedButton(
+        onPressed: _proceedToCheckout,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primaryBlue,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        child: Text(
+          'PLACE ORDER',
+          style: AppTextStyles.buttonText.copyWith(color: AppColors.white),
+        ),
+      ),
+    );
+  }
+
   AppBar _buildAppBar(CartService cartService) {
     return AppBar(
-      title: Text('My Cart',
-          style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+      title: Text('My Cart', style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
       backgroundColor: AppColors.white,
       elevation: 0,
       centerTitle: true,
@@ -337,41 +657,6 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Widget _buildBody(CartService cartService) {
-    if (cartService.items.isEmpty) {
-      return _buildEmptyCartView();
-    }
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 340),
-      children: [
-        const SizedBox(height: 16),
-        _buildDeliveryInfoCard(),
-        const SizedBox(height: 24),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-          child: Text("Your Items",
-              style:
-              AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
-        ),
-        const SizedBox(height: 8),
-        ListView.separated(
-          itemCount: cartService.items.length,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          separatorBuilder: (context, index) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            return _buildCartItem(cartService.items[index], cartService);
-          },
-        ),
-        const SizedBox(height: 16),
-        _buildNotesSection(),
-        const SizedBox(height: 16),
-        _buildYouMightAlsoLikeSection(),
-      ],
-    );
-  }
-
   Widget _buildEmptyCartView() {
     return Center(
       child: Padding(
@@ -383,14 +668,12 @@ class _CartScreenState extends State<CartScreen> {
                 size: 120, color: AppColors.primaryBlue.withOpacity(0.15)),
             const SizedBox(height: 24),
             Text('Your Cart is Empty',
-                style: AppTextStyles.headline1
-                    .copyWith(color: AppColors.darkGrey, fontSize: 24)),
+                style: AppTextStyles.headline1.copyWith(color: AppColors.darkGrey, fontSize: 24)),
             const SizedBox(height: 12),
             Text(
               'Looks like you haven\'t added anything to your cart yet.',
               textAlign: TextAlign.center,
-              style:
-              AppTextStyles.bodyText1.copyWith(color: Colors.grey.shade600),
+              style: AppTextStyles.bodyText1.copyWith(color: Colors.grey.shade600),
             ),
             const SizedBox(height: 32),
             ElevatedButton.icon(
@@ -404,13 +687,11 @@ class _CartScreenState extends State<CartScreen> {
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryBlue,
-                padding:
-                const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: () {
-                BottomNavController.index.value = 0; // Home tab
+                BottomNavController.index.value = 0;
                 Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
               },
             ),
@@ -421,34 +702,29 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Widget _buildDeliveryInfoCard() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.primaryBlue.withOpacity(0.05),
-              blurRadius: 20,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          children: [
-            _buildOrderTypeToggle(),
-            const SizedBox(height: 16),
-            _orderType == 'delivery'
-                ? _buildAddressSection()
-                : buildPickupInfo(),
-            const Divider(height: 24, thickness: 0.5),
-            _buildTimeEstimate(),
-            const Divider(height: 24, thickness: 0.5),
-            _buildPaymentSection(),
-          ],
-        ),
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryBlue.withOpacity(0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          _buildOrderTypeToggle(),
+          const SizedBox(height: 16),
+          _orderType == 'delivery' ? _buildAddressSection() : buildPickupInfo(),
+          const Divider(height: 24, thickness: 0.5),
+          _buildTimeEstimate(),
+          const Divider(height: 24, thickness: 0.5),
+          _buildPaymentSection(),
+        ],
       ),
     );
   }
@@ -495,144 +771,6 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Map<String, dynamic> _composePaymentMeta(double amountQar) {
-    switch (_paymentType) {
-      case 'Cash on Delivery':
-        return {
-          'paymentType': 'Cash on Delivery',
-          'paymentStatus': 'pending',               // per provided structure
-          'transactionId': 'no_payment',         // per provided structure
-          'paymentDate': FieldValue.serverTimestamp(),
-          'paymentDetails': {
-            'method': 'cod',
-            'amount': amountQar,
-            'gateway': 'none',
-            'note': 'COD placeholder',
-          },
-        };
-      case 'Card':
-        return {
-          'paymentType': 'Card',
-          'paymentStatus': 'pending',            // placeholder for gateway flow
-          'transactionId': 'pending',
-          'paymentDate': FieldValue.serverTimestamp(),
-          'paymentDetails': {
-            'method': 'card',
-            'amount': amountQar,
-            'gateway': 'placeholder',
-            'note': 'Card placeholder',
-          },
-        };
-      case 'Apple Pay':
-        return {
-          'paymentType': 'Apple Pay',
-          'paymentStatus': 'pending',
-          'transactionId': 'pending',
-          'paymentDate': FieldValue.serverTimestamp(),
-          'paymentDetails': {
-            'method': 'apple_pay',
-            'amount': amountQar,
-            'gateway': 'placeholder',
-            'note': 'Apple Pay placeholder',
-          },
-        };
-      case 'Google Pay':
-      default:
-        return {
-          'paymentType': 'Google Pay',
-          'paymentStatus': 'pending',
-          'transactionId': 'pending',
-          'paymentDate': FieldValue.serverTimestamp(),
-          'paymentDetails': {
-            'method': 'google_pay',
-            'amount': amountQar,
-            'gateway': 'placeholder',
-            'note': 'Google Pay placeholder',
-          },
-        };
-    }
-  }
-
-  void _showPaymentMethodsBottomSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final options = [
-              {'label': 'Cash on Delivery', 'icon': Icons.money_outlined},
-              {'label': 'Card', 'icon': Icons.credit_card_outlined},
-              {'label': 'Apple Pay', 'icon': Icons.phone_iphone_outlined},
-              {'label': 'Google Pay', 'icon': Icons.android_outlined},
-            ];
-
-            return Container(
-              padding: EdgeInsets.only(
-                top: 12,
-                left: 16,
-                right: 16,
-                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-              ),
-              decoration: const BoxDecoration(
-                color: AppColors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 40, height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Text('Select Payment Method', style: AppTextStyles.headline2),
-                  const SizedBox(height: 16),
-
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: options.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (_, i) {
-                      final opt = options[i];
-                      final sel = opt['label'] as String;
-                      final isSelected = _paymentType == sel;
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: AppColors.lightGrey,
-                          child: Icon(opt['icon'] as IconData, color: AppColors.primaryBlue),
-                        ),
-                        title: Text(
-                          sel,
-                          style: AppTextStyles.bodyText1.copyWith(
-                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                          ),
-                        ),
-                        trailing: isSelected ? const Icon(Icons.check_circle, color: Colors.green) : null,
-                        onTap: () {
-                          setState(() => _paymentType = sel);
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('$sel selected')),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
   Widget _buildOrderTypeToggle() {
     return Container(
       padding: const EdgeInsets.all(4),
@@ -646,21 +784,16 @@ class _CartScreenState extends State<CartScreen> {
             child: GestureDetector(
               onTap: () => _onOrderTypeChanged('delivery'),
               child: Container(
-                padding:
-                const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                 decoration: BoxDecoration(
-                  color: _orderType == 'delivery'
-                      ? AppColors.primaryBlue
-                      : Colors.transparent,
+                  color: _orderType == 'delivery' ? AppColors.primaryBlue : Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   'Delivery',
                   textAlign: TextAlign.center,
                   style: AppTextStyles.bodyText1.copyWith(
-                    color: _orderType == 'delivery'
-                        ? AppColors.white
-                        : AppColors.darkGrey,
+                    color: _orderType == 'delivery' ? AppColors.white : AppColors.darkGrey,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -671,21 +804,16 @@ class _CartScreenState extends State<CartScreen> {
             child: GestureDetector(
               onTap: () => _onOrderTypeChanged('pickup'),
               child: Container(
-                padding:
-                const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                 decoration: BoxDecoration(
-                  color: _orderType == 'pickup'
-                      ? AppColors.primaryBlue
-                      : Colors.transparent,
+                  color: _orderType == 'pickup' ? AppColors.primaryBlue : Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   'Pickup',
                   textAlign: TextAlign.center,
                   style: AppTextStyles.bodyText1.copyWith(
-                    color: _orderType == 'pickup'
-                        ? AppColors.white
-                        : AppColors.darkGrey,
+                    color: _orderType == 'pickup' ? AppColors.white : AppColors.darkGrey,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -697,95 +825,6 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  // ADD THIS ENTIRE FUNCTION TO YOUR _CartScreenState
-  void _showBranchSelectionBottomSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Container(
-              padding: EdgeInsets.only(
-                top: 12,
-                left: 16,
-                right: 16,
-                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-              ),
-              decoration: const BoxDecoration(
-                color: Colors.white, // Or your AppColors.white
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Text('Select Pickup Branch', style: AppTextStyles.headline2), // Use your text style
-                  const SizedBox(height: 16),
-                  if (_allBranches.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 32),
-                      child: Text('No active branches available', style: AppTextStyles.bodyText2), // Use your text style
-                    )
-                  else
-                    Flexible(
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: _allBranches.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          final branch = _allBranches[index];
-                          final bool isSelected = branch['id'] == _currentBranchId;
-                          return ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Colors.grey.shade100, // Or your AppColors.lightGrey
-                              child: Icon(
-                                isSelected ? Icons.store : Icons.storefront_outlined,
-                                color: Colors.blue.shade800, // Or your AppColors.primaryBlue
-                              ),
-                            ),
-                            title: Text(
-                              branch['name']!,
-                              style: AppTextStyles.bodyText1.copyWith( // Use your text style
-                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                              ),
-                            ),
-                            trailing: isSelected
-                                ? const Icon(Icons.check_circle, color: Colors.green)
-                                : null,
-                            onTap: () {
-                              setState(() {
-                                _currentBranchId = branch['id']!;
-                                _isDefaultNearest = (_currentBranchId == _nearestBranchId);
-                              });
-                              _loadDrinks();
-                              _loadEstimatedTime();
-                              Navigator.pop(context);
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-
-  // DELETE YOUR OLD buildPickupInfo() AND REPLACE IT WITH THIS
   Widget buildPickupInfo() {
     return InkWell(
       onTap: _showBranchSelectionBottomSheet,
@@ -800,135 +839,190 @@ class _CartScreenState extends State<CartScreen> {
               height: 28,
               child: CircularProgressIndicator(strokeWidth: 3),
             )
-                : const Icon(Icons.storefront_outlined, color: AppColors.primaryBlue, size: 28), // Use your color
+                : const Icon(Icons.storefront_outlined, color: AppColors.primaryBlue, size: 28),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('PICK UP FROM',
-                      style: AppTextStyles.bodyText2.copyWith( // Use your text style
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                          color: Colors.grey)),
+                      style: AppTextStyles.bodyText2.copyWith(
+                          fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
                   const SizedBox(height: 4),
                   Text(
-                    _isFindingNearestBranch
-                        ? 'Finding nearest branch…'
-                        : _getBranchDisplayName(_currentBranchId),
-                    style: AppTextStyles.bodyText1.copyWith( // Use your text style
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.darkGrey), // Use your color
+                    _isFindingNearestBranch ? 'Finding nearest branch…' : _getBranchDisplayName(_currentBranchId),
+                    style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w600, color: AppColors.darkGrey),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   if (_isDefaultNearest && !_isFindingNearestBranch)
                     Text(
                       'Nearest to your address',
-                      style: AppTextStyles.bodyText2.copyWith(color: Colors.green, fontSize: 11), // Use your text style
+                      style: AppTextStyles.bodyText2.copyWith(color: Colors.green, fontSize: 11),
                     ),
                 ],
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkGrey), // Use your color
+            const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkGrey),
           ],
         ),
       ),
     );
   }
 
+  // Solution 1: Updated _buildAddressSection with caching
   Widget _buildAddressSection() {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.email == null) {
       return const Text('Please log in to set an address.');
     }
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('Users')
-          .doc(user.email)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: Text("Loading Address..."));
-        }
-        if (!snapshot.hasData || snapshot.data?.data() == null) {
-          return const Text('No address data found.');
-        }
 
-        final userData = snapshot.data!.data() as Map<String, dynamic>?;
-        final addresses = (userData?['address'] as List?)
-            ?.whereType<Map<String, dynamic>>()
-            .toList() ??
-            [];
+    // Load address only once or when needed
+    if (_cachedAddress == null && !_isLoadingAddress) {
+      _loadUserAddress(user.email!);
+    }
 
-        Map<String, dynamic>? defaultAddress;
-        try {
-          defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true);
-        } catch (e) {
-          defaultAddress = addresses.isNotEmpty ? addresses.first : null;
-        }
+    if (_isLoadingAddress) {
+      return _buildAddressLoading();
+    }
 
-        final addressText = defaultAddress == null
-            ? 'Set Delivery Address'
-            : [
-          if (defaultAddress['flat']?.isNotEmpty ?? false)
-            'Flat ${defaultAddress['flat']}',
-          if (defaultAddress['floor']?.isNotEmpty ?? false)
-            'Floor ${defaultAddress['floor']}',
-          if (defaultAddress['building']?.isNotEmpty ?? false)
-            'Building ${defaultAddress['building']}',
-          if (defaultAddress['street']?.isNotEmpty ?? false)
-            defaultAddress['street'],
-          if (defaultAddress['city']?.isNotEmpty ?? false)
-            defaultAddress['city'],
-        ].join(', ');
+    if (_cachedAddress == null) {
+      return _buildAddressError();
+    }
 
-        return InkWell(
-          onTap: () {
-            _showAddressBottomSheet((label, fullAddress) {
-              setState(() {});
-              _setNearestBranch();
-              _loadEstimatedTime();
-            });
-          },
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4.0),
-            child: Row(
+    return _buildAddressContent(_cachedAddress!);
+  }
+
+  Widget _buildAddressLoading() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        children: [
+          const Icon(Icons.location_on_outlined, color: AppColors.primaryBlue, size: 28),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.location_on_outlined,
-                    color: AppColors.primaryBlue, size: 28),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('DELIVER TO',
-                          style: AppTextStyles.bodyText2.copyWith(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                              color: Colors.grey)),
-                      const SizedBox(height: 4),
-                      Text(
-                        addressText,
-                        style: AppTextStyles.bodyText1.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.darkGrey),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+                Text('DELIVER TO',
+                  style: AppTextStyles.bodyText2.copyWith(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      color: Colors.grey
                   ),
                 ),
-                const SizedBox(width: 8),
-                const Icon(Icons.arrow_forward_ios,
-                    size: 16, color: AppColors.darkGrey),
+                const SizedBox(height: 4),
+                Text(
+                  'Loading address...',
+                  style: AppTextStyles.bodyText1.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.darkGrey
+                  ),
+                ),
               ],
             ),
           ),
-        );
-      },
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAddressError() {
+    return InkWell(
+      onTap: () => _showAddressBottomSheet((label, fullAddress) {
+        setState(() {});
+        _setNearestBranch();
+        _loadEstimatedTime();
+      }),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4.0),
+        child: Row(
+          children: [
+            const Icon(Icons.location_on_outlined, color: AppColors.primaryBlue, size: 28),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('DELIVER TO',
+                    style: AppTextStyles.bodyText2.copyWith(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        color: Colors.grey
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Set Delivery Address',
+                    style: AppTextStyles.bodyText1.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.darkGrey
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkGrey),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddressContent(Map<String, dynamic> defaultAddress) {
+    final addressText = [
+      if (defaultAddress['flat']?.isNotEmpty ?? false) 'Flat ${defaultAddress['flat']}',
+      if (defaultAddress['floor']?.isNotEmpty ?? false) 'Floor ${defaultAddress['floor']}',
+      if (defaultAddress['building']?.isNotEmpty ?? false) 'Building ${defaultAddress['building']}',
+      if (defaultAddress['street']?.isNotEmpty ?? false) defaultAddress['street'],
+      if (defaultAddress['city']?.isNotEmpty ?? false) defaultAddress['city'],
+    ].join(', ');
+
+    return InkWell(
+      onTap: () => _showAddressBottomSheet((label, fullAddress) {
+        setState(() {});
+        _setNearestBranch();
+        _loadEstimatedTime();
+      }),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4.0),
+        child: Row(
+          children: [
+            const Icon(Icons.location_on_outlined, color: AppColors.primaryBlue, size: 28),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('DELIVER TO',
+                    style: AppTextStyles.bodyText2.copyWith(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        color: Colors.grey
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    addressText,
+                    style: AppTextStyles.bodyText1.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.darkGrey
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkGrey),
+          ],
+        ),
+      ),
     );
   }
 
@@ -937,8 +1031,7 @@ class _CartScreenState extends State<CartScreen> {
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
         children: [
-          const Icon(Icons.timer_outlined,
-              color: AppColors.primaryBlue, size: 28),
+          const Icon(Icons.timer_outlined, color: AppColors.primaryBlue, size: 28),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
@@ -946,22 +1039,16 @@ class _CartScreenState extends State<CartScreen> {
               children: [
                 Text('EST. ${_orderType.toUpperCase()} TIME',
                     style: AppTextStyles.bodyText2.copyWith(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                        color: Colors.grey)),
+                        fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
                 const SizedBox(height: 4),
                 Text(
                   _estimatedTime,
-                  style: AppTextStyles.bodyText1.copyWith(
-                      fontWeight: FontWeight.w600, color: AppColors.darkGrey),
+                  style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w600, color: AppColors.darkGrey),
                 ),
                 if (_orderType == 'pickup' && !_isFindingNearestBranch)
                   Text(
                     'from ${_getBranchDisplayName(_currentBranchId)}',
-                    style: AppTextStyles.bodyText2.copyWith(
-                      color: Colors.green,
-                      fontSize: 11,
-                    ),
+                    style: AppTextStyles.bodyText2.copyWith(color: Colors.green, fontSize: 11),
                   ),
               ],
             ),
@@ -971,415 +1058,27 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Widget _buildCartItem(CartModel item, CartService cartService) {
-    final bool hasDiscount = item.discountedPrice != null;
-    final double displayPrice =
-    hasDiscount ? item.discountedPrice! : item.price;
-
-    return Dismissible(
-      key: ValueKey(item.id),
-      direction: DismissDirection.endToStart,
-      onDismissed: (direction) {
-        cartService.removeFromCart(item.id);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${item.name} removed from cart.'),
-            behavior: SnackBarBehavior.floating,
-            shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            action: SnackBarAction(
-              label: 'UNDO',
-              textColor: AppColors.accentBlue,
-              onPressed: () {
-                cartService.addToCart(
-                  MenuItem(
-                      id: item.id,
-                      name: item.name,
-                      imageUrl: item.imageUrl,
-                      price: item.price,
-                      discountedPrice: item.discountedPrice,
-                      description: '',
-                      branchId: '',
-                      categoryId: '',
-                      isAvailable: true,
-                      isPopular: false,
-                      sortOrder: 0,
-                      tags: {},
-                      variants: {}),
-                  quantity: item.quantity,
-                );
-              },
-            ),
-          ),
-        );
-      },
-      background: Container(
-        padding: const EdgeInsets.only(right: 20),
-        alignment: Alignment.centerRight,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            colors: [Colors.red.shade200, Colors.red.shade500],
-            begin: Alignment.centerLeft,
-            end: Alignment.centerRight,
-          ),
-        ),
-        child: const Icon(Icons.delete_sweep_outlined,
-            color: Colors.white, size: 32),
-      ),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppColors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-                color: AppColors.primaryBlue.withOpacity(0.05),
-                blurRadius: 15,
-                offset: const Offset(0, 4)),
-          ],
-        ),
-        child: Row(
-          crossAxisAlignment:
-          CrossAxisAlignment.start, // Changed to start for better alignment
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: CachedNetworkImage(
-                imageUrl: item.imageUrl,
-                width: 70,
-                height: 70,
-                fit: BoxFit.cover,
-                placeholder: (context, url) =>
-                    Container(color: Colors.grey.shade100),
-                errorWidget: (context, url, error) => Container(
-                  color: Colors.grey.shade100,
-                  child: Icon(Icons.fastfood_outlined,
-                      color: Colors.grey.shade400),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12), // Reduced from 16 to 12
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.name,
-                    style: AppTextStyles.bodyText1.copyWith(
-                        fontWeight: FontWeight.bold, color: AppColors.darkGrey),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  if (item.addons != null && item.addons!.isNotEmpty)
-                    Text(
-                      'Add-ons: ${item.addons!.join(', ')}',
-                      style: AppTextStyles.bodyText2.copyWith(fontSize: 12),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  const SizedBox(height: 8),
-
-                  // FIXED: Better layout that prevents overflow
-                  if (hasDiscount)
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // First row: Current price and original price
-                        Row(
-                          children: [
-                            Text(
-                              'QAR ${displayPrice.toStringAsFixed(2)}',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              // Use Flexible instead of Expanded
-                              child: Text(
-                                'QAR ${item.price.toStringAsFixed(2)}',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.normal,
-                                  color: Colors.grey,
-                                  decoration: TextDecoration.lineThrough,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        // Second row: Savings badge
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            'Save QAR ${(item.price - displayPrice).toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green,
-                            ),
-                          ),
-                        ),
-                      ],
-                    )
-                  else
-                    Text(
-                      'QAR ${displayPrice.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primaryBlue,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(
-                width: 8), // Added spacing between content and quantity control
-            _buildQuantityControl(item, cartService),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuantityControl(CartModel item, CartService cartService) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.lightGrey,
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Row(
-        children: [
-          InkWell(
-            onTap: () {
-              if (item.quantity > 1) {
-                cartService.updateQuantity(item.id, item.quantity - 1);
-              } else {
-                _showRemoveConfirmationDialog(item, cartService);
-              }
-            },
-            borderRadius: BorderRadius.circular(20),
-            child: Padding(
-              padding: const EdgeInsets.all(6.0),
-              child: Icon(Icons.remove,
-                  size: 20,
-                  color:
-                  item.quantity > 1 ? AppColors.primaryBlue : Colors.grey),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: Text(
-              item.quantity.toString(),
-              style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.darkGrey),
-            ),
-          ),
-          InkWell(
-            onTap: () => cartService.updateQuantity(item.id, item.quantity + 1),
-            borderRadius: BorderRadius.circular(20),
-            child: const Padding(
-              padding: EdgeInsets.all(6.0),
-              child: Icon(Icons.add, size: 20, color: AppColors.primaryBlue),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showRemoveConfirmationDialog(CartModel item, CartService cartService) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent),
-            const SizedBox(width: 12),
-            Text('Remove Item?',
-                style: AppTextStyles.headline2.copyWith(fontSize: 20)),
-          ],
-        ),
-        content: Text(
-            'Are you sure you want to remove ${item.name} from your cart?',
-            style: AppTextStyles.bodyText1),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel',
-                style: AppTextStyles.bodyText1
-                    .copyWith(color: AppColors.darkGrey)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              cartService.removeFromCart(item.id);
-              Navigator.pop(context);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
-              foregroundColor: AppColors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8)),
-            ),
-            child: Text('Remove',
-                style: AppTextStyles.buttonText.copyWith(fontSize: 14)),
-          ),
-        ],
-        actionsPadding:
-        const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      ),
-    );
-  }
-
-  Widget _buildYouMightAlsoLikeSection() {
-    if (_isLoadingDrinks) {
-      return const SizedBox.shrink();
-    }
-    if (_drinksItems.isEmpty) {
-      return const SizedBox.shrink();
-    }
+  Widget _buildNotesSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-          child: Text('You might also like',
-              style:
-              AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
-        ),
-        SizedBox(
-          height: 260,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            clipBehavior: Clip.none,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: _drinksItems.length,
-            itemBuilder: (_, i) => _DrinkCard(drink: _drinksItems[i]),
+        Text('Special Instructions', style: AppTextStyles.headline2.copyWith(fontSize: 18, color: AppColors.darkGrey)),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _notesController,
+          maxLines: 3,
+          decoration: InputDecoration(
+            hintText: 'e.g. "No onions", "Extra spicy"...',
+            hintStyle: AppTextStyles.bodyText2,
+            filled: true,
+            fillColor: AppColors.white,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade200)),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade200)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.5)),
+            contentPadding: const EdgeInsets.all(16),
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildNotesSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Special Instructions',
-              style: AppTextStyles.headline2
-                  .copyWith(fontSize: 18, color: AppColors.darkGrey)),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _notesController,
-            maxLines: 3,
-            decoration: InputDecoration(
-              hintText: 'e.g. "No onions", "Extra spicy"...',
-              hintStyle: AppTextStyles.bodyText2,
-              filled: true,
-              fillColor: AppColors.white,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade200),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade200),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide:
-                const BorderSide(color: AppColors.primaryBlue, width: 1.5),
-              ),
-              contentPadding: const EdgeInsets.all(16),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCheckoutBar(CartService cartService) {
-    // UPDATED: These now use the corrected calculations from CartService
-    final double subtotal = cartService.totalAmount; // Includes item discounts
-    final double total = cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0); // Includes item + coupon discounts
-
-    // DEBUG: Print cart details
-    debugPrint('CartScreen - Checkout Bar:');
-    debugPrint('  Subtotal: $subtotal');
-    debugPrint('  Coupon Discount: ${cartService.couponDiscount}');
-    debugPrint('  Total After Discount: $total');
-    debugPrint('  Items count: ${cartService.items.length}');
-    for (var item in cartService.items) {
-      debugPrint(
-          '    ${item.name}: ${item.finalPrice} x ${item.quantity} = ${item.finalPrice * item.quantity}');
-    }
-
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
-        child: Container(
-          padding: EdgeInsets.fromLTRB(
-              16, 16, 16, MediaQuery.of(context).padding.bottom + 16),
-          decoration: BoxDecoration(
-            color: AppColors.white.withOpacity(0.8),
-            border: Border(top: BorderSide(color: Colors.grey.shade200)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildCouponSection(cartService),
-              const SizedBox(height: 16),
-              _buildBillRow('Subtotal', subtotal),
-              if (cartService.couponDiscount > 0)
-                _buildBillRow('Coupon Discount', -cartService.couponDiscount,
-                    isDiscount: true),
-              const Divider(height: 24, thickness: 0.5),
-              _buildBillRow('Total Amount', total, isTotal: true),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isCheckingOut ? null : _proceedToCheckout,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryBlue,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: _isCheckingOut
-                      ? const SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 3))
-                      : Text('PLACE ORDER',
-                      style: AppTextStyles.buttonText
-                          .copyWith(color: AppColors.white)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -1398,14 +1097,12 @@ class _CartScreenState extends State<CartScreen> {
             Expanded(
               child: Text(
                 'Coupon "${cartService.appliedCoupon!.code}" applied!',
-                style: AppTextStyles.bodyText1.copyWith(
-                    color: Colors.green.shade800, fontWeight: FontWeight.bold),
+                style: AppTextStyles.bodyText1.copyWith(color: Colors.green.shade800, fontWeight: FontWeight.bold),
               ),
             ),
             TextButton(
               onPressed: () => cartService.removeCoupon(),
-              child: Text('Remove',
-                  style: AppTextStyles.bodyText2.copyWith(color: Colors.red)),
+              child: Text('Remove', style: AppTextStyles.bodyText2.copyWith(color: Colors.red)),
             ),
           ],
         ),
@@ -1413,13 +1110,7 @@ class _CartScreenState extends State<CartScreen> {
     } else {
       return InkWell(
         onTap: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => CouponsScreen(cartService: cartService)),
-          );
-          if (result == 'go_to_cart') {
-            // Already on Cart tab; optionally refresh totals or show a toast
-          }
+          await Navigator.push(context, MaterialPageRoute(builder: (context) => CouponsScreen(cartService: cartService)));
         },
         borderRadius: BorderRadius.circular(12),
         child: Container(
@@ -1432,14 +1123,8 @@ class _CartScreenState extends State<CartScreen> {
             children: [
               const Icon(Icons.discount_outlined, color: AppColors.primaryBlue),
               const SizedBox(width: 12),
-              Expanded(
-                child: Text('Apply Coupon',
-                    style: AppTextStyles.bodyText1.copyWith(
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.primaryBlue)),
-              ),
-              const Icon(Icons.arrow_forward_ios,
-                  size: 16, color: AppColors.primaryBlue),
+              Expanded(child: Text('Apply Coupon', style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w500, color: AppColors.primaryBlue))),
+              const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.primaryBlue),
             ],
           ),
         ),
@@ -1447,12 +1132,9 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  Widget _buildBillRow(String label, double amount,
-      {bool isTotal = false, bool isDiscount = false}) {
+  Widget _buildBillRow(String label, double amount, {bool isTotal = false, bool isDiscount = false}) {
     final style = AppTextStyles.bodyText1.copyWith(
-        color: isDiscount
-            ? Colors.green.shade700
-            : (isTotal ? AppColors.darkGrey : Colors.grey.shade600),
+        color: isDiscount ? Colors.green.shade700 : (isTotal ? AppColors.darkGrey : Colors.grey.shade600),
         fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
         fontSize: isTotal ? 18 : 16);
     return Padding(
@@ -1462,11 +1144,8 @@ class _CartScreenState extends State<CartScreen> {
         children: [
           Text(label, style: style),
           Text(
-            isDiscount
-                ? '- QAR ${amount.abs().toStringAsFixed(2)}'
-                : 'QAR ${amount.toStringAsFixed(2)}',
-            style: style.copyWith(
-                fontWeight: isTotal ? FontWeight.bold : FontWeight.w600),
+            isDiscount ? '- QAR ${amount.abs().toStringAsFixed(2)}' : 'QAR ${amount.toStringAsFixed(2)}',
+            style: style.copyWith(fontWeight: isTotal ? FontWeight.bold : FontWeight.w600),
           ),
         ],
       ),
@@ -1480,31 +1159,114 @@ class _CartScreenState extends State<CartScreen> {
         backgroundColor: AppColors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text('Clear Cart?', style: AppTextStyles.headline2),
-        content: Text('This will remove all items from your cart.',
-            style: AppTextStyles.bodyText1),
+        content: Text('This will remove all items from your cart.', style: AppTextStyles.bodyText1),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('Cancel',
-                style: AppTextStyles.bodyText1
-                    .copyWith(color: AppColors.darkGrey)),
+            child: Text('Cancel', style: AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey)),
           ),
           TextButton(
             onPressed: () {
               cartService.clearCart();
               Navigator.pop(context);
             },
-            child: Text('Clear',
-                style: AppTextStyles.bodyText1
-                    .copyWith(color: Colors.red, fontWeight: FontWeight.bold)),
+            child: Text('Clear', style: AppTextStyles.bodyText1.copyWith(color: Colors.red, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
     );
   }
 
-  void _showAddressBottomSheet(
-      Function(String label, String fullAddress) onAddressSelected) {
+  void _showPaymentMethodsBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        return Container(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 24, left: 16, right: 16, top: 12),
+          decoration: const BoxDecoration(
+            color: AppColors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+              const SizedBox(height: 20),
+              Text('Select Payment Method', style: AppTextStyles.headline2),
+              const SizedBox(height: 16),
+              ...['Cash on Delivery', 'Card', 'Apple Pay', 'Google Pay'].map((method) => ListTile(
+                leading: CircleAvatar(backgroundColor: AppColors.lightGrey, child: Icon(_getPaymentIcon(method), color: AppColors.primaryBlue)),
+                title: Text(method, style: AppTextStyles.bodyText1.copyWith(fontWeight: _paymentType == method ? FontWeight.bold : FontWeight.normal)),
+                trailing: _paymentType == method ? const Icon(Icons.check_circle, color: Colors.green) : null,
+                onTap: () {
+                  setState(() => _paymentType = method);
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$method selected')));
+                },
+              )),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  IconData _getPaymentIcon(String method) {
+    switch (method) {
+      case 'Cash on Delivery': return Icons.money_outlined;
+      case 'Card': return Icons.credit_card_outlined;
+      case 'Apple Pay': return Icons.phone_iphone_outlined;
+      case 'Google Pay': return Icons.android_outlined;
+      default: return Icons.payments_outlined;
+    }
+  }
+
+  void _showBranchSelectionBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 24, left: 16, right: 16, top: 12),
+        decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+            const SizedBox(height: 20),
+            Text('Select Pickup Branch', style: AppTextStyles.headline2),
+            const SizedBox(height: 16),
+            if (_allBranches.isEmpty)
+              Padding(padding: const EdgeInsets.symmetric(vertical: 32), child: Text('No active branches available', style: AppTextStyles.bodyText2))
+            else
+              ..._allBranches.map((branch) => ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: Colors.grey.shade100,
+                  child: Icon(branch['id'] == _currentBranchId ? Icons.store : Icons.storefront_outlined, color: Colors.blue.shade800),
+                ),
+                title: Text(branch['name']!, style: AppTextStyles.bodyText1.copyWith(
+                  fontWeight: branch['id'] == _currentBranchId ? FontWeight.bold : FontWeight.normal,
+                )),
+                trailing: branch['id'] == _currentBranchId ? const Icon(Icons.check_circle, color: Colors.green) : null,
+                onTap: () {
+                  setState(() {
+                    _currentBranchId = branch['id']!;
+                    _isDefaultNearest = (_currentBranchId == _nearestBranchId);
+                  });
+                  _loadDrinks();
+                  _loadEstimatedTime();
+                  Navigator.pop(context);
+                },
+              )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAddressBottomSheet(Function(String label, String fullAddress) onAddressSelected) {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.email == null) return;
 
@@ -1512,181 +1274,147 @@ class _CartScreenState extends State<CartScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) {
-        return StreamBuilder<DocumentSnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('Users')
-              .doc(user.email)
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) {
-              return const Center(child: CircularProgressIndicator());
+      builder: (context) => StreamBuilder<DocumentSnapshot>(
+        stream: FirebaseFirestore.instance.collection('Users').doc(user.email).snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+
+          final userData = (snapshot.data!.data() as Map<String, dynamic>?) ?? {};
+          final List<Map<String, dynamic>> addresses = ((userData['address'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+          return StatefulBuilder(builder: (context, setModalState) {
+            Future<void> _setDefaultAddress(int index) async {
+              if (addresses.isEmpty || index < 0 || index >= addresses.length) return;
+              for (int i = 0; i < addresses.length; i++) {
+                addresses[i]['isDefault'] = i == index;
+              }
+              setModalState(() {});
+              await FirebaseFirestore.instance.collection('Users').doc(user.email).update({'address': addresses});
+              final selected = addresses[index];
+              final detailed = [
+                if ((selected['flat'] ?? '').toString().isNotEmpty) 'Flat ${selected['flat']}',
+                if ((selected['floor'] ?? '').toString().isNotEmpty) 'Floor ${selected['floor']}',
+                if ((selected['building'] ?? '').toString().isNotEmpty) 'Building ${selected['building']}',
+                if ((selected['street'] ?? '').toString().isNotEmpty) selected['street'],
+                if ((selected['city'] ?? '').toString().isNotEmpty) selected['city'],
+              ].join(', ');
+
+              // Solution 1: Update the cache when address is changed
+              if (mounted) {
+                setState(() {
+                  _cachedAddress = selected;
+                });
+              }
+
+              onAddressSelected((selected['label'] ?? 'Home').toString(), detailed);
+              if (Navigator.canPop(context)) Navigator.pop(context);
             }
 
-            final userDoc = snapshot.data!;
-            final userData = (userDoc.data() as Map<String, dynamic>?) ?? {};
-            final List<Map<String, dynamic>> addresses =
-            ((userData['address'] as List?) ?? [])
-                .map((e) => Map<String, dynamic>.from(e as Map))
-                .toList();
-
-            return StatefulBuilder(
-              builder: (context, setModalState) {
-                Future<void> _setDefaultAddress(int index) async {
-                  if (addresses.isEmpty ||
-                      index < 0 ||
-                      index >= addresses.length) return;
-
-                  for (int i = 0; i < addresses.length; i++) {
-                    addresses[i]['isDefault'] = i == index;
-                  }
-                  setModalState(() {});
-
-                  await FirebaseFirestore.instance
-                      .collection('Users')
-                      .doc(user.email)
-                      .update({'address': addresses});
-
-                  final selected = addresses[index];
-                  final detailed = [
-                    if ((selected['flat'] ?? '').toString().isNotEmpty)
-                      'Flat ${selected['flat']}',
-                    if ((selected['floor'] ?? '').toString().isNotEmpty)
-                      'Floor ${selected['floor']}',
-                    if ((selected['building'] ?? '').toString().isNotEmpty)
-                      'Building ${selected['building']}',
-                    if ((selected['street'] ?? '').toString().isNotEmpty)
-                      selected['street'],
-                    if ((selected['city'] ?? '').toString().isNotEmpty)
-                      selected['city'],
-                  ].join(', ');
-
-                  onAddressSelected(
-                      (selected['label'] ?? 'Home').toString(), detailed);
-
-                  if (Navigator.canPop(context)) Navigator.pop(context);
-                }
-
-                return Container(
-                  padding: EdgeInsets.only(
-                    top: 12,
-                    left: 16,
-                    right: 16,
-                    bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-                  ),
-                  decoration: const BoxDecoration(
-                    color: AppColors.white,
-                    borderRadius:
-                    BorderRadius.vertical(top: Radius.circular(24)),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade300,
-                          borderRadius: BorderRadius.circular(2),
+            return Container(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 24, left: 16, right: 16, top: 12),
+              decoration: const BoxDecoration(color: AppColors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+                  const SizedBox(height: 20),
+                  Text('Select Delivery Address', style: AppTextStyles.headline2),
+                  const SizedBox(height: 16),
+                  if (addresses.isEmpty)
+                    Padding(padding: const EdgeInsets.symmetric(vertical: 32), child: Text('No addresses saved yet', style: AppTextStyles.bodyText2))
+                  else
+                    ...addresses.asMap().entries.map((entry) {
+                      final address = entry.value;
+                      final detailedAddress = [
+                        if ((address['flat'] ?? '').isNotEmpty) 'Flat ${address['flat']}',
+                        if ((address['floor'] ?? '').isNotEmpty) 'Floor ${address['floor']}',
+                        if ((address['building'] ?? '').isNotEmpty) 'Building ${address['building']}',
+                        if ((address['street'] ?? '').isNotEmpty) address['street'],
+                        if ((address['city'] ?? '').isNotEmpty) address['city'],
+                      ].join(', ');
+                      final isDefault = address['isDefault'] == true;
+                      final label = address['label'] ?? 'Home';
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: AppColors.lightGrey,
+                          child: Icon(label == 'Home' ? Icons.home_outlined : Icons.work_outline, color: AppColors.primaryBlue),
                         ),
+                        title: Text(label, style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold)),
+                        subtitle: Text(detailedAddress, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        trailing: isDefault ? const Icon(Icons.check_circle, color: Colors.green) : null,
+                        onTap: () => _setDefaultAddress(entry.key),
+                      );
+                    }),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.push(context, MaterialPageRoute(builder: (context) => const SavedAddressesScreen()));
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accentBlue.withOpacity(0.15),
+                        foregroundColor: AppColors.primaryBlue,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
-                      const SizedBox(height: 20),
-                      Text('Select Delivery Address',
-                          style: AppTextStyles.headline2),
-                      const SizedBox(height: 16),
-                      if (addresses.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 32),
-                          child: Text('No addresses saved yet',
-                              style: AppTextStyles.bodyText2),
-                        )
-                      else
-                        ListView.separated(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: addresses.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (context, index) {
-                            final address = addresses[index];
-                            final detailedAddress = [
-                              if ((address['flat'] ?? '').isNotEmpty)
-                                'Flat ${address['flat']}',
-                              if ((address['floor'] ?? '').isNotEmpty)
-                                'Floor ${address['floor']}',
-                              if ((address['building'] ?? '').isNotEmpty)
-                                'Building ${address['building']}',
-                              if ((address['street'] ?? '').isNotEmpty)
-                                address['street'],
-                              if ((address['city'] ?? '').isNotEmpty)
-                                address['city'],
-                            ].join(', ');
-                            final isDefault = address['isDefault'] == true;
-                            final label = address['label'] ?? 'Home';
-
-                            return ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: AppColors.lightGrey,
-                                child: Icon(
-                                  label == 'Home'
-                                      ? Icons.home_outlined
-                                      : Icons.work_outline,
-                                  color: AppColors.primaryBlue,
-                                ),
-                              ),
-                              title: Text(label,
-                                  style: AppTextStyles.bodyText1
-                                      .copyWith(fontWeight: FontWeight.bold)),
-                              subtitle: Text(detailedAddress,
-                                  maxLines: 1, overflow: TextOverflow.ellipsis),
-                              trailing: isDefault
-                                  ? const Icon(Icons.check_circle,
-                                  color: Colors.green)
-                                  : null,
-                              onTap: () => _setDefaultAddress(index),
-                            );
-                          },
-                        ),
-                      const SizedBox(height: 24),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (context) =>
-                                    const SavedAddressesScreen()));
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                            AppColors.accentBlue.withOpacity(0.15),
-                            foregroundColor: AppColors.primaryBlue,
-                            elevation: 0,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                          ),
-                          child: Text('Manage Addresses',
-                              style: AppTextStyles.buttonText
-                                  .copyWith(fontSize: 16)),
-                        ),
-                      ),
-                    ],
+                      child: Text('Manage Addresses', style: AppTextStyles.buttonText.copyWith(fontSize: 16)),
+                    ),
                   ),
-                );
-              },
+                ],
+              ),
             );
-          },
-        );
-      },
+          });
+        },
+      ),
     );
+  }
+
+  Map<String, dynamic> _composePaymentMeta(double amountQar) {
+    switch (_paymentType) {
+      case 'Cash on Delivery':
+        return {
+          'paymentType': 'Cash on Delivery',
+          'paymentStatus': 'pending',
+          'transactionId': 'no_payment',
+          'paymentDate': FieldValue.serverTimestamp(),
+          'paymentDetails': {'method': 'cod', 'amount': amountQar, 'gateway': 'none', 'note': 'COD placeholder'},
+        };
+      case 'Card':
+        return {
+          'paymentType': 'Card',
+          'paymentStatus': 'pending',
+          'transactionId': 'pending',
+          'paymentDate': FieldValue.serverTimestamp(),
+          'paymentDetails': {'method': 'card', 'amount': amountQar, 'gateway': 'placeholder', 'note': 'Card placeholder'},
+        };
+      case 'Apple Pay':
+        return {
+          'paymentType': 'Apple Pay',
+          'paymentStatus': 'pending',
+          'transactionId': 'pending',
+          'paymentDate': FieldValue.serverTimestamp(),
+          'paymentDetails': {'method': 'apple_pay', 'amount': amountQar, 'gateway': 'placeholder', 'note': 'Apple Pay placeholder'},
+        };
+      default:
+        return {
+          'paymentType': 'Google Pay',
+          'paymentStatus': 'pending',
+          'transactionId': 'pending',
+          'paymentDate': FieldValue.serverTimestamp(),
+          'paymentDetails': {'method': 'google_pay', 'amount': amountQar, 'gateway': 'placeholder', 'note': 'Google Pay placeholder'},
+        };
+    }
   }
 
   Future<void> _proceedToCheckout() async {
     final String notes = _notesController.text.trim();
     if (!mounted) return;
+
     setState(() => _isCheckingOut = true);
+
     try {
       final cartService = CartService();
       if (cartService.items.isEmpty) throw Exception("Your cart is empty");
@@ -1704,13 +1432,11 @@ class _CartScreenState extends State<CartScreen> {
         defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true, orElse: () => addresses[0]);
       }
 
-      // Load user profile fields needed for order
       final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
       final userData = userDoc.data() as Map<String, dynamic>;
       final String userName = userData['name'] ?? 'Customer';
       final String userPhone = userData['phone'] ?? 'No phone provided';
 
-      // Create order (existing method)
       final orderDoc = await _createOrderInFirestore(
         user: user,
         cartService: cartService,
@@ -1721,12 +1447,10 @@ class _CartScreenState extends State<CartScreen> {
         orderType: _orderType,
       );
 
-      // Update payment fields (matches provided structure)
       final double totalForPayment = cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0);
       final paymentMeta = _composePaymentMeta(totalForPayment);
       await orderDoc.update(paymentMeta);
 
-      // Optional: keep this if something else relies on it
       await _handleSuccessfulPayment(orderDoc, {
         'id': paymentMeta['transactionId'] ?? 'no_payment',
         'amount': totalForPayment,
@@ -1736,7 +1460,10 @@ class _CartScreenState extends State<CartScreen> {
     } catch (e, st) {
       debugPrint('Checkout error → $e\n$st');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Checkout failed: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Checkout failed: $e'),
+          backgroundColor: Colors.red,
+        ));
       }
     } finally {
       if (mounted) setState(() => _isCheckingOut = false);
@@ -1753,14 +1480,12 @@ class _CartScreenState extends State<CartScreen> {
     required String orderType,
   }) async {
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    final counterRef =
-    FirebaseFirestore.instance.collection('daily_counters').doc(today);
+    final counterRef = FirebaseFirestore.instance.collection('daily_counters').doc(today);
     final orderDoc = FirebaseFirestore.instance.collection('Orders').doc();
 
     return await FirebaseFirestore.instance.runTransaction((transaction) async {
       final counterSnap = await transaction.get(counterRef);
-      int dailyCount =
-      counterSnap.exists ? (counterSnap.get('count') as int) + 1 : 1;
+      int dailyCount = counterSnap.exists ? (counterSnap.get('count') as int) + 1 : 1;
       final paddedOrderNumber = dailyCount.toString().padLeft(3, '0');
       final String orderId = 'FD-$today-$paddedOrderNumber';
 
@@ -1776,15 +1501,13 @@ class _CartScreenState extends State<CartScreen> {
           'name': item.name,
           'quantity': item.quantity,
           'price': item.price,
-          'discountedPrice':
-          item.discountedPrice, // Add discounted price to order
-          'finalPrice': item.finalPrice, // Add final price to order
+          'discountedPrice': item.discountedPrice,
+          'finalPrice': item.finalPrice,
           'variants': item.variants,
           'addons': item.addons,
-          'total': item.finalPrice * item.quantity, // Use finalPrice for total
+          'total': item.finalPrice * item.quantity,
           if (item.couponCode != null) 'couponCode': item.couponCode,
-          if (item.couponDiscount != null)
-            'couponDiscount': item.couponDiscount,
+          if (item.couponDiscount != null) 'couponDiscount': item.couponDiscount,
           if (item.couponId != null) 'couponId': item.couponId,
         };
       }).toList();
@@ -1809,13 +1532,10 @@ class _CartScreenState extends State<CartScreen> {
         'deliveryAddress': defaultAddress,
         'paymentStatus': 'pending',
         'riderPaymentAmount': riderPaymentAmount,
-        'branchId': _currentBranchId, // Add branch ID to order
-        if (cartService.appliedCoupon != null)
-          'couponCode': cartService.appliedCoupon!.code,
-        if (cartService.appliedCoupon != null)
-          'couponDiscount': cartService.couponDiscount,
-        if (cartService.appliedCoupon != null)
-          'couponId': cartService.appliedCoupon!.id,
+        'branchId': _currentBranchId,
+        if (cartService.appliedCoupon != null) 'couponCode': cartService.appliedCoupon!.code,
+        if (cartService.appliedCoupon != null) 'couponDiscount': cartService.couponDiscount,
+        if (cartService.appliedCoupon != null) 'couponId': cartService.appliedCoupon!.id,
       };
 
       transaction.set(orderDoc, orderData);
@@ -1823,8 +1543,7 @@ class _CartScreenState extends State<CartScreen> {
     });
   }
 
-  Future<void> _handleSuccessfulPayment(DocumentReference orderDoc,
-      Map<String, dynamic> paymentVerification) async {
+  Future<void> _handleSuccessfulPayment(DocumentReference orderDoc, Map<String, dynamic> paymentVerification) async {
     await orderDoc.update({
       'status': 'pending',
       'paymentStatus': 'paid',
@@ -1833,8 +1552,7 @@ class _CartScreenState extends State<CartScreen> {
     });
 
     final cartService = CartService();
-    if (cartService.appliedCoupon != null &&
-        FirebaseAuth.instance.currentUser?.email != null) {
+    if (cartService.appliedCoupon != null && FirebaseAuth.instance.currentUser?.email != null) {
       await FirebaseFirestore.instance.collection('coupon_usage').add({
         'couponId': cartService.appliedCoupon!.id,
         'userId': FirebaseAuth.instance.currentUser!.email,
@@ -1857,13 +1575,11 @@ class _CartScreenState extends State<CartScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.check_circle,
-                color: AppColors.primaryBlue, size: 60),
+            const Icon(Icons.check_circle, color: AppColors.primaryBlue, size: 60),
             const SizedBox(height: 16),
             Text('Order Confirmed!', style: AppTextStyles.headline2),
             const SizedBox(height: 8),
-            Text('Your order has been placed successfully',
-                textAlign: TextAlign.center, style: AppTextStyles.bodyText1),
+            Text('Your order has been placed successfully', textAlign: TextAlign.center, style: AppTextStyles.bodyText1),
             const SizedBox(height: 8),
             Text(
               'Order will be prepared at ${_getBranchDisplayName(_currentBranchId)}',
@@ -1871,33 +1587,184 @@ class _CartScreenState extends State<CartScreen> {
               style: AppTextStyles.bodyText2.copyWith(color: Colors.green),
             ),
             const SizedBox(height: 24),
-            // In cartScreen.dart → inside _showOrderConfirmationDialog()
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: () {
                   Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(
-                      builder: (_) => const MainApp(initialIndex: 0),
-                    ),
+                    MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 0)),
                         (route) => false,
                   );
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryBlue,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
-                child: Text(
-                  'Back to Menu',
-                  style: AppTextStyles.buttonText.copyWith(color: AppColors.white),
-                ),
+                child: Text('Back to Menu', style: AppTextStyles.buttonText.copyWith(color: AppColors.white)),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _CartItemWidget extends StatefulWidget {
+  final CartModel item;
+  final CartService cartService;
+  final Function(CartModel) onRemove;
+
+  const _CartItemWidget({Key? key, required this.item, required this.cartService, required this.onRemove}) : super(key: key);
+
+  @override
+  State<_CartItemWidget> createState() => _CartItemWidgetState();
+}
+
+class _CartItemWidgetState extends State<_CartItemWidget> {
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final cartService = widget.cartService;
+    final bool hasDiscount = item.discountedPrice != null;
+    final double displayPrice = hasDiscount ? item.discountedPrice! : item.price;
+
+    return Dismissible(
+      key: ValueKey(item.id),
+      direction: DismissDirection.endToStart,
+      onDismissed: (direction) => widget.onRemove(item),
+      background: Container(
+        padding: const EdgeInsets.only(right: 20),
+        alignment: Alignment.centerRight,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(colors: [Colors.red.shade200, Colors.red.shade500], begin: Alignment.centerLeft, end: Alignment.centerRight),
+        ),
+        child: const Icon(Icons.delete_sweep_outlined, color: Colors.white, size: 32),
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [BoxShadow(color: AppColors.primaryBlue.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 4))],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: CachedNetworkImage(
+                imageUrl: item.imageUrl,
+                width: 70,
+                height: 70,
+                fit: BoxFit.cover,
+                placeholder: (context, url) => Container(color: Colors.grey.shade100),
+                errorWidget: (context, url, error) => Container(
+                  color: Colors.grey.shade100,
+                  child: Icon(Icons.fastfood_outlined, color: Colors.grey.shade400),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item.name, style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold, color: AppColors.darkGrey), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 4),
+                  if (item.addons != null && item.addons!.isNotEmpty)
+                    Text('Add-ons: ${item.addons!.join(', ')}', style: AppTextStyles.bodyText2.copyWith(fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 8),
+                  if (hasDiscount)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text('QAR ${displayPrice.toStringAsFixed(2)}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
+                            const SizedBox(width: 8),
+                            Flexible(child: Text('QAR ${item.price.toStringAsFixed(2)}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.normal, color: Colors.grey, decoration: TextDecoration.lineThrough), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
+                          child: Text('Save QAR ${(item.price - displayPrice).toStringAsFixed(2)}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green)),
+                        ),
+                      ],
+                    )
+                  else
+                    Text('QAR ${displayPrice.toStringAsFixed(2)}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.primaryBlue)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            _buildQuantityControl(item, cartService),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuantityControl(CartModel item, CartService cartService) {
+    return Container(
+      decoration: BoxDecoration(color: AppColors.lightGrey, borderRadius: BorderRadius.circular(30)),
+      child: Row(
+        children: [
+          InkWell(
+            onTap: () {
+              if (item.quantity > 1) {
+                cartService.updateQuantity(item.id, item.quantity - 1);
+              } else {
+                _showRemoveConfirmationDialog(item, cartService);
+              }
+            },
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.all(6.0),
+              child: Icon(Icons.remove, size: 20, color: item.quantity > 1 ? AppColors.primaryBlue : Colors.grey),
+            ),
+          ),
+          ValueListenableBuilder<int>(
+            valueListenable: ValueNotifier(item.quantity),
+            builder: (context, quantity, child) => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Text(quantity.toString(), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.darkGrey)),
+            ),
+          ),
+          InkWell(
+            onTap: () => cartService.updateQuantity(item.id, item.quantity + 1),
+            borderRadius: BorderRadius.circular(20),
+            child: const Padding(padding: EdgeInsets.all(6.0), child: Icon(Icons.add, size: 20, color: AppColors.primaryBlue)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRemoveConfirmationDialog(CartModel item, CartService cartService) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent), const SizedBox(width: 12), Text('Remove Item?', style: AppTextStyles.headline2.copyWith(fontSize: 20))]),
+        content: Text('Are you sure you want to remove ${item.name} from your cart?', style: AppTextStyles.bodyText1),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel', style: AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey))),
+          ElevatedButton(
+            onPressed: () {
+              cartService.removeFromCart(item.id);
+              Navigator.pop(context);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: AppColors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            child: Text('Remove', style: AppTextStyles.buttonText.copyWith(fontSize: 14)),
+          ),
+        ],
+        actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       ),
     );
   }
@@ -1913,20 +1780,16 @@ class _DrinkCard extends StatefulWidget {
 class _DrinkCardState extends State<_DrinkCard> {
   void _updateDrinkQuantity(int change) {
     final cartService = CartService();
-    final currentItem = cartService.items.firstWhere(
-          (item) => item.id == widget.drink.id,
-      orElse: () => CartModel(
-        id: widget.drink.id,
-        name: widget.drink.name,
-        imageUrl: widget.drink.imageUrl,
-        price: widget.drink.price,
-        discountedPrice: widget.drink.discountedPrice,
-        quantity: 0,
-      ),
-    );
+    final currentItem = cartService.items.firstWhere((item) => item.id == widget.drink.id, orElse: () => CartModel(
+      id: widget.drink.id,
+      name: widget.drink.name,
+      imageUrl: widget.drink.imageUrl,
+      price: widget.drink.price,
+      discountedPrice: widget.drink.discountedPrice,
+      quantity: 0,
+    ));
 
     int newQuantity = currentItem.quantity + change;
-
     if (newQuantity > 0) {
       if (currentItem.quantity == 0) {
         cartService.addToCart(widget.drink, quantity: 1);
@@ -1944,15 +1807,13 @@ class _DrinkCardState extends State<_DrinkCard> {
       listenable: CartService(),
       builder: (context, child) {
         final cartService = CartService();
-        final cartItem = cartService.items.firstWhere(
-                (item) => item.id == widget.drink.id,
-            orElse: () => CartModel(
-                id: widget.drink.id,
-                name: '',
-                imageUrl: '',
-                price: 0,
-                discountedPrice: widget.drink.discountedPrice,
-                quantity: 0));
+        final cartItem = cartService.items.firstWhere((item) => item.id == widget.drink.id, orElse: () => CartModel(
+            id: widget.drink.id,
+            name: '',
+            imageUrl: '',
+            price: 0,
+            discountedPrice: widget.drink.discountedPrice,
+            quantity: 0));
         int quantity = cartItem.quantity;
 
         return Container(
@@ -1961,31 +1822,20 @@ class _DrinkCardState extends State<_DrinkCard> {
           decoration: BoxDecoration(
             color: AppColors.white,
             borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.darkGrey.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
+            boxShadow: [BoxShadow(color: AppColors.darkGrey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: ClipRRect(
-                  borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(16)),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
                   child: CachedNetworkImage(
                     imageUrl: widget.drink.imageUrl,
                     fit: BoxFit.cover,
                     width: double.infinity,
-                    placeholder: (context, url) =>
-                        Container(color: AppColors.lightGrey),
-                    errorWidget: (context, url, error) => const Icon(
-                        Icons.local_drink_outlined,
-                        size: 40,
-                        color: Colors.grey),
+                    placeholder: (context, url) => Container(color: AppColors.lightGrey),
+                    errorWidget: (context, url, error) => const Icon(Icons.local_drink_outlined, size: 40, color: Colors.grey),
                   ),
                 ),
               ),
@@ -1994,42 +1844,18 @@ class _DrinkCardState extends State<_DrinkCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      widget.drink.name,
-                      style: AppTextStyles.bodyText1.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.darkGrey),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    Text(widget.drink.name, style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold, color: AppColors.darkGrey), maxLines: 1, overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 4),
-                    // UPDATED: Show discounted price for drinks too
                     if (widget.drink.discountedPrice != null)
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'QAR ${widget.drink.discountedPrice!.toStringAsFixed(2)}',
-                            style: AppTextStyles.bodyText1.copyWith(
-                                color: Colors.green,
-                                fontWeight: FontWeight.w600),
-                          ),
-                          Text(
-                            'QAR ${widget.drink.price.toStringAsFixed(2)}',
-                            style: AppTextStyles.bodyText2.copyWith(
-                              color: Colors.grey,
-                              decoration: TextDecoration.lineThrough,
-                            ),
-                          ),
+                          Text('QAR ${widget.drink.discountedPrice!.toStringAsFixed(2)}', style: AppTextStyles.bodyText1.copyWith(color: Colors.green, fontWeight: FontWeight.w600)),
+                          Text('QAR ${widget.drink.price.toStringAsFixed(2)}', style: AppTextStyles.bodyText2.copyWith(color: Colors.grey, decoration: TextDecoration.lineThrough)),
                         ],
                       )
                     else
-                      Text(
-                        'QAR ${widget.drink.price.toStringAsFixed(2)}',
-                        style: AppTextStyles.bodyText1.copyWith(
-                            color: AppColors.primaryBlue,
-                            fontWeight: FontWeight.w600),
-                      ),
+                      Text('QAR ${widget.drink.price.toStringAsFixed(2)}', style: AppTextStyles.bodyText1.copyWith(color: AppColors.primaryBlue, fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
@@ -2041,42 +1867,24 @@ class _DrinkCardState extends State<_DrinkCard> {
                   child: ElevatedButton.icon(
                     onPressed: () => _updateDrinkQuantity(1),
                     icon: const Icon(Icons.add_shopping_cart, size: 18),
-                    label: Text('Add',
-                        style: AppTextStyles.buttonText
-                            .copyWith(fontSize: 14)),
+                    label: Text('Add', style: AppTextStyles.buttonText.copyWith(fontSize: 14)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryBlue,
                       foregroundColor: AppColors.white,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       padding: const EdgeInsets.symmetric(vertical: 8),
                     ),
                   ),
                 )
                     : Container(
                   height: 40,
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryBlue,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+                  decoration: BoxDecoration(color: AppColors.primaryBlue, borderRadius: BorderRadius.circular(10)),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      IconButton(
-                        onPressed: () => _updateDrinkQuantity(-1),
-                        icon: const Icon(Icons.remove,
-                            color: AppColors.white, size: 20),
-                      ),
-                      Text(
-                        quantity.toString(),
-                        style: AppTextStyles.buttonText
-                            .copyWith(color: AppColors.white),
-                      ),
-                      IconButton(
-                        onPressed: () => _updateDrinkQuantity(1),
-                        icon: const Icon(Icons.add,
-                            color: AppColors.white, size: 20),
-                      ),
+                      IconButton(onPressed: () => _updateDrinkQuantity(-1), icon: const Icon(Icons.remove, color: AppColors.white, size: 20)),
+                      Text(quantity.toString(), style: AppTextStyles.buttonText.copyWith(color: AppColors.white)),
+                      IconButton(onPressed: () => _updateDrinkQuantity(1), icon: const Icon(Icons.add, color: AppColors.white, size: 20)),
                     ],
                   ),
                 ),
@@ -2090,27 +1898,31 @@ class _DrinkCardState extends State<_DrinkCard> {
 }
 
 class CartService extends ChangeNotifier {
-  static final CartService _instance = CartService._internal();
-  factory CartService() => _instance;
+  static CartService? _instance;
+
+  static CartService get instance {
+    _instance ??= CartService._internal();
+    return _instance!;
+  }
 
   CartService._internal() {
     _loadCartFromPrefs();
   }
 
+  factory CartService() => instance;
+
   final List<CartModel> _items = [];
   final FirebaseAuth _auth = FirebaseAuth.instance;
   CouponModel? _appliedCoupon;
   double _couponDiscount = 0;
-  String _currentBranchId = 'Old_Airport'; // Made mutable
+  String _currentBranchId = 'Old_Airport';
 
   List<CartModel> get items => _items;
   int get itemCount => _items.fold(0, (sum, item) => sum + item.quantity);
 
-  // UPDATED: Calculate subtotal using finalPrice (includes item discounts)
   double get totalAmount =>
       _items.fold(0, (sum, item) => sum + (item.finalPrice * item.quantity));
 
-  // UPDATED: Calculate total after coupon discount
   double get totalAfterDiscount {
     double subtotal = totalAmount;
     double finalTotal = subtotal - _couponDiscount;
@@ -2140,7 +1952,6 @@ class CartService extends ChangeNotifier {
           _couponDiscount = cartData['couponDiscount']?.toDouble() ?? 0;
         }
 
-        // Load saved branch ID
         _currentBranchId = cartData['branchId'] ?? 'Old_Airport';
         notifyListeners();
       }
@@ -2156,7 +1967,7 @@ class CartService extends ChangeNotifier {
         'items': _items.map((item) => item.toMap()).toList(),
         'coupon': _appliedCoupon?.toMap(),
         'couponDiscount': _couponDiscount,
-        'branchId': _currentBranchId, // Save branch ID
+        'branchId': _currentBranchId,
       });
       await prefs.setString('cart_items', cartJson);
     } catch (e) {
@@ -2166,17 +1977,15 @@ class CartService extends ChangeNotifier {
 
   Future<String> _findNearestBranch() async {
     try {
-      // Get user's current location
       Position userPosition = await _getUserLocation();
 
-      // Get all active branches
       final branchesSnapshot = await FirebaseFirestore.instance
           .collection('Branch')
           .where('isActive', isEqualTo: true)
           .get();
 
       if (branchesSnapshot.docs.isEmpty) {
-        return 'Old_Airport'; // fallback
+        return 'Old_Airport';
       }
 
       String nearestBranchId = 'Old_Airport';
@@ -2210,7 +2019,7 @@ class CartService extends ChangeNotifier {
       return nearestBranchId;
     } catch (e) {
       debugPrint('Error finding nearest branch: $e');
-      return 'Old_Airport'; // fallback
+      return 'Old_Airport';
     }
   }
 
@@ -2218,7 +2027,6 @@ class CartService extends ChangeNotifier {
     bool serviceEnabled;
     LocationPermission permission;
 
-    // Check if location service is enabled
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       throw Exception('Location services are disabled.');
@@ -2236,7 +2044,6 @@ class CartService extends ChangeNotifier {
       throw Exception('Location permissions are permanently denied.');
     }
 
-    // Get current position
     return await Geolocator.getCurrentPosition(
       desiredAccuracy: LocationAccuracy.medium,
       timeLimit: Duration(seconds: 10),
@@ -2245,7 +2052,7 @@ class CartService extends ChangeNotifier {
 
   double _calculateDistance(
       double lat1, double lon1, double lat2, double lon2) {
-    const double earthRadius = 6371; // kilometers
+    const double earthRadius = 6371;
 
     double dLat = _toRadians(lat2 - lat1);
     double dLon = _toRadians(lon2 - lon1);
@@ -2265,7 +2072,6 @@ class CartService extends ChangeNotifier {
     return degrees * pi / 180;
   }
 
-  // Existing cart methods
   Future<void> addToCart(
       MenuItem menuItem, {
         int quantity = 1,
@@ -2281,7 +2087,7 @@ class CartService extends ChangeNotifier {
         name: menuItem.name,
         imageUrl: menuItem.imageUrl,
         price: menuItem.price,
-        discountedPrice: menuItem.discountedPrice, // Store discounted price
+        discountedPrice: menuItem.discountedPrice,
         quantity: quantity,
         variants: variants ?? {},
         addons: addons,
@@ -2336,7 +2142,6 @@ class CartService extends ChangeNotifier {
         throw Exception('Coupon not valid for this order');
       }
 
-      // Use the updated totalAmount that considers discounted prices
       if (totalAmount < coupon.minSubtotal) {
         throw Exception(
             'Minimum order amount of QAR ${coupon.minSubtotal} not met');
@@ -2366,7 +2171,6 @@ class CartService extends ChangeNotifier {
 
       final totalBeforeDiscount = totalAmount;
 
-      // UPDATED COUPON DISTRIBUTION LOGIC - Use finalPrice instead of price
       if (totalBeforeDiscount > 0) {
         for (var item in _items) {
           final itemPercentage =

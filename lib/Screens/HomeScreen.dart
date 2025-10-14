@@ -33,7 +33,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   // Branch / user UI state
-  final String _currentBranchId = 'Old_Airport';
+  String _currentBranchId = 'Old_Airport'; // Make it mutable
+  final BranchService _branchService = BranchService();
   String _estimatedTime = 'Loading...';
   String _userAddressLabel = 'Loading...';
   String _userAddress = 'Loading address...';
@@ -76,6 +77,110 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   Timer? _offsetDebounce;
   bool _isAnimatingToSection = false;
   List<MenuItem> _allMenuItems = [];
+
+
+  Future<void> _initializeScreen() async {
+    try {
+      // First select the nearest branch and wait for it
+      await _selectNearestBranch();
+
+      // Now load all other data with the updated branch ID
+      await _loadUserAddresses();
+      await _loadEstimatedTime();
+      await _loadCarouselImages();
+      _setupOrdersStream();
+      await _loadMenuData();
+    } catch (e) {
+      debugPrint('Error initializing screen: $e');
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Failed to initialize. Please try again.';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _selectNearestBranch() async {
+    try {
+      debugPrint('Starting branch selection...');
+      final nearestBranchId = await _branchService.getNearestBranch();
+
+      if (mounted) {
+        setState(() {
+          _currentBranchId = nearestBranchId;
+        });
+      }
+      debugPrint('✅ Selected nearest branch: $_currentBranchId');
+
+      // Force reload all branch-specific data
+      if (mounted) {
+        setState(() {
+          _categories = [];
+          _popularItems = [];
+          _groupedMenuItems = {};
+          _carouselImages = [];
+          _isLoading = true;
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Failed to select nearest branch: $e');
+      // Keep the default branch ID but show a message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Using default branch: $_currentBranchId'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  // Add this method for testing branch switching
+  void _testBranchSelection() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Branch for Testing'),
+        content: const Text('Choose a branch to test functionality:'),
+        actions: [
+          TextButton(
+            onPressed: () => _switchBranch('Old_Airport'),
+            child: const Text('Old Airport'),
+          ),
+          TextButton(
+            onPressed: () => _switchBranch('Mansoura'),
+            child: const Text('Mansoura'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _switchBranch(String branchId) async {
+    if (mounted) {
+      setState(() {
+        _currentBranchId = branchId;
+        _categories = [];
+        _popularItems = [];
+        _groupedMenuItems = {};
+        _carouselImages = [];
+        _isLoading = true;
+      });
+
+      Navigator.pop(context);
+
+      // Reload all data with new branch
+      await _loadCarouselImages();
+      await _loadMenuData();
+      _loadEstimatedTime();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Switched to branch: $branchId')),
+      );
+    }
+  }
 
 
   String _getStatusMessage(String status) {
@@ -157,13 +262,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _searchController.addListener(_onSearchChanged);
   }
 
-  Future<void> _initializeScreen() async {
-    _loadUserAddresses();
-    _loadEstimatedTime();
-    _loadCarouselImages();
-    _setupOrdersStream();
-    await _loadMenuData();
-  }
+
 
   void _setupOrdersStream() {
     final user = _auth.currentUser;
@@ -419,7 +518,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
       final querySnapshot = await _firestore
           .collection('menu_categories')
-          .where('branchId', isEqualTo: _currentBranchId)
+          .where('branchId', isEqualTo: _currentBranchId) // Now uses nearest branch
           .where('isActive', isEqualTo: true)
           .orderBy('sortOrder')
           .get();
@@ -2693,4 +2792,129 @@ class MenuCategory {
       sortOrder: data['sortOrder'] ?? 0,
     );
   }
+}
+
+class BranchService {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  Future<String> getNearestBranch() async {
+    try {
+      debugPrint('🔍 Finding nearest branch...');
+
+      // Get user's current location
+      Position userPosition = await _getCurrentLocation();
+      debugPrint('📍 User location: ${userPosition.latitude}, ${userPosition.longitude}');
+
+      // Get all active branches
+      List<Branch> branches = await _getAllBranches();
+      debugPrint('🏪 Found ${branches.length} active branches');
+
+      if (branches.isEmpty) {
+        debugPrint('⚠️ No active branches found, using fallback');
+        return 'Old_Airport';
+      }
+
+      // Calculate distances and find nearest branch
+      Branch nearestBranch = branches.first;
+      double shortestDistance = double.infinity;
+
+      for (final branch in branches) {
+        if (branch.geolocation != null) {
+          double distance = Geolocator.distanceBetween(
+            userPosition.latitude,
+            userPosition.longitude,
+            branch.geolocation!.latitude,
+            branch.geolocation!.longitude,
+          );
+
+          debugPrint('📏 Distance to ${branch.name}: ${distance.toStringAsFixed(2)} meters');
+
+          if (distance < shortestDistance) {
+            shortestDistance = distance;
+            nearestBranch = branch;
+          }
+        } else {
+          debugPrint('⚠️ Branch ${branch.name} has no geolocation data');
+        }
+      }
+
+      debugPrint('🎯 Selected branch: ${nearestBranch.name} (${nearestBranch.id})');
+      debugPrint('📐 Shortest distance: ${shortestDistance.toStringAsFixed(2)} meters');
+
+      return nearestBranch.id;
+    } catch (e) {
+      debugPrint('❌ Error finding nearest branch: $e');
+      return 'Old_Airport';
+    }
+  }
+
+  Future<Position> _getCurrentLocation() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    // Check if location services are enabled
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      throw Exception('Location services are disabled.');
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        throw Exception('Location permissions are denied');
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      throw Exception('Location permissions are permanently denied.');
+    }
+
+    return await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.best,
+    );
+  }
+
+  Future<List<Branch>> _getAllBranches() async {
+    try {
+      final querySnapshot = await _firestore
+          .collection('Branch')
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      return querySnapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        final addressData = data['address'] as Map<String, dynamic>?;
+        GeoPoint? geolocation;
+
+        if (addressData != null && addressData['geolocation'] != null) {
+          geolocation = addressData['geolocation'] as GeoPoint;
+        }
+
+        return Branch(
+          id: doc.id,
+          name: data['name'] ?? 'Unnamed Branch',
+          isActive: data['isActive'] ?? false,
+          geolocation: geolocation,
+        );
+      }).toList();
+    } catch (e) {
+      debugPrint('Error fetching branches: $e');
+      return [];
+    }
+  }
+}
+
+class Branch {
+  final String id;
+  final String name;
+  final bool isActive;
+  final GeoPoint? geolocation;
+
+  Branch({
+    required this.id,
+    required this.name,
+    required this.isActive,
+    this.geolocation,
+  });
 }

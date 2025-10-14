@@ -2,7 +2,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:convex_bottom_bar/convex_bottom_bar.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // For SystemNavigator.pop()
+import 'package:flutter/services.dart';
 import 'package:mitra_da_dhaba/Screens/Profile.dart';
 import 'package:provider/provider.dart';
 import 'package:mitra_da_dhaba/Screens/CouponsScreen.dart';
@@ -26,66 +26,101 @@ class MainApp extends StatefulWidget {
 class _MainAppState extends State<MainApp> {
   late int _currentIndex;
   final String _currentBranchId = 'Old_Airport';
+  bool _isRestaurantOpen = true;
+  bool _isLoading = true;
+  int _cartItemCount = 0;
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex ?? 0;
-    BottomNavController.index.value = _currentIndex; // keep notifier in sync
-    // Removed the duplicate assignment that re-set _currentIndex again
+
+    // Don't set the value here to avoid the setState during build
+    // BottomNavController.index.value = _currentIndex;
+
+    _checkRestaurantStatus();
+    _setupCartListener();
+
+    // Add listener after initialization is complete
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      BottomNavController.index.addListener(_handleExternalIndexChange);
+    });
+  }
+
+  void _setupCartListener() {
+    final cartService = CartService();
+    cartService.addListener(() {
+      if (mounted) {
+        setState(() {
+          _cartItemCount = cartService.itemCount;
+        });
+      }
+    });
+  }
+
+  void _checkRestaurantStatus() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('Branch')
+          .doc(_currentBranchId)
+          .get();
+
+      if (mounted) {
+        setState(() {
+          _isRestaurantOpen = snapshot.data()?['isOpen'] ?? true;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isRestaurantOpen = true;
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _handleExternalIndexChange() {
+    if (BottomNavController.index.value != _currentIndex && mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _currentIndex = BottomNavController.index.value;
+          });
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    BottomNavController.index.removeListener(_handleExternalIndexChange);
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final cartService = Provider.of<CartService>(context, listen: false);
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
 
-    final screens = [
-      HomeScreen(),
-      const OrdersScreen(),
-      CouponsScreen(cartService: cartService), // Offers
-      const CartScreen(),
-      const ProfileScreen(),
-    ];
+    if (!_isRestaurantOpen) {
+      return const ClosedRestaurantScreen();
+    }
 
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('Branch')
-          .doc(_currentBranchId)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        if (snapshot.hasError) {
-          return Scaffold(
-            body: Center(child: Text('Error: ${snapshot.error}')),
-          );
-        }
-
-        if (!snapshot.hasData || !snapshot.data!.exists) {
-          return const Scaffold(
-            body: Center(child: Text('Branch not found')),
-          );
-        }
-
-        final data = snapshot.data!.data()!;
-        final bool isOpen = data['isOpen'] ?? true;
-        if (!isOpen) return const ClosedRestaurantScreen();
-
-        // Back handling:
-        // - If not on Home (index != 0): switch to Home and consume back.
-        // - If already on Home (index == 0): exit/minimize via SystemNavigator.pop().
+    return Consumer<CartService>(
+      builder: (context, cart, child) {
         return PopScope(
           canPop: _currentIndex == 0,
           onPopInvokedWithResult: (bool didPop, Object? result) {
-            if (didPop) return; // A nested route handled the pop already.
+            if (didPop) return;
 
             if (_currentIndex != 0) {
               setState(() => _currentIndex = 0);
-              BottomNavController.index.value = 0; // keep notifier aligned
+              BottomNavController.index.value = 0;
               return;
             }
 
@@ -93,57 +128,69 @@ class _MainAppState extends State<MainApp> {
           },
           child: Scaffold(
             extendBody: true,
-            body: ValueListenableBuilder<int>(
-              valueListenable: BottomNavController.index,
-              builder: (_, idx, __) {
-                if (idx != _currentIndex) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (!mounted) return;
-                    setState(() => _currentIndex = idx);
-                  });
-                }
-                return IndexedStack(index: _currentIndex, children: screens);
-              },
+            body: IndexedStack(
+              index: _currentIndex,
+              children: [
+                const HomeScreen(),
+                const OrdersScreen(),
+                CouponsScreen(cartService: cart),
+                const CartScreen(),
+                const ProfileScreen(),
+              ],
             ),
-            bottomNavigationBar: Consumer<CartService>(
-              builder: (context, cart, child) {
-                return ConvexAppBar(
-                  // UI PROPS UNCHANGED
-                  style: TabStyle.fixedCircle,
-                  height: 64,
-                  curveSize: 90,
-                  top: -28,
-                  cornerRadius: 20,
-                  backgroundColor: Colors.white,
-                  color: Colors.grey,
-                  activeColor: AppColors.primaryBlue,
-                  items: [
-                    const TabItem(icon: Icons.home_outlined, title: 'Home'),
-                    const TabItem(icon: Icons.newspaper_outlined, title: 'Orders'),
-                    // Center tab: always-blue circle
-                    TabItem(
-                      title: 'Offers',
-                      icon: _offersIcon(),
-                      activeIcon: _offersIcon(),
-                    ),
-                    // Cart tab with badge
-                    TabItem(
-                      icon: _cartIconWithBadge(cart.itemCount),
-                      title: 'Cart',
-                    ),
-                    const TabItem(icon: Icons.person, title: 'Profile'),
-                  ],
-                  initialActiveIndex: _currentIndex,
-                  onTap: (i) {
-                    if (_currentIndex == i) return;
-                    setState(() => _currentIndex = i);
-                    BottomNavController.index.value = i; // sync notifier to avoid snap-back
-                  },
-                );
-              },
-            ),
+            bottomNavigationBar: _buildBottomNav(cart),
           ),
         );
+      },
+    );
+  }
+
+  void _setupRestaurantStatusListener() {
+    FirebaseFirestore.instance
+        .collection('Branch')
+        .doc(_currentBranchId)
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted && snapshot.exists) {
+        final isOpen = snapshot.data()?['isOpen'] ?? true;
+        if (isOpen != _isRestaurantOpen) {
+          setState(() {
+            _isRestaurantOpen = isOpen;
+          });
+        }
+      }
+    });
+  }
+
+  Widget _buildBottomNav(CartService cart) {
+    return ConvexAppBar(
+      style: TabStyle.fixedCircle,
+      height: 64,
+      curveSize: 90,
+      top: -28,
+      cornerRadius: 20,
+      backgroundColor: Colors.white,
+      color: Colors.grey,
+      activeColor: AppColors.primaryBlue,
+      items: [
+        const TabItem(icon: Icons.home_outlined, title: 'Home'),
+        const TabItem(icon: Icons.newspaper_outlined, title: 'Orders'),
+        TabItem(
+          title: 'Offers',
+          icon: _offersIcon(),
+          activeIcon: _offersIcon(),
+        ),
+        TabItem(
+          icon: _cartIconWithBadge(_cartItemCount),
+          title: 'Cart',
+        ),
+        const TabItem(icon: Icons.person, title: 'Profile'),
+      ],
+      initialActiveIndex: _currentIndex,
+      onTap: (i) {
+        if (_currentIndex == i) return;
+        setState(() => _currentIndex = i);
+        BottomNavController.index.value = i;
       },
     );
   }
@@ -258,8 +305,7 @@ class ClosedRestaurantScreen extends StatelessWidget {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryBlue,
                     foregroundColor: Colors.white,
-                    padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
