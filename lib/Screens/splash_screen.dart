@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../Widgets/models.dart';
 
-
 class SplashScreen extends StatelessWidget {
   const SplashScreen({Key? key}) : super(key: key);
 
@@ -75,24 +74,7 @@ class SplashScreen extends StatelessWidget {
                     letterSpacing: 1.1,
                   ),
                 ),
-                const SizedBox(height: 54),
-                // Loading indicator with animation curve
-                SizedBox(
-                  width: 36,
-                  height: 36,
-                  child: CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.white),
-                    strokeWidth: 3.6,
-                  ),
-                ),
-                const SizedBox(height: 22),
-                Text(
-                  'Loading your delicious experience...',
-                  style: AppTextStyles.bodyText1.copyWith(
-                    color: AppColors.white.withOpacity(0.78),
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
+                // Removed all loading indicators and text
               ],
             ),
           ),
@@ -101,5 +83,3 @@ class SplashScreen extends StatelessWidget {
     );
   }
 }
-
-

@@ -27,9 +27,9 @@ class _CartScreenState extends State<CartScreen> {
   String _estimatedTime = 'Loading...';
   double deliveryFee = 0;
   bool _isFindingNearestBranch = false;
-  String _currentBranchId = 'OldAirport';
+  List<String> _currentBranchIds = ['OldAirport']; // Changed to List
   List<Map<String, String>> _allBranches = [];
-  String _nearestBranchId = '';
+  List<String> _nearestBranchIds = []; // Changed to List
   bool _isDefaultNearest = true;
   final TextEditingController _notesController = TextEditingController();
   List<MenuItem> _drinksItems = [];
@@ -42,6 +42,12 @@ class _CartScreenState extends State<CartScreen> {
   // Solution 1: Add address caching variables
   Map<String, dynamic>? _cachedAddress;
   bool _isLoadingAddress = false;
+
+  // Delivery range variables
+  double _freeDeliveryRange = 0;
+  double _noDeliveryRange = 0;
+  bool _isOutOfDeliveryRange = false;
+  double _distanceToBranch = 0;
 
   @override
   void initState() {
@@ -106,11 +112,11 @@ class _CartScreenState extends State<CartScreen> {
 
     try {
       // Use the same format as in _getBranchDisplayName
-      final branchId = 'Old_Airport'; // Changed to match
+      final branchIds = ['Old_Airport']; // Changed to List
 
       if (mounted) {
-        _currentBranchId = branchId;
-        _nearestBranchId = branchId;
+        _currentBranchIds = branchIds;
+        _nearestBranchIds = branchIds;
         _isDefaultNearest = true;
         _isFindingNearestBranch = false;
 
@@ -118,7 +124,7 @@ class _CartScreenState extends State<CartScreen> {
           setState(() {});
         }
 
-        await loadDeliveryFee(branchId);
+        await loadDeliveryFee(branchIds.first); // Use first branch for delivery fee
       }
     } catch (e) {
       debugPrint('Error setting nearest branch: $e');
@@ -130,11 +136,12 @@ class _CartScreenState extends State<CartScreen> {
       }
     }
   }
+
   void _refreshBranchSelection() => _setNearestBranch();
 
   Future<void> _loadEstimatedTime() async {
     final time = await _restaurantService.getDynamicEtaForUser(
-      _currentBranchId,
+      _currentBranchIds.first, // Use first branch for ETA
       orderType: _orderType,
     );
     if (mounted) {
@@ -144,20 +151,18 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-// In your CartScreen, update the _loadDrinks method and the build method:
-
   Future<void> _loadDrinks() async {
     if (!mounted) return;
 
     setState(() => _isLoadingDrinks = true);
 
     try {
-      print('Loading drinks for branch: $_currentBranchId'); // DEBUG
+      print('Loading drinks for branches: $_currentBranchIds'); // DEBUG
 
       final snap = await FirebaseFirestore.instance
           .collection('menu_items')
           .where('categoryId', isEqualTo: 'Drinks')
-          .where('branchId', isEqualTo: _currentBranchId)
+          .where('branchIds', arrayContainsAny: _currentBranchIds) // Changed to arrayContainsAny
           .where('isAvailable', isEqualTo: true)
           .orderBy('sortOrder')
           .limit(10)
@@ -178,7 +183,7 @@ class _CartScreenState extends State<CartScreen> {
               imageUrl: data['imageUrl'] ?? '',
               description: data['description'] ?? '',
               categoryId: data['categoryId'] ?? '',
-              branchId: data['branchId'] ?? _currentBranchId,
+              branchIds: [_currentBranchIds.first], // CHANGED: wrap in array
               isAvailable: data['isAvailable'] ?? true,
               isPopular: data['isPopular'] ?? false,
               sortOrder: data['sortOrder'] ?? 0,
@@ -202,6 +207,184 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
+  // Updated loadDeliveryFee method to include range data
+  Future<void> loadDeliveryFee(String branchId) async {
+    final snap = await FirebaseFirestore.instance
+        .collection('Branch')
+        .doc(branchId)
+        .get();
+
+    if (!mounted) return;
+
+    final data = snap.data();
+    setState(() {
+      deliveryFee = (data?['deliveryFee'] ?? 0).toDouble();
+      _freeDeliveryRange = (data?['freeDeliveryRange'] ?? 0).toDouble();
+      _noDeliveryRange = (data?['noDeliveryRange'] ?? 0).toDouble();
+    });
+
+    // Calculate distance and update delivery fee accordingly
+    await _calculateAndUpdateDeliveryFee();
+  }
+
+  // Method to calculate distance and update delivery fee
+  Future<void> _calculateAndUpdateDeliveryFee() async {
+    if (_orderType != 'delivery') return;
+
+    try {
+      // Get user's current address geolocation
+      final userGeoPoint = await _getUserLocationFromAddress();
+      if (userGeoPoint == null) {
+        debugPrint('Could not get user location from address');
+        return;
+      }
+
+      // Get branch geolocation - use first branch for distance calculation
+      final branchSnap = await FirebaseFirestore.instance
+          .collection('Branch')
+          .doc(_currentBranchIds.first)
+          .get();
+
+      final branchData = branchSnap.data();
+      if (branchData == null || branchData['address'] == null) {
+        debugPrint('Could not get branch location');
+        return;
+      }
+
+      final branchAddress = branchData['address'] as Map<String, dynamic>;
+      final branchGeoPoint = branchAddress['geolocation'] as GeoPoint?;
+
+      if (branchGeoPoint == null) {
+        debugPrint('Branch geolocation not found');
+        return;
+      }
+
+      // Calculate distance
+      final distance = _calculateDistance(
+        userGeoPoint.latitude,
+        userGeoPoint.longitude,
+        branchGeoPoint.latitude,
+        branchGeoPoint.longitude,
+      );
+
+      if (mounted) {
+        setState(() {
+          _distanceToBranch = distance;
+          _isOutOfDeliveryRange = distance > _noDeliveryRange;
+
+          // Apply free delivery if within range
+          if (distance <= _freeDeliveryRange) {
+            deliveryFee = 0;
+          } else {
+            // Reset to original delivery fee if outside free range
+            deliveryFee = (branchData['deliveryFee'] ?? 0).toDouble();
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error calculating delivery fee: $e');
+    }
+  }
+
+  // Method to get user location from their saved address
+  Future<GeoPoint?> _getUserLocationFromAddress() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null || user.email == null) return null;
+
+      // Use cached address if available, otherwise fetch from Firestore
+      Map<String, dynamic>? address = _cachedAddress;
+      if (address == null) {
+        final userDoc = await FirebaseFirestore.instance
+            .collection('Users')
+            .doc(user.email)
+            .get();
+
+        if (!userDoc.exists) return null;
+
+        final userData = userDoc.data() as Map<String, dynamic>;
+        final addresses = (userData['address'] as List?)?.whereType<Map<String, dynamic>>().toList() ?? [];
+
+        try {
+          address = addresses.firstWhere((a) => a['isDefault'] == true);
+        } catch (e) {
+          address = addresses.isNotEmpty ? addresses.first : null;
+        }
+
+        if (address != null) {
+          _cachedAddress = address;
+        }
+      }
+
+      // If address has geolocation, use it
+      if (address?['geolocation'] != null) {
+        return address!['geolocation'] as GeoPoint;
+      }
+
+      // If no geolocation in address, try to get current location as fallback
+      final Position? currentPosition = await _getCurrentLocation();
+      if (currentPosition != null) {
+        return GeoPoint(currentPosition.latitude, currentPosition.longitude);
+      }
+
+      return null;
+    } catch (e) {
+      debugPrint('Error getting user location from address: $e');
+      return null;
+    }
+  }
+
+  // Method to get current device location (fallback)
+  Future<Position?> _getCurrentLocation() async {
+    try {
+      bool serviceEnabled;
+      LocationPermission permission;
+
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        return null;
+      }
+
+      permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          return null;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        return null;
+      }
+
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+      );
+    } catch (e) {
+      debugPrint('Error getting current location: $e');
+      return null;
+    }
+  }
+
+  // Distance calculation method
+  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    const double earthRadius = 6371; // Earth's radius in km
+
+    double dLat = _toRadians(lat2 - lat1);
+    double dLon = _toRadians(lon2 - lon1);
+
+    double a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(_toRadians(lat1)) * cos(_toRadians(lat2)) * sin(dLon / 2) * sin(dLon / 2);
+
+    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+
+    return earthRadius * c;
+  }
+
+  double _toRadians(double degrees) {
+    return degrees * pi / 180;
+  }
+
   // Solution 1: Add address loading method
   Future<void> _loadUserAddress(String userEmail) async {
     if (_isLoadingAddress) return;
@@ -216,6 +399,8 @@ class _CartScreenState extends State<CartScreen> {
           _isLoadingAddress = false;
         });
       }
+      // Recalculate delivery fee when address is loaded
+      await _calculateAndUpdateDeliveryFee();
     } catch (e) {
       debugPrint('Error loading user address: $e');
       if (mounted) {
@@ -250,12 +435,11 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-// Also update the _buildYouMightAlsoLikeSection method:
   Widget _buildYouMightAlsoLikeSection() {
     // Add debug info
     print('_isLoadingDrinks: $_isLoadingDrinks');
     print('_drinksItems length: ${_drinksItems.length}');
-    print('_currentBranchId: $_currentBranchId');
+    print('_currentBranchIds: $_currentBranchIds');
 
     if (_isLoadingDrinks) {
       return Padding(
@@ -331,7 +515,7 @@ class _CartScreenState extends State<CartScreen> {
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Text(
-                'No drinks available for $_currentBranchId branch',
+                'No drinks available for selected branches',
                 style: AppTextStyles.bodyText1,
                 textAlign: TextAlign.center,
               ),
@@ -362,23 +546,13 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Future<void> loadDeliveryFee(String branchId) async {
-    final snap = await FirebaseFirestore.instance
-        .collection('Branch')
-        .doc(branchId)
-        .get();
-
-    if (!mounted) return;
-
-    setState(() {
-      deliveryFee = (snap.data()?['deliveryFee'] ?? 0).toDouble();
-    });
-  }
-
   void _onOrderTypeChanged(String newType) {
     if (newType != _orderType) {
       setState(() => _orderType = newType);
       _setNearestBranch();
+      if (newType == 'delivery') {
+        _calculateAndUpdateDeliveryFee();
+      }
     }
   }
 
@@ -393,6 +567,13 @@ class _CartScreenState extends State<CartScreen> {
       default:
         return branchId.replaceAll('_', ' ') + ' Branch';
     }
+  }
+
+  // Helper method to get display name for multiple branches
+  String _getBranchesDisplayName(List<String> branchIds) {
+    if (branchIds.isEmpty) return 'No branch selected';
+    if (branchIds.length == 1) return _getBranchDisplayName(branchIds.first);
+    return '${_getBranchDisplayName(branchIds.first)} + ${branchIds.length - 1} more';
   }
 
   @override
@@ -525,7 +706,7 @@ class _CartScreenState extends State<CartScreen> {
                             price: item.price,
                             discountedPrice: item.discountedPrice,
                             description: '',
-                            branchId: '',
+                            branchIds: _currentBranchIds, // Use first branch ID
                             categoryId: '',
                             isAvailable: true,
                             isPopular: false,
@@ -592,6 +773,12 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Widget _buildPlaceOrderButton() {
+    final cartService = CartService();
+    final bool isCartEmpty = cartService.items.isEmpty;
+    final bool isDisabled = _isCheckingOut ||
+        isCartEmpty ||
+        (_orderType == 'delivery' && _isOutOfDeliveryRange);
+
     return SizedBox(
       width: double.infinity,
       child: _isCheckingOut
@@ -622,15 +809,19 @@ class _CartScreenState extends State<CartScreen> {
         ),
       )
           : ElevatedButton(
-        onPressed: _proceedToCheckout,
+        onPressed: isDisabled ? null : _proceedToCheckout,
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primaryBlue,
+          backgroundColor: isDisabled ? Colors.grey : AppColors.primaryBlue,
           padding: const EdgeInsets.symmetric(vertical: 16),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
         child: Text(
-          'PLACE ORDER',
-          style: AppTextStyles.buttonText.copyWith(color: AppColors.white),
+          _orderType == 'delivery' && _isOutOfDeliveryRange
+              ? 'OUTSIDE DELIVERY RANGE'
+              : 'PLACE ORDER',
+          style: AppTextStyles.buttonText.copyWith(
+            color: AppColors.white,
+          ),
         ),
       ),
     );
@@ -720,10 +911,57 @@ class _CartScreenState extends State<CartScreen> {
           _buildOrderTypeToggle(),
           const SizedBox(height: 16),
           _orderType == 'delivery' ? _buildAddressSection() : buildPickupInfo(),
+
+          // Show delivery range information
+          if (_orderType == 'delivery' && _distanceToBranch > 0) ...[
+            const Divider(height: 16, thickness: 0.5),
+            _buildDeliveryRangeInfo(),
+          ],
+
           const Divider(height: 24, thickness: 0.5),
           _buildTimeEstimate(),
           const Divider(height: 24, thickness: 0.5),
           _buildPaymentSection(),
+        ],
+      ),
+    );
+  }
+
+  // Add this widget to show delivery range information
+  Widget _buildDeliveryRangeInfo() {
+    String statusText;
+    Color statusColor;
+
+    if (_isOutOfDeliveryRange) {
+      statusText = 'Outside delivery range ($_noDeliveryRange km)';
+      statusColor = Colors.red;
+    } else if (deliveryFee == 0) {
+      statusText = 'Free delivery (within $_freeDeliveryRange km)';
+      statusColor = Colors.green;
+    } else {
+      statusText = '${_distanceToBranch.toStringAsFixed(1)} km from branch';
+      statusColor = AppColors.darkGrey;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        children: [
+          Icon(
+            _isOutOfDeliveryRange ? Icons.error_outline : Icons.local_shipping,
+            color: statusColor,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              statusText,
+              style: AppTextStyles.bodyText2.copyWith(
+                color: statusColor,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -850,7 +1088,7 @@ class _CartScreenState extends State<CartScreen> {
                           fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
                   const SizedBox(height: 4),
                   Text(
-                    _isFindingNearestBranch ? 'Finding nearest branch…' : _getBranchDisplayName(_currentBranchId),
+                    _isFindingNearestBranch ? 'Finding nearest branch…' : _getBranchesDisplayName(_currentBranchIds), // Updated to use helper method
                     style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w600, color: AppColors.darkGrey),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -1047,7 +1285,7 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 if (_orderType == 'pickup' && !_isFindingNearestBranch)
                   Text(
-                    'from ${_getBranchDisplayName(_currentBranchId)}',
+                    'from ${_getBranchesDisplayName(_currentBranchIds)}', // Updated to use helper method
                     style: AppTextStyles.bodyText2.copyWith(color: Colors.green, fontSize: 11),
                   ),
               ],
@@ -1137,6 +1375,14 @@ class _CartScreenState extends State<CartScreen> {
         color: isDiscount ? Colors.green.shade700 : (isTotal ? AppColors.darkGrey : Colors.grey.shade600),
         fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
         fontSize: isTotal ? 18 : 16);
+
+    String amountText;
+    if (label == 'Delivery Fee' && amount == 0) {
+      amountText = 'FREE';
+    } else {
+      amountText = isDiscount ? '- QAR ${amount.abs().toStringAsFixed(2)}' : 'QAR ${amount.toStringAsFixed(2)}';
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -1144,8 +1390,11 @@ class _CartScreenState extends State<CartScreen> {
         children: [
           Text(label, style: style),
           Text(
-            isDiscount ? '- QAR ${amount.abs().toStringAsFixed(2)}' : 'QAR ${amount.toStringAsFixed(2)}',
-            style: style.copyWith(fontWeight: isTotal ? FontWeight.bold : FontWeight.w600),
+            amountText,
+            style: style.copyWith(
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.w600,
+              color: label == 'Delivery Fee' && amount == 0 ? Colors.green : null,
+            ),
           ),
         ],
       ),
@@ -1244,19 +1493,20 @@ class _CartScreenState extends State<CartScreen> {
               ..._allBranches.map((branch) => ListTile(
                 leading: CircleAvatar(
                   backgroundColor: Colors.grey.shade100,
-                  child: Icon(branch['id'] == _currentBranchId ? Icons.store : Icons.storefront_outlined, color: Colors.blue.shade800),
+                  child: Icon(_currentBranchIds.contains(branch['id']) ? Icons.store : Icons.storefront_outlined, color: Colors.blue.shade800),
                 ),
                 title: Text(branch['name']!, style: AppTextStyles.bodyText1.copyWith(
-                  fontWeight: branch['id'] == _currentBranchId ? FontWeight.bold : FontWeight.normal,
+                  fontWeight: _currentBranchIds.contains(branch['id']) ? FontWeight.bold : FontWeight.normal,
                 )),
-                trailing: branch['id'] == _currentBranchId ? const Icon(Icons.check_circle, color: Colors.green) : null,
+                trailing: _currentBranchIds.contains(branch['id']) ? const Icon(Icons.check_circle, color: Colors.green) : null,
                 onTap: () {
                   setState(() {
-                    _currentBranchId = branch['id']!;
-                    _isDefaultNearest = (_currentBranchId == _nearestBranchId);
+                    _currentBranchIds = [branch['id']!]; // Set as single branch in list
+                    _isDefaultNearest = (_currentBranchIds == _nearestBranchIds);
                   });
                   _loadDrinks();
                   _loadEstimatedTime();
+                  loadDeliveryFee(branch['id']!);
                   Navigator.pop(context);
                 },
               )),
@@ -1307,6 +1557,10 @@ class _CartScreenState extends State<CartScreen> {
               }
 
               onAddressSelected((selected['label'] ?? 'Home').toString(), detailed);
+
+              // Recalculate delivery fee when address changes
+              await _calculateAndUpdateDeliveryFee();
+
               if (Navigator.canPop(context)) Navigator.pop(context);
             }
 
@@ -1410,6 +1664,15 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Future<void> _proceedToCheckout() async {
+    // Check if out of delivery range
+    if (_orderType == 'delivery' && _isOutOfDeliveryRange) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Sorry, we do not deliver to your location. Maximum delivery range is $_noDeliveryRange km.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
+
     final String notes = _notesController.text.trim();
     if (!mounted) return;
 
@@ -1532,7 +1795,7 @@ class _CartScreenState extends State<CartScreen> {
         'deliveryAddress': defaultAddress,
         'paymentStatus': 'pending',
         'riderPaymentAmount': riderPaymentAmount,
-        'branchId': _currentBranchId,
+        'branchIds': _currentBranchIds, // Changed to branchIds (List)
         if (cartService.appliedCoupon != null) 'couponCode': cartService.appliedCoupon!.code,
         if (cartService.appliedCoupon != null) 'couponDiscount': cartService.couponDiscount,
         if (cartService.appliedCoupon != null) 'couponId': cartService.appliedCoupon!.id,
@@ -1582,7 +1845,7 @@ class _CartScreenState extends State<CartScreen> {
             Text('Your order has been placed successfully', textAlign: TextAlign.center, style: AppTextStyles.bodyText1),
             const SizedBox(height: 8),
             Text(
-              'Order will be prepared at ${_getBranchDisplayName(_currentBranchId)}',
+              'Order will be prepared at ${_getBranchesDisplayName(_currentBranchIds)}', // Updated to use helper method
               textAlign: TextAlign.center,
               style: AppTextStyles.bodyText2.copyWith(color: Colors.green),
             ),
@@ -1915,7 +2178,7 @@ class CartService extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   CouponModel? _appliedCoupon;
   double _couponDiscount = 0;
-  String _currentBranchId = 'Old_Airport';
+  List<String> _currentBranchIds = ['Old_Airport']; // Changed to List
 
   List<CartModel> get items => _items;
   int get itemCount => _items.fold(0, (sum, item) => sum + item.quantity);
@@ -1931,7 +2194,7 @@ class CartService extends ChangeNotifier {
 
   CouponModel? get appliedCoupon => _appliedCoupon;
   double get couponDiscount => _couponDiscount;
-  String get currentBranchId => _currentBranchId;
+  List<String> get currentBranchIds => _currentBranchIds; // Changed to List
 
   Future<void> _loadCartFromPrefs() async {
     try {
@@ -1952,7 +2215,15 @@ class CartService extends ChangeNotifier {
           _couponDiscount = cartData['couponDiscount']?.toDouble() ?? 0;
         }
 
-        _currentBranchId = cartData['branchId'] ?? 'Old_Airport';
+        // Handle both old string and new list format for backward compatibility
+        if (cartData['branchIds'] != null) {
+          _currentBranchIds = List<String>.from(cartData['branchIds']);
+        } else if (cartData['branchId'] != null) {
+          _currentBranchIds = [cartData['branchId'] as String];
+        } else {
+          _currentBranchIds = ['Old_Airport'];
+        }
+
         notifyListeners();
       }
     } catch (e) {
@@ -1967,7 +2238,7 @@ class CartService extends ChangeNotifier {
         'items': _items.map((item) => item.toMap()).toList(),
         'coupon': _appliedCoupon?.toMap(),
         'couponDiscount': _couponDiscount,
-        'branchId': _currentBranchId,
+        'branchIds': _currentBranchIds, // Changed to branchIds (List)
       });
       await prefs.setString('cart_items', cartJson);
     } catch (e) {
@@ -1975,7 +2246,7 @@ class CartService extends ChangeNotifier {
     }
   }
 
-  Future<String> _findNearestBranch() async {
+  Future<List<String>> _findNearestBranch() async { // Changed return type to List
     try {
       Position userPosition = await _getUserLocation();
 
@@ -1985,7 +2256,7 @@ class CartService extends ChangeNotifier {
           .get();
 
       if (branchesSnapshot.docs.isEmpty) {
-        return 'Old_Airport';
+        return ['Old_Airport'];
       }
 
       String nearestBranchId = 'Old_Airport';
@@ -2016,10 +2287,10 @@ class CartService extends ChangeNotifier {
 
       debugPrint(
           'Nearest branch: $nearestBranchId, Distance: ${shortestDistance.toStringAsFixed(2)} km');
-      return nearestBranchId;
+      return [nearestBranchId]; // Return as list
     } catch (e) {
       debugPrint('Error finding nearest branch: $e');
-      return 'Old_Airport';
+      return ['Old_Airport'];
     }
   }
 
@@ -2138,7 +2409,8 @@ class CartService extends ChangeNotifier {
       final couponDoc = snapshot.docs.first;
       final coupon = CouponModel.fromMap(couponDoc.data(), couponDoc.id);
 
-      if (!coupon.isValidForUser(userId, _currentBranchId, 'delivery')) {
+      // Updated to use first branch for validation
+      if (!coupon.isValidForUser(userId, _currentBranchIds.first, 'delivery')) {
         throw Exception('Coupon not valid for this order');
       }
 

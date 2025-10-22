@@ -15,7 +15,7 @@ import 'package:mitra_da_dhaba/Widgets/models.dart';
 import 'package:mitra_da_dhaba/Screens/Profile.dart';
 import 'package:mitra_da_dhaba/Screens/cartScreen.dart';
 import 'package:mitra_da_dhaba/Screens/OrderScreen.dart';
-
+import 'package:shimmer/shimmer.dart';
 import '../Widgets/bottom_nav.dart';
 
 const Color kChipActive = AppColors.primaryBlue;
@@ -50,7 +50,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   List<MenuItem> _popularItems = [];
   Map<String, List<MenuItem>> _groupedMenuItems = {};
   StreamSubscription? _menuItemsSubscription;
-  bool _isLoading = true;
   String? _errorMessage;
   final TextEditingController _searchController = TextEditingController();
   String get _searchQuery => _searchController.text;
@@ -78,24 +77,73 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   bool _isAnimatingToSection = false;
   List<MenuItem> _allMenuItems = [];
 
+  // Unified loading system
+  bool _carouselLoaded = false;
+  bool _categoriesLoaded = false;
+  bool _menuItemsLoaded = false;
+  bool _popularItemsLoaded = false;
+  bool _addressLoaded = false;
+  bool _etaLoaded = false;
+
+  bool get _isEverythingLoaded =>
+      _carouselLoaded &&
+          _categoriesLoaded &&
+          _menuItemsLoaded &&
+          _popularItemsLoaded &&
+          _addressLoaded &&
+          _etaLoaded;
+
+  MenuCategory _createOffersCategory() {
+    return MenuCategory(
+      id: 'offers',
+      branchIds: [_currentBranchId], // Changed from branchId
+      imageUrl: 'https://example.com/offers-icon.png',
+      isActive: true,
+      name: 'Offers',
+      sortOrder: -1,
+    );
+  }
 
   Future<void> _initializeScreen() async {
     try {
+      // Reset all loading states
+      if (mounted) {
+        setState(() {
+          _carouselLoaded = false;
+          _categoriesLoaded = false;
+          _menuItemsLoaded = false;
+          _popularItemsLoaded = false;
+          _addressLoaded = false;
+          _etaLoaded = false;
+        });
+      }
+
+      // Add a small delay to ensure shimmer is shown
+      await Future.delayed(const Duration(milliseconds: 50));
+
       // First select the nearest branch and wait for it
       await _selectNearestBranch();
 
-      // Now load all other data with the updated branch ID
-      await _loadUserAddresses();
-      await _loadEstimatedTime();
-      await _loadCarouselImages();
-      _setupOrdersStream();
-      await _loadMenuData();
+      // Load everything in parallel and wait for all to complete
+      await Future.wait([
+        _loadUserAddresses(),
+        _loadEstimatedTime(),
+        _loadCarouselImages(),
+        _loadMenuData(),
+      ], eagerError: true);
+
     } catch (e) {
       debugPrint('Error initializing screen: $e');
       if (mounted) {
         setState(() {
           _errorMessage = 'Failed to initialize. Please try again.';
-          _isLoading = false;
+          // Even on error, mark everything as loaded to hide shimmer
+          _carouselLoaded = true;
+          _categoriesLoaded = true;
+          _menuItemsLoaded = true;
+          _popularItemsLoaded = true;
+          _addressLoaded = true;
+          _etaLoaded = true;
         });
       }
     }
@@ -120,7 +168,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _popularItems = [];
           _groupedMenuItems = {};
           _carouselImages = [];
-          _isLoading = true;
+          // Reset loading states for branch-specific data
+          _carouselLoaded = false;
+          _categoriesLoaded = false;
+          _menuItemsLoaded = false;
+          _popularItemsLoaded = false;
+          _etaLoaded = false;
         });
       }
     } catch (e) {
@@ -166,15 +219,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _popularItems = [];
         _groupedMenuItems = {};
         _carouselImages = [];
-        _isLoading = true;
+        // Reset loading states
+        _carouselLoaded = false;
+        _categoriesLoaded = false;
+        _menuItemsLoaded = false;
+        _popularItemsLoaded = false;
+        _addressLoaded = false;
+        _etaLoaded = false;
       });
 
       Navigator.pop(context);
 
       // Reload all data with new branch
-      await _loadCarouselImages();
-      await _loadMenuData();
-      _loadEstimatedTime();
+      await Future.wait([
+        _loadCarouselImages(),
+        _loadMenuData(),
+        _loadEstimatedTime(),
+      ]);
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Switched to branch: $branchId')),
@@ -182,12 +243,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-
   String _getStatusMessage(String status) {
     final cleanStatus = status.trim().toLowerCase();
     switch (cleanStatus) {
       case 'pending':
-        return 'Order placed - pending confirmation';
+        return 'Pending Confirmation';
       case 'preparing':
         return 'Your order is being prepared';
       case 'prepared':
@@ -249,6 +309,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     super.initState();
     _initializeScreen();
 
+    _setupOrdersStream();
+
     _bounceController = AnimationController(
       duration: const Duration(milliseconds: 800),
       vsync: this,
@@ -262,31 +324,44 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _searchController.addListener(_onSearchChanged);
   }
 
-
-
   void _setupOrdersStream() {
-    final user = _auth.currentUser;
-    if (user == null || user.email == null) {
-      ordersStream = Stream.value(const <Order>[]);
-      return;
+    try {
+      final user = _auth.currentUser;
+      if (user == null || user.email == null) {
+        if (mounted) {
+          setState(() {
+            ordersStream = Stream.value(const <Order>[]);
+          });
+        }
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          ordersStream = _firestore
+              .collection('Orders')
+              .where('customerId', isEqualTo: user.email)
+              .where('status', whereNotIn: ['delivered', 'cancelled'])
+              .orderBy('timestamp', descending: true)
+              .limit(5)
+              .snapshots()
+              .map((snapshot) {
+            return snapshot.docs.map((doc) => Order.fromFirestore(doc)).toList();
+          }).handleError((error) {
+            debugPrint('Error loading orders: $error');
+            return <Order>[];
+          });
+        });
+      }
+    } catch (e) {
+      debugPrint('Error setting up orders stream: $e');
+      if (mounted) {
+        setState(() {
+          ordersStream = Stream.value(const <Order>[]);
+        });
+      }
     }
-
-    ordersStream = _firestore
-        .collection('Orders')
-        .where('customerId', isEqualTo: user.email)
-        .where('status', whereNotIn: ['delivered', 'cancelled'])
-        .orderBy('timestamp', descending: true)
-        .limit(5)
-        .snapshots()
-        .map((snapshot) {
-      return snapshot.docs.map((doc) => Order.fromFirestore(doc)).toList();
-    })
-        .handleError((error) {
-      debugPrint('Error loading orders: $error');
-      return <Order>[];
-    });
   }
-
 
   Future<void> _loadMenuData() async {
     await _loadCategories();
@@ -401,15 +476,27 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         if(mounted) {
           setState(() {
             _carouselImages = images;
+            _carouselLoaded = true;
           });
         }
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _precacheCarousel(context);
         });
         _startCarouselTimer();
+      } else {
+        if (mounted) {
+          setState(() {
+            _carouselLoaded = true;
+          });
+        }
       }
     } catch (e) {
       debugPrint('Error loading carousel images: $e');
+      if (mounted) {
+        setState(() {
+          _carouselLoaded = true;
+        });
+      }
     }
   }
 
@@ -449,7 +536,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       final itemsSnap = await FirebaseFirestore.instance
           .collection('menu_items')
           .where(FieldPath.documentId, whereIn: topIds)
-          .where('branchId', isEqualTo: branchId)
+          .where('branchIds', arrayContains: branchId) // Changed from branchId
           .where('isAvailable', isEqualTo: true)
           .get();
 
@@ -468,20 +555,24 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-
   Future<void> _loadPopularItems() async {
     try {
       final items = await _fetchTop5ItemsSold(branchId: _currentBranchId);
       if (mounted) {
         setState(() {
           _popularItems = items;
+          _popularItemsLoaded = true;
         });
       }
     } catch (e) {
       debugPrint("Error loading popular items: $e");
+      if (mounted) {
+        setState(() {
+          _popularItemsLoaded = true;
+        });
+      }
     }
   }
-
 
   void _startCarouselTimer() {
     _carouselTimer?.cancel();
@@ -503,22 +594,18 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final service = RestaurantService();
     final time = await service.getDynamicEtaForUser(_currentBranchId);
     if (mounted) {
-      setState(() => _estimatedTime = time);
+      setState(() {
+        _estimatedTime = time;
+        _etaLoaded = true;
+      });
     }
   }
 
   Future<void> _loadCategories() async {
     try {
-      if (mounted) {
-        setState(() {
-          _isLoading = true;
-          _errorMessage = null;
-        });
-      }
-
       final querySnapshot = await _firestore
           .collection('menu_categories')
-          .where('branchId', isEqualTo: _currentBranchId) // Now uses nearest branch
+          .where('branchIds', arrayContains: _currentBranchId) // Changed from branchId
           .where('isActive', isEqualTo: true)
           .orderBy('sortOrder')
           .get();
@@ -534,13 +621,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           for (final c in categories) {
             _sectionKeys.putIfAbsent(c.id, () => GlobalKey());
           }
+          // Add offers section key
+          _sectionKeys.putIfAbsent('offers', () => GlobalKey());
+          _categoriesLoaded = true;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _errorMessage = 'Failed to load menu. Please try again.';
-          _isLoading = false;
+          _categoriesLoaded = true;
         });
       }
     }
@@ -550,7 +640,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _menuItemsSubscription?.cancel();
     _menuItemsSubscription = _firestore
         .collection('menu_items')
-        .where('branchId', isEqualTo: _currentBranchId)
+        .where('branchIds', arrayContains: _currentBranchId) // Changed from branchId
         .where('isAvailable', isEqualTo: true)
         .orderBy('sortOrder')
         .snapshots()
@@ -560,7 +650,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       _updateAndGroupMenuItems(_allMenuItems);
 
       setState(() {
-        _isLoading = false;
+        _menuItemsLoaded = true;
       });
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -570,7 +660,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       if (mounted) {
         setState(() {
           _errorMessage = 'Error loading items: $error';
-          _isLoading = false;
+          _menuItemsLoaded = true;
         });
       }
     });
@@ -581,12 +671,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         .where((item) => item.name.toLowerCase().contains(_searchQuery.toLowerCase()))
         .toList();
 
-    final Map<String, List<MenuItem>> newGrouped = {for (final c in _categories) c.id: []};
+    // Get discounted items
+    final discountedItems = filteredItems
+        .where((item) => item.discountedPrice != null && item.discountedPrice! > 0)
+        .toList();
 
-    for (final it in filteredItems) {
-      if (newGrouped.containsKey(it.categoryId)) {
-        newGrouped[it.categoryId]!.add(it);
-      }
+    final Map<String, List<MenuItem>> newGrouped = {};
+
+    // Add offers category if there are discounted items
+    if (discountedItems.isNotEmpty) {
+      newGrouped['offers'] = discountedItems;
+    }
+
+    // Add regular categories
+    for (final c in _categories) {
+      newGrouped[c.id] = filteredItems
+          .where((item) => item.categoryId == c.id)
+          .toList();
     }
 
     if (mounted) {
@@ -645,13 +746,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _allAddresses = addressList;
           _userAddress = detailedAddress.isNotEmpty ? detailedAddress : 'No address details';
           _userAddressLabel = (defaultAddress['label'] ?? '').toString();
+          _addressLoaded = true;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _userAddress = e.toString().contains('No address set') ? 'No address set' : 'Error loading address';
-          _userAddressLabel = e.toString().contains('Not logged in') ? 'Not logged in' : 'Error';
+          if (e.toString().contains('No address set')) {
+            _userAddress = 'No address added. Please add an address to continue.';
+            _userAddressLabel = 'Add Address';
+          } else if (e.toString().contains('Not logged in')) {
+            _userAddress = 'Please log in to manage addresses';
+            _userAddressLabel = 'Login Required';
+          } else {
+            _userAddress = 'Error loading address. Please try again.';
+            _userAddressLabel = 'Error';
+          }
+          _addressLoaded = true;
         });
       }
     }
@@ -669,8 +780,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         return StreamBuilder<DocumentSnapshot>(
           stream: FirebaseFirestore.instance.collection('Users').doc(user.email).snapshots(),
           builder: (context, snapshot) {
+            // Don't show circular indicator during initial load
             if (!snapshot.hasData) {
-              return const Center(child: CircularProgressIndicator());
+              return Container(
+                padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                ),
+                child: const SizedBox(
+                  height: 200,
+                  child: Center(
+                    child: Text('Loading addresses...'),
+                  ),
+                ),
+              );
             }
 
             final userData = snapshot.data!.data() as Map<String, dynamic>?;
@@ -823,6 +947,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final topGlobal = scrollBox.localToGlobal(Offset.zero).dy;
     final Map<String, double> newOffsets = {};
 
+    // Include Offers section if it has items
+    final offersItems = _groupedMenuItems['offers'] ?? [];
+    if (offersItems.isNotEmpty) {
+      final key = _sectionKeys['offers'];
+      if (key?.currentContext != null) {
+        final box = key!.currentContext!.findRenderObject() as RenderBox?;
+        if (box != null) {
+          final dy = box.localToGlobal(Offset.zero, ancestor: scrollBox).dy;
+          final offset = _mainScrollController.offset + dy;
+          newOffsets['offers'] = offset;
+        }
+      }
+    }
+
+    // Include regular categories
     for (final c in _categories) {
       final key = _sectionKeys[c.id];
       if (key?.currentContext == null) continue;
@@ -834,25 +973,37 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       final offset = _mainScrollController.offset + dy;
       newOffsets[c.id] = offset;
     }
+
     _sectionOffsets
       ..clear()
       ..addAll(newOffsets);
   }
 
-
   void _onMainScroll() {
-    if (_isAnimatingToSection || _sectionOffsets.isEmpty || _categories.isEmpty) return;
+    if (_isAnimatingToSection || _sectionOffsets.isEmpty) return;
 
     final currentOffset = _mainScrollController.offset + (kToolbarHeight) + 52;
+
+    // Add a threshold - don't select any category when at the very top
+    final double selectionThreshold = 10.0; // pixels
+    if (currentOffset < selectionThreshold) {
+      if (_activeCategoryIndexNotifier.value != -1) {
+        _activeCategoryIndexNotifier.value = -1;
+      }
+      return;
+    }
+
     int? bestIndex;
     double smallestDistance = double.infinity;
 
-    for (int i = 0; i < _categories.length; i++) {
-      final categoryId = _categories[i].id;
+    final allCategories = _getAllCategoriesWithOffers();
+
+    for (int i = 0; i < allCategories.length; i++) {
+      final categoryId = allCategories[i]['id'];
       final sectionOffset = _sectionOffsets[categoryId];
 
       if (sectionOffset != null) {
-        if(currentOffset >= sectionOffset) {
+        if (currentOffset >= sectionOffset) {
           final distance = currentOffset - sectionOffset;
           if (distance < smallestDistance) {
             smallestDistance = distance;
@@ -869,7 +1020,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       _centerCategoryChip(bestIndex);
     }
   }
-
 
   void _centerCategoryChip(int index) {
     if (!_categoryBarController.hasClients || !mounted) return;
@@ -889,11 +1039,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
+  // Update _onCategoryTap to get the correct category list
   Future<void> _onCategoryTap(int index) async {
-    if (_categories.isEmpty || index >= _categories.length) return;
+    final allCategories = _getAllCategoriesWithOffers();
+    if (allCategories.isEmpty || index >= allCategories.length) return;
 
     _activeCategoryIndexNotifier.value = index;
-    final id = _categories[index].id;
+    final category = allCategories[index];
+    final id = category['id'];
     final key = _sectionKeys[id];
 
     if (key?.currentContext == null) {
@@ -918,6 +1071,26 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     });
   }
 
+// Helper method to get all categories including offers
+  List<Map<String, dynamic>> _getAllCategoriesWithOffers() {
+    final List<Map<String, dynamic>> allCategories = [];
+
+    // Add offers if there are discounted items
+    if (_groupedMenuItems['offers']?.isNotEmpty ?? false) {
+      allCategories.add({
+        'id': 'offers',
+        'name': 'Offers',
+      });
+    }
+
+    // Add regular categories
+    allCategories.addAll(_categories.map((cat) => {
+      'id': cat.id,
+      'name': cat.name,
+    }).toList());
+
+    return allCategories;
+  }
 
   Widget buildCartAndOrderBar() {
     final pageController = PageController();
@@ -984,6 +1157,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildOrderStatusWidget(Order order) {
+    // Get status message and progress from the current order
+    final statusMessage = _getStatusMessage(order.status);
+    final progress = _getProgressValue(order.status);
+
     return InkWell(
       onTap: () => _openOrderDetails(order.id),
       borderRadius: BorderRadius.circular(20),
@@ -1032,7 +1209,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    _orderStatusMessage,
+                    statusMessage, // Use the computed status message from the order
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
@@ -1052,7 +1229,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 800),
                       curve: Curves.easeInOutCubic,
-                      width: MediaQuery.of(context).size.width * 0.6 * (_previousProgress ?? 0),
+                      width: MediaQuery.of(context).size.width * 0.6 * progress, // Use the computed progress from the order
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(10),
@@ -1070,7 +1247,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                '${((_previousProgress ?? 0) * 100).toInt()}%',
+                '${(progress * 100).toInt()}%', // Use the computed progress from the order
                 style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w800,
@@ -1212,81 +1389,26 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ),
                   ),
                 ),
-                // actions: [
-                //   Padding(
-                //     padding: const EdgeInsets.only(right: 12.0),
-                //     child: Builder(
-                //       builder: (context) {
-                //         final userEmail = FirebaseAuth.instance.currentUser?.email;
-                //         if (userEmail == null) {
-                //           return GestureDetector(
-                //             onTap: () {
-                //               Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen()));
-                //             },
-                //             child: ClipRRect(
-                //               borderRadius: BorderRadius.circular(14),
-                //               child: BackdropFilter(
-                //                 filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                //                 child: Container(
-                //                   padding: const EdgeInsets.all(6),
-                //                   decoration: BoxDecoration(
-                //                     color: Colors.white.withOpacity(0.75),
-                //                     borderRadius: BorderRadius.circular(14),
-                //                     border: Border.all(color: const Color(0xFF1E88E5).withOpacity(0.12), width: 1.5),
-                //                   ),
-                //                   child: const CircleAvatar(
-                //                     radius: 14,
-                //                     backgroundColor: Color(0x261E88E5),
-                //                     child: Icon(Icons.person, color: Colors.blue, size: 18),
-                //                   ),
-                //                 ),
-                //               ),
-                //             ),
-                //           );
-                //         }
-                //         return StreamBuilder<DocumentSnapshot>(
-                //           stream: FirebaseFirestore.instance.collection('Users').doc(userEmail).snapshots(),
-                //           builder: (context, snap) {
-                //             String? imageUrl;
-                //             if (snap.hasData && snap.data!.exists) {
-                //               final data = snap.data!.data() as Map<String, dynamic>?;
-                //               imageUrl = data?['imageUrl'] as String?;
-                //             }
-                //             return GestureDetector(
-                //               onTap: () {
-                //                 Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen()));
-                //               },
-                //               child: ClipRRect(
-                //                 borderRadius: BorderRadius.circular(14),
-                //                 child: BackdropFilter(
-                //                   filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                //                   child: Container(
-                //                     padding: const EdgeInsets.all(6),
-                //                     decoration: BoxDecoration(
-                //                       color: Colors.white.withOpacity(0.75),
-                //                       borderRadius: BorderRadius.circular(14),
-                //                       border: Border.all(color: const Color(0xFF1E88E5).withOpacity(0.12), width: 1.5),
-                //                     ),
-                //                     child: CircleAvatar(
-                //                       radius: 14,
-                //                       backgroundColor: Colors.blue.withOpacity(0.15),
-                //                       backgroundImage: (imageUrl != null && imageUrl.isNotEmpty) ? CachedNetworkImageProvider(imageUrl) : null,
-                //                       child: (imageUrl == null || imageUrl.isEmpty) ? const Icon(Icons.person, color: Colors.blue, size: 18) : null,
-                //                     ),
-                //                   ),
-                //                 ),
-                //               ),
-                //             );
-                //           },
-                //         );
-                //       },
-                //     ),
-                //   ),
-                // ],
               ),
               // Carousel
               SliverToBoxAdapter(
-                child: Padding(
+                child: !_isEverythingLoaded
+                    ? Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                  child: Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: Container(
+                      height: MediaQuery.of(context).size.width * 0.55,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                )
+                    : Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
                   child: SizedBox(
                     height: MediaQuery.of(context).size.width * 0.55,
@@ -1325,7 +1447,37 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 pinned: true,
                 delegate: _GlassTabBarDelegate(
                   height: 52,
-                  child: ClipRect(
+                  child: !_isEverythingLoaded
+                      ? Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: Container(
+                      color: Colors.white,
+                      height: 52,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          itemCount: 6,
+                          itemBuilder: (context, index) {
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              child: Container(
+                                width: 80,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  )
+                      : ClipRect(
                     child: BackdropFilter(
                       filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                       child: Container(
@@ -1342,9 +1494,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 controller: _categoryBarController,
                                 scrollDirection: Axis.horizontal,
                                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                                itemCount: _categories.length,
+                                itemCount: _getAllCategoriesWithOffers().length, // Use the combined list
                                 itemBuilder: (context, index) {
-                                  final category = _categories[index];
+                                  final allCategories = _getAllCategoriesWithOffers();
+                                  final category = allCategories[index];
+                                  final isOffersCategory = category['id'] == 'offers';
+
                                   return ValueListenableBuilder<int>(
                                     valueListenable: _activeCategoryIndexNotifier,
                                     builder: (context, activeIndex, _) {
@@ -1367,12 +1522,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                             child: Row(
                                               mainAxisSize: MainAxisSize.min,
                                               children: [
-                                                if (category.imageUrl.isNotEmpty)
+                                                if (isOffersCategory)
+                                                  Padding(
+                                                    padding: const EdgeInsets.only(right: 6),
+                                                    child: Icon(
+                                                      Icons.local_offer,
+                                                      size: 16,
+                                                      color: isActive ? Colors.white : Colors.blue,
+                                                    ),
+                                                  )
+                                                else if (category['imageUrl'] != null && category['imageUrl'].isNotEmpty)
                                                   Padding(
                                                     padding: const EdgeInsets.only(right: 6),
                                                     child: ClipOval(
                                                       child: CachedNetworkImage(
-                                                        imageUrl: category.imageUrl,
+                                                        imageUrl: category['imageUrl'],
                                                         width: 16,
                                                         height: 16,
                                                         fit: BoxFit.cover,
@@ -1385,7 +1549,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                                     ),
                                                   ),
                                                 Text(
-                                                  category.name,
+                                                  category['name'],
                                                   maxLines: 1,
                                                   overflow: TextOverflow.ellipsis,
                                                   style: TextStyle(
@@ -1412,19 +1576,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   ),
                 ),
               ),
-
               // Main Content
               SliverToBoxAdapter(
-                child: _isLoading
-                    ? const Center(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
-                    child: CircularProgressIndicator(),
-                  ),
-                )
+                child: !_isEverythingLoaded
+                    ? _buildHomeShimmer()
                     : _buildMenuContent(),
               ),
-
               // Bottom padding
               SliverToBoxAdapter(
                 child: SizedBox(height: mainNavBarHeight + 30),
@@ -1567,10 +1724,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
   Widget _buildMenuContent() {
     if (_errorMessage != null) {
-      return Center(child: Padding(padding: const EdgeInsets.symmetric(vertical: 24), child: Text(_errorMessage!)));
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 24),
+          child: Text(_errorMessage!),
+        ),
+      );
     }
-    if (_categories.isEmpty && !_isLoading) {
-      return const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Center(child: Text('No categories available')));
+
+    if (_categories.isEmpty && _isEverythingLoaded) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(child: Text('No categories available')),
+      );
     }
 
     final screenW = MediaQuery.of(context).size.width;
@@ -1584,8 +1750,195 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         children: [
           if (_popularItems.isNotEmpty)
             _buildPopularItemsSection(_popularItems, cardW, imgH),
-
           _buildGroupedMenuSections(),
+        ],
+      ),
+    );
+  }
+  Widget _buildHomeShimmer() {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Carousel shimmer
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Container(
+              height: MediaQuery.of(context).size.width * 0.55,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Category chips shimmer
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: SizedBox(
+              height: 40,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: 6,
+                itemBuilder: (context, index) => Container(
+                  width: 80,
+                  height: 32,
+                  margin: const EdgeInsets.only(right: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Popular items section shimmer
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 120,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 230,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: 4,
+                    itemBuilder: (context, index) => Container(
+                      width: 160,
+                      margin: EdgeInsets.only(right: 16, left: index == 0 ? 0 : 0),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  width: double.infinity,
+                                  height: 16,
+                                  color: Colors.white,
+                                ),
+                                const SizedBox(height: 8),
+                                Container(
+                                  width: 60,
+                                  height: 14,
+                                  color: Colors.white,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Menu items shimmer
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              children: List.generate(4, (index) => Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: _buildMenuItemShimmer(),
+              )),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMenuItemShimmer() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: double.infinity,
+                            height: 18,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            width: double.infinity,
+                            height: 14,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            width: 100,
+                            height: 14,
+                            color: Colors.white,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      width: 24,
+                      height: 24,
+                      color: Colors.white,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
         ],
       ),
     );
@@ -1624,6 +1977,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   Widget _buildGroupedMenuSections() {
     final List<Widget> children = [];
+
+    // Add Offers section first if there are discounted items
+    final offersItems = _groupedMenuItems['offers'] ?? [];
+    if (offersItems.isNotEmpty) {
+      children.add(
+        _CategorySection(
+          key: _sectionKeys['offers'],
+          title: 'Offers',
+          items: offersItems,
+          isOffersSection: true, // We'll handle this in _CategorySection
+        ),
+      );
+    }
+
+    // Add regular categories
     for (int i = 0; i < _categories.length; i++) {
       final cat = _categories[i];
       final list = _groupedMenuItems[cat.id] ?? const [];
@@ -1658,7 +2026,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       children: children,
     );
   }
-
 }
 
 class _GlassTabBarDelegate extends SliverPersistentHeaderDelegate {
@@ -1687,10 +2054,13 @@ class _GlassTabBarDelegate extends SliverPersistentHeaderDelegate {
 class _CategorySection extends StatelessWidget {
   final String title;
   final List<MenuItem> items;
+  final bool isOffersSection;
+
   const _CategorySection({
     Key? key,
     required this.title,
     required this.items,
+    this.isOffersSection = false,
   }) : super(key: key);
 
   @override
@@ -1703,9 +2073,16 @@ class _CategorySection extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
-            child: Text(
-              title,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+            child: Row(
+              children: [
+                if (isOffersSection)
+                  Icon(Icons.local_offer, color: Colors.blue, size: 20),
+                if (isOffersSection) SizedBox(width: 8),
+                Text(
+                  title,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                ),
+              ],
             ),
           ),
           if (items.isEmpty)
@@ -1722,7 +2099,10 @@ class _CategorySection extends StatelessWidget {
               shrinkWrap: true,
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               itemCount: items.length,
-              itemBuilder: (_, index) => MenuItemCard(item: items[index]),
+              itemBuilder: (_, index) => MenuItemCard(
+                item: items[index],
+                showDiscountBadge: isOffersSection,
+              ),
             ),
         ],
       ),
@@ -1884,7 +2264,13 @@ class Order {
 
 class MenuItemCard extends StatefulWidget {
   final MenuItem item;
-  const MenuItemCard({Key? key, required this.item}) : super(key: key);
+  final bool showDiscountBadge;
+
+  const MenuItemCard({
+    Key? key,
+    required this.item,
+    this.showDiscountBadge = false,
+  }) : super(key: key);
 
   @override
   State<MenuItemCard> createState() => _MenuItemCardState();
@@ -2085,6 +2471,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                 overflow: TextOverflow.ellipsis,
                               ),
                               const SizedBox(height: 12),
+                              // In the _MenuItemCardState build method, find this section and update it:
                               Row(
                                 children: [
                                   Row(
@@ -2094,7 +2481,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w700,
-                                          color: hasDiscount ? Colors.blue : Colors.black87, // Highlight discounted price
+                                          color: hasDiscount ? Colors.blue : Colors.black87,
                                         ),
                                       ),
                                       if (originalPriceString != null) ...[
@@ -2109,17 +2496,34 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                           ),
                                         ),
                                       ],
+                                      // Add more spacing before the OFFER tag
+                                      if (widget.showDiscountBadge && widget.item.discountedPrice != null) ...[
+                                        const SizedBox(width: 12), // Increased from 8 to 12
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), // Slightly increased padding
+                                          decoration: BoxDecoration(
+                                            color: Colors.red.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(6), // Slightly larger border radius
+                                            border: Border.all(color: Colors.red, width: 1),
+                                          ),
+                                          child: Text(
+                                            'OFFER',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.red,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                   const SizedBox(width: 8),
-                                  if (widget.item.offerText != null &&
-                                      widget.item.offerText!.isNotEmpty)
+                                  if (widget.item.offerText != null && widget.item.offerText!.isNotEmpty)
                                     Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 8, vertical: 4),
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                       decoration: BoxDecoration(
-                                        color:
-                                        AppColors.primaryBlue.withOpacity(0.1),
+                                        color: AppColors.primaryBlue.withOpacity(0.1),
                                         borderRadius: BorderRadius.circular(4),
                                       ),
                                       child: Text(
@@ -2712,7 +3116,7 @@ class RestaurantService {
 
 class MenuItem {
   final String id;
-  final String branchId;
+  final List<String> branchIds; // Changed from String branchId
   final String categoryId;
   final String description;
   final double? discountedPrice;
@@ -2728,7 +3132,7 @@ class MenuItem {
 
   MenuItem({
     required this.id,
-    required this.branchId,
+    required this.branchIds, // Changed from branchId
     required this.categoryId,
     required this.description,
     required this.imageUrl,
@@ -2747,7 +3151,7 @@ class MenuItem {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
     return MenuItem(
       id: doc.id,
-      branchId: data['branchId'] ?? '',
+      branchIds: List<String>.from(data['branchIds'] ?? []), // Changed from branchId
       categoryId: data['categoryId'] ?? '',
       description: data['description'] ?? '',
       imageUrl: data['imageUrl'] ?? '',
@@ -2766,7 +3170,7 @@ class MenuItem {
 
 class MenuCategory {
   final String id;
-  final String branchId;
+  final List<String> branchIds; // Changed from String branchId
   final String imageUrl;
   final bool isActive;
   final String name;
@@ -2774,7 +3178,7 @@ class MenuCategory {
 
   MenuCategory({
     required this.id,
-    required this.branchId,
+    required this.branchIds, // Changed from branchId
     required this.imageUrl,
     required this.isActive,
     required this.name,
@@ -2785,7 +3189,7 @@ class MenuCategory {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
     return MenuCategory(
       id: doc.id,
-      branchId: data['branchId'] ?? '',
+      branchIds: List<String>.from(data['branchIds'] ?? []), // Changed from branchId
       imageUrl: data['imageUrl'] ?? '',
       isActive: data['isActive'] ?? false,
       name: data['name'] ?? '',

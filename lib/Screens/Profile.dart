@@ -1366,7 +1366,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   }
 
   void _addItemToCart(Map<String, dynamic> itemData, String itemId) {
-    // ... (Your existing _addItemToCart logic)
     final cartService = Provider.of<CartService>(context, listen: false);
     final menuItem = MenuItem(
       id: itemId,
@@ -1375,7 +1374,12 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       price: (itemData['price'] ?? 0.0).toDouble(),
       imageUrl: itemData['imageUrl'] ?? '',
       tags: {'isSpicy': itemData['isSpicy'] ?? false},
-      branchId: '', categoryId: '', isAvailable: true, isPopular: false, sortOrder: 0, variants: const {},
+      branchIds: [''], // NEW - wrap in array
+      categoryId: '',
+      isAvailable: true,
+      isPopular: false,
+      sortOrder: 0,
+      variants: const {},
     );
     cartService.addToCart(menuItem);
     ScaffoldMessenger.of(context).showSnackBar(

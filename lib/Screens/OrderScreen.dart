@@ -518,20 +518,16 @@ class _OrderScreenState extends State<OrdersScreen> {
                       final menuItem = MenuItem(
                         id: itemData['itemId'] ?? UniqueKey().toString(),
                         name: itemData['name'] ?? 'Unknown Item',
-                        price:
-                        (itemData['price'] as num?)?.toDouble() ?? 0.0,
+                        price: (itemData['price'] as num?)?.toDouble() ?? 0.0,
                         imageUrl: itemData['imageUrl'] as String? ?? '',
-                        branchId: order['restaurantId'] ?? '',
+                        branchIds: [order['restaurantId'] ?? ''], // NEW - wrap in array
                         categoryId: '',
                         description: '',
                         isAvailable: true,
                         isPopular: false,
                         sortOrder: 0,
-                        tags:
-                        itemData['tags'] as Map<String, dynamic>? ?? {},
-                        variants:
-                        itemData['variants'] as Map<String, dynamic>? ??
-                            {},
+                        tags: itemData['tags'] as Map<String, dynamic>? ?? {},
+                        variants: itemData['variants'] as Map<String, dynamic>? ?? {},
                       );
                       cartService.addToCart(
                         menuItem,
@@ -591,7 +587,7 @@ class OrderDetailsScreen extends StatelessWidget {
         name: itemData['name'] ?? 'Unknown Item',
         price: (itemData['price'] as num?)?.toDouble() ?? 0.0,
         imageUrl: itemData['imageUrl'] as String? ?? '',
-        branchId: order['restaurantId'] ?? '',
+        branchIds: [order['restaurantId'] ?? ''], // NEW - wrap in array
         categoryId: '',
         description: '',
         isAvailable: true,

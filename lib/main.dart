@@ -98,43 +98,67 @@ class _MyAppState extends State<MyApp> {
         return MediaQuery(
             data: media.copyWith(textScaleFactor: clamped), child: child!);
       },
-      // This builder structure ensures the correct screen is shown.
-      home: FutureBuilder<bool>(
-        future: _initializationFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const SplashScreen(); // Show splash while loading
-          }
+      // Use a custom loader that handles both initialization and auth state
+      home: AppLoader(initializationFuture: _initializationFuture),
+    );
+  }
+}
 
-          if (snapshot.hasError) {
-            return Scaffold(
-                backgroundColor: Colors.white,
-                body: Center(
-                    child: Text('Error initializing app: ${snapshot.error}')));
-          }
+class AppLoader extends StatefulWidget {
+  final Future<bool> initializationFuture;
 
-          final bool isFirstLaunch = snapshot.data ?? true;
+  const AppLoader({Key? key, required this.initializationFuture}) : super(key: key);
 
-          // After initialization, check if the user is logged in.
-          return StreamBuilder<User?>(
-            stream: FirebaseAuth.instance.authStateChanges(),
-            builder: (context, authSnapshot) {
-              if (authSnapshot.connectionState == ConnectionState.waiting) {
-                return const SplashScreen();
-              }
-              if (authSnapshot.hasData) {
-                return  MainApp(); // If logged in, go to MainApp
+  @override
+  State<AppLoader> createState() => _AppLoaderState();
+}
+
+class _AppLoaderState extends State<AppLoader> {
+  @override
+  void initState() {
+    super.initState();
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    try {
+      // Wait for both initialization and auth state
+      final isFirstLaunch = await widget.initializationFuture;
+
+      // Get the initial auth state without waiting for stream changes
+      final User? currentUser = FirebaseAuth.instance.currentUser;
+
+      if (mounted) {
+        // Navigate instantly without any transition
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder: (context, animation1, animation2) {
+              if (currentUser != null) {
+                return const MainApp();
               } else {
-                // If not logged in, show Welcome or Login screen
-                return isFirstLaunch
-                    ? const WelcomeScreen()
-                    : const LoginScreen();
+                return isFirstLaunch ? const WelcomeScreen() : const LoginScreen();
               }
             },
-          );
-        },
-      ),
-    );
+            transitionDuration: Duration.zero,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        // Fallback to login screen on error
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder: (context, animation1, animation2) => const LoginScreen(),
+            transitionDuration: Duration.zero,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const SplashScreen();
   }
 }
 
