@@ -21,20 +21,25 @@ class CartScreen extends StatefulWidget {
   @override
   _CartScreenState createState() => _CartScreenState();
 }
-
 class _CartScreenState extends State<CartScreen> {
   final RestaurantService _restaurantService = RestaurantService();
+  final Set<String> _notifiedOutOfStockItems = {};
+
+  // Add this getter to allow access from child widgets
+  Set<String> get notifiedOutOfStockItems => _notifiedOutOfStockItems;
+
   String _estimatedTime = 'Loading...';
   double deliveryFee = 0;
   bool _isFindingNearestBranch = false;
-  List<String> _currentBranchIds = ['OldAirport']; // Changed to List
+  List<String> _currentBranchIds = ['OldAirport'];
   List<Map<String, String>> _allBranches = [];
-  List<String> _nearestBranchIds = []; // Changed to List
+  List<String> _nearestBranchIds = [];
   bool _isDefaultNearest = true;
   final TextEditingController _notesController = TextEditingController();
   List<MenuItem> _drinksItems = [];
   bool _isLoadingDrinks = true;
   bool _isCheckingOut = false;
+  bool _isValidatingStock = false;
   String _orderType = 'delivery';
   String _paymentType = 'Cash on Delivery';
   bool _isInitialized = false;
@@ -49,22 +54,191 @@ class _CartScreenState extends State<CartScreen> {
   bool _isOutOfDeliveryRange = false;
   double _distanceToBranch = 0;
 
+  // Out-of-stock monitoring
+  List<CartModel> _outOfStockItems = [];
+  bool _isCheckingStock = false;
+
+  // Add these for tracking notified out-of-stock items
+  bool _isFirstStockCheck = true;
+
   @override
   void initState() {
     super.initState();
     _initializeData();
     CartService().addListener(_onCartChanged);
+
+    // Start stock monitoring
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      CartService().startStockMonitoring(_currentBranchIds);
+      _checkForOutOfStockItems();
+    });
   }
 
   @override
   void dispose() {
     CartService().removeListener(_onCartChanged);
+    CartService().stopStockMonitoring();
     _notesController.dispose();
     super.dispose();
   }
 
   void _onCartChanged() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+      // Check for out-of-stock items when cart changes
+      _checkForOutOfStockItems();
+    }
+  }
+
+  Future<void> _checkForOutOfStockItems() async {
+    if (_isCheckingStock) return;
+
+    setState(() => _isCheckingStock = true);
+
+    try {
+      final outOfStockItems = await CartService().getOutOfStockItems(_currentBranchIds);
+
+      if (mounted) {
+        setState(() {
+          _outOfStockItems = outOfStockItems;
+        });
+      }
+
+      // Filter items that haven't been notified yet
+      final newOutOfStockItems = outOfStockItems.where(
+              (item) => !_notifiedOutOfStockItems.contains(item.id)
+      ).toList();
+
+      // Show popup only for new out-of-stock items (and not on first load)
+      if (newOutOfStockItems.isNotEmpty && mounted && !_isFirstStockCheck) {
+        _showOutOfStockPopup(newOutOfStockItems);
+
+        // Mark these items as notified
+        for (final item in newOutOfStockItems) {
+          _notifiedOutOfStockItems.add(item.id);
+        }
+      }
+
+      // Clear notified items that are no longer out of stock
+      _notifiedOutOfStockItems.removeWhere(
+              (itemId) => !outOfStockItems.any((item) => item.id == itemId)
+      );
+
+      _isFirstStockCheck = false;
+
+    } catch (e) {
+      debugPrint('Error checking out-of-stock items: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isCheckingStock = false);
+      }
+    }
+  }
+
+  void _showOutOfStockPopup(List<CartModel> outOfStockItems) {
+    if (outOfStockItems.isEmpty || !mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 24),
+            const SizedBox(width: 8),
+            Text('Item Unavailable', style: AppTextStyles.headline2),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'The following items are no longer available:',
+              style: AppTextStyles.bodyText1,
+            ),
+            const SizedBox(height: 12),
+            ...outOfStockItems.map((item) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Icon(Icons.close, color: Colors.red, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${item.name} (Qty: ${item.quantity})',
+                      style: AppTextStyles.bodyText1.copyWith(
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )),
+            const SizedBox(height: 16),
+            Text(
+              'Would you like to remove these items from your cart?',
+              style: AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade600),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              // Mark items as notified even if kept
+              for (final item in outOfStockItems) {
+                _notifiedOutOfStockItems.add(item.id);
+              }
+              Navigator.pop(context);
+            },
+            child: Text(
+              'Keep Items',
+              style: AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              _removeOutOfStockItems(outOfStockItems);
+              Navigator.pop(context);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Remove All', style: AppTextStyles.buttonText),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _removeOutOfStockItems(List<CartModel> outOfStockItems) {
+    final cartService = CartService();
+    for (final item in outOfStockItems) {
+      cartService.removeFromCart(item.id);
+      _notifiedOutOfStockItems.remove(item.id); // Remove from notified set
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          outOfStockItems.length == 1
+              ? '${outOfStockItems.first.name} removed (out of stock)'
+              : '${outOfStockItems.length} items removed (out of stock)',
+        ),
+        backgroundColor: Colors.orange,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+
+    if (mounted) {
+      setState(() {
+        _outOfStockItems.clear();
+      });
+    }
   }
 
   Future<void> _initializeData() async {
@@ -105,34 +279,184 @@ class _CartScreenState extends State<CartScreen> {
         .toList();
   }
 
+  Future<String> _getNearestBranchByAddress() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null || user.email == null) {
+        return 'Old_Airport';
+      }
+
+      // Get user's default address
+      final userDoc = await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(user.email)
+          .get();
+
+      if (!userDoc.exists) return 'Old_Airport';
+
+      final userData = userDoc.data() as Map<String, dynamic>;
+      final addresses = (userData['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+      if (addresses.isEmpty) {
+        return 'Old_Airport';
+      }
+
+      Map<String, dynamic> defaultAddress;
+      try {
+        defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true);
+      } catch (e) {
+        defaultAddress = addresses.first;
+      }
+
+      if (defaultAddress['geolocation'] == null) {
+        return 'Old_Airport';
+      }
+
+      final userGeoPoint = defaultAddress['geolocation'] as GeoPoint;
+
+      // Get all active branches
+      final branchesSnapshot = await FirebaseFirestore.instance
+          .collection('Branch')
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      if (branchesSnapshot.docs.isEmpty) {
+        return 'Old_Airport';
+      }
+
+      String nearestBranchId = 'Old_Airport';
+      double shortestDistance = double.infinity;
+
+      for (final branchDoc in branchesSnapshot.docs) {
+        final branchData = branchDoc.data();
+        final addressData = branchData['address'] as Map<String, dynamic>?;
+
+        if (addressData != null && addressData['geolocation'] != null) {
+          final branchGeoPoint = addressData['geolocation'] as GeoPoint;
+          final distance = _calculateDistance(
+            userGeoPoint.latitude,
+            userGeoPoint.longitude,
+            branchGeoPoint.latitude,
+            branchGeoPoint.longitude,
+          );
+
+          if (distance < shortestDistance) {
+            shortestDistance = distance;
+            nearestBranchId = branchDoc.id;
+          }
+        }
+      }
+
+      return nearestBranchId;
+    } catch (e) {
+      debugPrint('Error finding nearest branch by address: $e');
+      return 'Old_Airport';
+    }
+  }
+
+  Future<String> _getNearestBranchByGPS() async {
+    try {
+      final userPosition = await _getCurrentLocation();
+      if (userPosition == null) {
+        return 'Old_Airport';
+      }
+
+      // Get all active branches
+      final branchesSnapshot = await FirebaseFirestore.instance
+          .collection('Branch')
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      if (branchesSnapshot.docs.isEmpty) {
+        return 'Old_Airport';
+      }
+
+      String nearestBranchId = 'Old_Airport';
+      double shortestDistance = double.infinity;
+
+      for (final branchDoc in branchesSnapshot.docs) {
+        final branchData = branchDoc.data();
+        final addressData = branchData['address'] as Map<String, dynamic>?;
+
+        if (addressData != null && addressData['geolocation'] != null) {
+          final branchGeoPoint = addressData['geolocation'] as GeoPoint;
+          final distance = _calculateDistance(
+            userPosition.latitude,
+            userPosition.longitude,
+            branchGeoPoint.latitude,
+            branchGeoPoint.longitude,
+          );
+
+          if (distance < shortestDistance) {
+            shortestDistance = distance;
+            nearestBranchId = branchDoc.id;
+          }
+        }
+      }
+
+      return nearestBranchId;
+    } catch (e) {
+      debugPrint('Error finding nearest branch by GPS: $e');
+      return 'Old_Airport';
+    }
+  }
+
+
   Future<void> _setNearestBranch() async {
     if (!mounted) return;
 
     setState(() => _isFindingNearestBranch = true);
 
     try {
-      // Use the same format as in _getBranchDisplayName
-      final branchIds = ['Old_Airport']; // Changed to List
+      List<String> branchIds;
+
+      if (_orderType == 'delivery') {
+        // For delivery: use default address
+        final nearestBranchId = await _getNearestBranchByAddress();
+        branchIds = [nearestBranchId];
+        debugPrint('🚚 Delivery mode: Using branch by address - $nearestBranchId');
+      } else {
+        // For pickup: use GPS
+        final nearestBranchId = await _getNearestBranchByGPS();
+        branchIds = [nearestBranchId];
+        debugPrint('🏪 Pickup mode: Using branch by GPS - $nearestBranchId');
+      }
 
       if (mounted) {
-        _currentBranchIds = branchIds;
-        _nearestBranchIds = branchIds;
-        _isDefaultNearest = true;
-        _isFindingNearestBranch = false;
+        setState(() {
+          _currentBranchIds = branchIds;
+          _nearestBranchIds = branchIds;
+          _isDefaultNearest = true;
+          _isFindingNearestBranch = false;
+        });
+
+        // Update cart service with new branch IDs
+        CartService().updateCurrentBranchIds(branchIds);
+
+        // Restart stock monitoring with new branches
+        CartService().startStockMonitoring(branchIds);
+
+        // Reset notified items for new branch
+        _notifiedOutOfStockItems.clear();
+        _isFirstStockCheck = true;
 
         if (_isInitialized) {
           setState(() {});
         }
 
-        await loadDeliveryFee(branchIds.first); // Use first branch for delivery fee
+        await loadDeliveryFee(branchIds.first);
       }
     } catch (e) {
       debugPrint('Error setting nearest branch: $e');
+      // Fallback to default branch
+      final fallbackBranch = ['Old_Airport'];
       if (mounted) {
-        _isFindingNearestBranch = false;
-        if (_isInitialized) {
-          setState(() {});
-        }
+        setState(() {
+          _currentBranchIds = fallbackBranch;
+          _isFindingNearestBranch = false;
+        });
+        CartService().updateCurrentBranchIds(fallbackBranch);
+        await loadDeliveryFee(fallbackBranch.first);
       }
     }
   }
@@ -141,7 +465,7 @@ class _CartScreenState extends State<CartScreen> {
 
   Future<void> _loadEstimatedTime() async {
     final time = await _restaurantService.getDynamicEtaForUser(
-      _currentBranchIds.first, // Use first branch for ETA
+      _currentBranchIds.first,
       orderType: _orderType,
     );
     if (mounted) {
@@ -157,44 +481,68 @@ class _CartScreenState extends State<CartScreen> {
     setState(() => _isLoadingDrinks = true);
 
     try {
-      print('Loading drinks for branches: $_currentBranchIds'); // DEBUG
+      print('🔄 Loading drinks for branches: $_currentBranchIds');
 
+      // First, let's check what branches actually exist
+      final branchesSnap = await FirebaseFirestore.instance
+          .collection('Branch')
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      print('📋 Available branches: ${branchesSnap.docs.map((d) => d.id).toList()}');
+
+      // Try a simpler query first to see if we get any drinks at all
       final snap = await FirebaseFirestore.instance
           .collection('menu_items')
           .where('categoryId', isEqualTo: 'Drinks')
-          .where('branchIds', arrayContainsAny: _currentBranchIds) // Changed to arrayContainsAny
           .where('isAvailable', isEqualTo: true)
-          .orderBy('sortOrder')
           .limit(10)
           .get();
 
-      print('Found ${snap.docs.length} drinks'); // DEBUG
+      print('🍹 Found ${snap.docs.length} drinks total');
+
+      // Now filter by branch availability manually
+      final allDrinks = snap.docs.map((d) {
+        final data = d.data();
+        final branchIds = List<String>.from(data['branchIds'] ?? []);
+        final outOfStockBranches = List<String>.from(data['outOfStockBranches'] ?? []);
+
+        print('📝 Drink: ${data['name']}, branches: $branchIds, outOfStock: $outOfStockBranches');
+
+        return MenuItem(
+          id: d.id,
+          name: data['name'] ?? 'Unknown Drink',
+          price: (data['price'] ?? 0).toDouble(),
+          discountedPrice: data['discountedPrice']?.toDouble(),
+          imageUrl: data['imageUrl'] ?? '',
+          description: data['description'] ?? '',
+          categoryId: data['categoryId'] ?? '',
+          branchIds: branchIds,
+          isAvailable: data['isAvailable'] ?? true,
+          isPopular: data['isPopular'] ?? false,
+          sortOrder: data['sortOrder'] ?? 0,
+          variants: (data['variants'] is Map) ? Map.from(data['variants']) : const {},
+          tags: (data['tags'] is Map) ? Map.from(data['tags']) : const {},
+          outOfStockBranches: outOfStockBranches,
+        );
+      }).toList();
+
+      // Filter drinks that are available in current branches
+      final availableDrinks = allDrinks.where((item) {
+        final isAvailable = item.isAvailableInBranch(_currentBranchIds.first);
+        print('✅ ${item.name} available in ${_currentBranchIds.first}: $isAvailable');
+        return isAvailable;
+      }).toList();
+
+      print('🎯 Final available drinks: ${availableDrinks.length}');
 
       if (mounted) {
         setState(() {
-          _drinksItems = snap.docs.map((d) {
-            final data = d.data();
-            print('Drink: ${data['name']}, Available: ${data['isAvailable']}'); // DEBUG
-            return MenuItem(
-              id: d.id,
-              name: data['name'] ?? 'Unknown Drink',
-              price: (data['price'] ?? 0).toDouble(),
-              discountedPrice: data['discountedPrice']?.toDouble(),
-              imageUrl: data['imageUrl'] ?? '',
-              description: data['description'] ?? '',
-              categoryId: data['categoryId'] ?? '',
-              branchIds: [_currentBranchIds.first], // CHANGED: wrap in array
-              isAvailable: data['isAvailable'] ?? true,
-              isPopular: data['isPopular'] ?? false,
-              sortOrder: data['sortOrder'] ?? 0,
-              variants: (data['variants'] is Map) ? Map.from(data['variants']) : const {},
-              tags: (data['tags'] is Map) ? Map.from(data['tags']) : const {},
-            );
-          }).toList();
+          _drinksItems = availableDrinks;
         });
       }
     } catch (e) {
-      debugPrint('Error loading drinks: $e');
+      debugPrint('❌ Error loading drinks: $e');
       if (mounted) {
         setState(() {
           _drinksItems = [];
@@ -207,7 +555,6 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  // Updated loadDeliveryFee method to include range data
   Future<void> loadDeliveryFee(String branchId) async {
     final snap = await FirebaseFirestore.instance
         .collection('Branch')
@@ -223,23 +570,19 @@ class _CartScreenState extends State<CartScreen> {
       _noDeliveryRange = (data?['noDeliveryRange'] ?? 0).toDouble();
     });
 
-    // Calculate distance and update delivery fee accordingly
     await _calculateAndUpdateDeliveryFee();
   }
 
-  // Method to calculate distance and update delivery fee
   Future<void> _calculateAndUpdateDeliveryFee() async {
     if (_orderType != 'delivery') return;
 
     try {
-      // Get user's current address geolocation
       final userGeoPoint = await _getUserLocationFromAddress();
       if (userGeoPoint == null) {
         debugPrint('Could not get user location from address');
         return;
       }
 
-      // Get branch geolocation - use first branch for distance calculation
       final branchSnap = await FirebaseFirestore.instance
           .collection('Branch')
           .doc(_currentBranchIds.first)
@@ -259,7 +602,6 @@ class _CartScreenState extends State<CartScreen> {
         return;
       }
 
-      // Calculate distance
       final distance = _calculateDistance(
         userGeoPoint.latitude,
         userGeoPoint.longitude,
@@ -272,11 +614,9 @@ class _CartScreenState extends State<CartScreen> {
           _distanceToBranch = distance;
           _isOutOfDeliveryRange = distance > _noDeliveryRange;
 
-          // Apply free delivery if within range
           if (distance <= _freeDeliveryRange) {
             deliveryFee = 0;
           } else {
-            // Reset to original delivery fee if outside free range
             deliveryFee = (branchData['deliveryFee'] ?? 0).toDouble();
           }
         });
@@ -286,13 +626,11 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  // Method to get user location from their saved address
   Future<GeoPoint?> _getUserLocationFromAddress() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null || user.email == null) return null;
 
-      // Use cached address if available, otherwise fetch from Firestore
       Map<String, dynamic>? address = _cachedAddress;
       if (address == null) {
         final userDoc = await FirebaseFirestore.instance
@@ -316,12 +654,10 @@ class _CartScreenState extends State<CartScreen> {
         }
       }
 
-      // If address has geolocation, use it
       if (address?['geolocation'] != null) {
         return address!['geolocation'] as GeoPoint;
       }
 
-      // If no geolocation in address, try to get current location as fallback
       final Position? currentPosition = await _getCurrentLocation();
       if (currentPosition != null) {
         return GeoPoint(currentPosition.latitude, currentPosition.longitude);
@@ -334,7 +670,6 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  // Method to get current device location (fallback)
   Future<Position?> _getCurrentLocation() async {
     try {
       bool serviceEnabled;
@@ -366,9 +701,8 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  // Distance calculation method
   double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
-    const double earthRadius = 6371; // Earth's radius in km
+    const double earthRadius = 6371;
 
     double dLat = _toRadians(lat2 - lat1);
     double dLon = _toRadians(lon2 - lon1);
@@ -385,7 +719,6 @@ class _CartScreenState extends State<CartScreen> {
     return degrees * pi / 180;
   }
 
-  // Solution 1: Add address loading method
   Future<void> _loadUserAddress(String userEmail) async {
     if (_isLoadingAddress) return;
 
@@ -399,7 +732,6 @@ class _CartScreenState extends State<CartScreen> {
           _isLoadingAddress = false;
         });
       }
-      // Recalculate delivery fee when address is loaded
       await _calculateAndUpdateDeliveryFee();
     } catch (e) {
       debugPrint('Error loading user address: $e');
@@ -435,8 +767,102 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
+  // Enhanced checkout with stock validation
+  Future<void> _proceedToCheckout() async {
+    if (_orderType == 'delivery' && _isOutOfDeliveryRange) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Sorry, we do not deliver to your location. Maximum delivery range is $_noDeliveryRange km.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
+
+    final String notes = _notesController.text.trim();
+    if (!mounted) return;
+
+    setState(() {
+      _isCheckingOut = true;
+      _isValidatingStock = true;
+    });
+
+    try {
+      final cartService = CartService();
+
+      // NEW: Check for out-of-stock items before validation
+      final outOfStockItems = await cartService.getOutOfStockItems(_currentBranchIds);
+      if (outOfStockItems.isNotEmpty) {
+        setState(() {
+          _isCheckingOut = false;
+          _isValidatingStock = false;
+        });
+        _showOutOfStockPopup(outOfStockItems);
+        return;
+      }
+
+      // Validate stock before proceeding
+      await cartService.validateCartStock(_currentBranchIds);
+
+      setState(() => _isValidatingStock = false);
+
+      if (cartService.items.isEmpty) throw Exception("Your cart is empty");
+
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null || user.email == null) throw Exception("User not authenticated");
+
+      Map<String, dynamic>? defaultAddress;
+      if (_orderType == 'delivery') {
+        final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
+        if (!userDoc.exists) throw Exception("User document not found");
+        final userData = userDoc.data() as Map<String, dynamic>;
+        final addresses = ((userData['address'] as List?) ?? []).map((a) => Map<String, dynamic>.from(a as Map)).toList();
+        if (addresses.isEmpty) throw Exception("No delivery address set");
+        defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true, orElse: () => addresses[0]);
+      }
+
+      final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
+      final userData = userDoc.data() as Map<String, dynamic>;
+      final String userName = userData['name'] ?? 'Customer';
+      final String userPhone = userData['phone'] ?? 'No phone provided';
+
+      final orderDoc = await _createOrderInFirestore(
+        user: user,
+        cartService: cartService,
+        notes: notes,
+        defaultAddress: defaultAddress,
+        userName: userName,
+        userPhone: userPhone,
+        orderType: _orderType,
+      );
+
+      final double totalForPayment = cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0);
+      final paymentMeta = _composePaymentMeta(totalForPayment);
+      await orderDoc.update(paymentMeta);
+
+      await _handleSuccessfulPayment(orderDoc, {
+        'id': paymentMeta['transactionId'] ?? 'no_payment',
+        'amount': totalForPayment,
+      });
+
+      _showOrderConfirmationDialog();
+    } catch (e, st) {
+      debugPrint('Checkout error → $e\n$st');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Checkout failed: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCheckingOut = false;
+          _isValidatingStock = false;
+        });
+      }
+    }
+  }
+
   Widget _buildYouMightAlsoLikeSection() {
-    // Add debug info
     print('_isLoadingDrinks: $_isLoadingDrinks');
     print('_drinksItems length: ${_drinksItems.length}');
     print('_currentBranchIds: $_currentBranchIds');
@@ -501,7 +927,7 @@ class _CartScreenState extends State<CartScreen> {
     }
 
     if (_drinksItems.isEmpty) {
-      return Padding( // Changed from SizedBox.shrink to show when empty
+      return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -539,7 +965,7 @@ class _CartScreenState extends State<CartScreen> {
             clipBehavior: Clip.none,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: _drinksItems.length,
-            itemBuilder: (_, i) => _DrinkCard(drink: _drinksItems[i]),
+            itemBuilder: (_, i) => _DrinkCard(drink: _drinksItems[i],currentBranchIds: _currentBranchIds),
           ),
         ),
       ],
@@ -549,7 +975,7 @@ class _CartScreenState extends State<CartScreen> {
   void _onOrderTypeChanged(String newType) {
     if (newType != _orderType) {
       setState(() => _orderType = newType);
-      _setNearestBranch();
+      _setNearestBranch(); // This will now use the correct method based on order type
       if (newType == 'delivery') {
         _calculateAndUpdateDeliveryFee();
       }
@@ -569,7 +995,6 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  // Helper method to get display name for multiple branches
   String _getBranchesDisplayName(List<String> branchIds) {
     if (branchIds.isEmpty) return 'No branch selected';
     if (branchIds.length == 1) return _getBranchDisplayName(branchIds.first);
@@ -706,13 +1131,14 @@ class _CartScreenState extends State<CartScreen> {
                             price: item.price,
                             discountedPrice: item.discountedPrice,
                             description: '',
-                            branchIds: _currentBranchIds, // Use first branch ID
+                            branchIds: _currentBranchIds,
                             categoryId: '',
                             isAvailable: true,
                             isPopular: false,
                             sortOrder: 0,
                             tags: {},
                             variants: {},
+                            outOfStockBranches: [],
                           ),
                           quantity: item.quantity,
                         );
@@ -721,13 +1147,20 @@ class _CartScreenState extends State<CartScreen> {
                   ),
                 );
               },
+              notifiedOutOfStockItems: _notifiedOutOfStockItems,
+              onItemNotified: (itemId) {
+                if (mounted) {
+                  setState(() {
+                    _notifiedOutOfStockItems.add(itemId);
+                  });
+                }
+              },
             ),
           ),
         );
       },
     );
   }
-
   Widget _buildCartTotalsSection(CartService cartService) {
     return ListenableBuilder(
       listenable: cartService,
@@ -775,13 +1208,26 @@ class _CartScreenState extends State<CartScreen> {
   Widget _buildPlaceOrderButton() {
     final cartService = CartService();
     final bool isCartEmpty = cartService.items.isEmpty;
-    final bool isDisabled = _isCheckingOut ||
-        isCartEmpty ||
+
+    // Check if any items in cart are unavailable
+    bool hasUnavailableItems = _outOfStockItems.isNotEmpty;
+
+    final bool isDisabled = _isCheckingOut || _isValidatingStock ||
+        isCartEmpty || hasUnavailableItems ||
         (_orderType == 'delivery' && _isOutOfDeliveryRange);
+
+    String buttonText = 'PLACE ORDER';
+    if (_isValidatingStock) {
+      buttonText = 'CHECKING STOCK...';
+    } else if (_orderType == 'delivery' && _isOutOfDeliveryRange) {
+      buttonText = 'OUTSIDE DELIVERY RANGE';
+    } else if (hasUnavailableItems) {
+      buttonText = 'UNAVAILABLE ITEMS IN CART';
+    }
 
     return SizedBox(
       width: double.infinity,
-      child: _isCheckingOut
+      child: _isCheckingOut || _isValidatingStock
           ? ElevatedButton(
         onPressed: null,
         style: ElevatedButton.styleFrom(
@@ -802,7 +1248,7 @@ class _CartScreenState extends State<CartScreen> {
             ),
             const SizedBox(width: 12),
             Text(
-              'PROCESSING...',
+              _isValidatingStock ? 'CHECKING STOCK...' : 'PROCESSING...',
               style: AppTextStyles.buttonText.copyWith(color: AppColors.white),
             ),
           ],
@@ -816,9 +1262,7 @@ class _CartScreenState extends State<CartScreen> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
         child: Text(
-          _orderType == 'delivery' && _isOutOfDeliveryRange
-              ? 'OUTSIDE DELIVERY RANGE'
-              : 'PLACE ORDER',
+          buttonText,
           style: AppTextStyles.buttonText.copyWith(
             color: AppColors.white,
           ),
@@ -912,7 +1356,6 @@ class _CartScreenState extends State<CartScreen> {
           const SizedBox(height: 16),
           _orderType == 'delivery' ? _buildAddressSection() : buildPickupInfo(),
 
-          // Show delivery range information
           if (_orderType == 'delivery' && _distanceToBranch > 0) ...[
             const Divider(height: 16, thickness: 0.5),
             _buildDeliveryRangeInfo(),
@@ -927,7 +1370,6 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  // Add this widget to show delivery range information
   Widget _buildDeliveryRangeInfo() {
     String statusText;
     Color statusColor;
@@ -1088,7 +1530,7 @@ class _CartScreenState extends State<CartScreen> {
                           fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
                   const SizedBox(height: 4),
                   Text(
-                    _isFindingNearestBranch ? 'Finding nearest branch…' : _getBranchesDisplayName(_currentBranchIds), // Updated to use helper method
+                    _isFindingNearestBranch ? 'Finding nearest branch…' : _getBranchesDisplayName(_currentBranchIds),
                     style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w600, color: AppColors.darkGrey),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -1109,14 +1551,12 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  // Solution 1: Updated _buildAddressSection with caching
   Widget _buildAddressSection() {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.email == null) {
       return const Text('Please log in to set an address.');
     }
 
-    // Load address only once or when needed
     if (_cachedAddress == null && !_isLoadingAddress) {
       _loadUserAddress(user.email!);
     }
@@ -1285,7 +1725,7 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 if (_orderType == 'pickup' && !_isFindingNearestBranch)
                   Text(
-                    'from ${_getBranchesDisplayName(_currentBranchIds)}', // Updated to use helper method
+                    'from ${_getBranchesDisplayName(_currentBranchIds)}',
                     style: AppTextStyles.bodyText2.copyWith(color: Colors.green, fontSize: 11),
                   ),
               ],
@@ -1417,6 +1857,8 @@ class _CartScreenState extends State<CartScreen> {
           TextButton(
             onPressed: () {
               cartService.clearCart();
+              // Also clear notified items when cart is cleared
+              _notifiedOutOfStockItems.clear();
               Navigator.pop(context);
             },
             child: Text('Clear', style: AppTextStyles.bodyText1.copyWith(color: Colors.red, fontWeight: FontWeight.bold)),
@@ -1501,8 +1943,11 @@ class _CartScreenState extends State<CartScreen> {
                 trailing: _currentBranchIds.contains(branch['id']) ? const Icon(Icons.check_circle, color: Colors.green) : null,
                 onTap: () {
                   setState(() {
-                    _currentBranchIds = [branch['id']!]; // Set as single branch in list
+                    _currentBranchIds = [branch['id']!];
                     _isDefaultNearest = (_currentBranchIds == _nearestBranchIds);
+                    // Reset notified items when branch changes
+                    _notifiedOutOfStockItems.clear();
+                    _isFirstStockCheck = true;
                   });
                   _loadDrinks();
                   _loadEstimatedTime();
@@ -1549,7 +1994,6 @@ class _CartScreenState extends State<CartScreen> {
                 if ((selected['city'] ?? '').toString().isNotEmpty) selected['city'],
               ].join(', ');
 
-              // Solution 1: Update the cache when address is changed
               if (mounted) {
                 setState(() {
                   _cachedAddress = selected;
@@ -1557,8 +2001,6 @@ class _CartScreenState extends State<CartScreen> {
               }
 
               onAddressSelected((selected['label'] ?? 'Home').toString(), detailed);
-
-              // Recalculate delivery fee when address changes
               await _calculateAndUpdateDeliveryFee();
 
               if (Navigator.canPop(context)) Navigator.pop(context);
@@ -1663,76 +2105,6 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  Future<void> _proceedToCheckout() async {
-    // Check if out of delivery range
-    if (_orderType == 'delivery' && _isOutOfDeliveryRange) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Sorry, we do not deliver to your location. Maximum delivery range is $_noDeliveryRange km.'),
-        backgroundColor: Colors.red,
-      ));
-      return;
-    }
-
-    final String notes = _notesController.text.trim();
-    if (!mounted) return;
-
-    setState(() => _isCheckingOut = true);
-
-    try {
-      final cartService = CartService();
-      if (cartService.items.isEmpty) throw Exception("Your cart is empty");
-
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null || user.email == null) throw Exception("User not authenticated");
-
-      Map<String, dynamic>? defaultAddress;
-      if (_orderType == 'delivery') {
-        final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
-        if (!userDoc.exists) throw Exception("User document not found");
-        final userData = userDoc.data() as Map<String, dynamic>;
-        final addresses = ((userData['address'] as List?) ?? []).map((a) => Map<String, dynamic>.from(a as Map)).toList();
-        if (addresses.isEmpty) throw Exception("No delivery address set");
-        defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true, orElse: () => addresses[0]);
-      }
-
-      final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
-      final userData = userDoc.data() as Map<String, dynamic>;
-      final String userName = userData['name'] ?? 'Customer';
-      final String userPhone = userData['phone'] ?? 'No phone provided';
-
-      final orderDoc = await _createOrderInFirestore(
-        user: user,
-        cartService: cartService,
-        notes: notes,
-        defaultAddress: defaultAddress,
-        userName: userName,
-        userPhone: userPhone,
-        orderType: _orderType,
-      );
-
-      final double totalForPayment = cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0);
-      final paymentMeta = _composePaymentMeta(totalForPayment);
-      await orderDoc.update(paymentMeta);
-
-      await _handleSuccessfulPayment(orderDoc, {
-        'id': paymentMeta['transactionId'] ?? 'no_payment',
-        'amount': totalForPayment,
-      });
-
-      _showOrderConfirmationDialog();
-    } catch (e, st) {
-      debugPrint('Checkout error → $e\n$st');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Checkout failed: $e'),
-          backgroundColor: Colors.red,
-        ));
-      }
-    } finally {
-      if (mounted) setState(() => _isCheckingOut = false);
-    }
-  }
-
   Future<DocumentReference> _createOrderInFirestore({
     required User user,
     required CartService cartService,
@@ -1795,7 +2167,7 @@ class _CartScreenState extends State<CartScreen> {
         'deliveryAddress': defaultAddress,
         'paymentStatus': 'pending',
         'riderPaymentAmount': riderPaymentAmount,
-        'branchIds': _currentBranchIds, // Changed to branchIds (List)
+        'branchIds': _currentBranchIds,
         if (cartService.appliedCoupon != null) 'couponCode': cartService.appliedCoupon!.code,
         if (cartService.appliedCoupon != null) 'couponDiscount': cartService.couponDiscount,
         if (cartService.appliedCoupon != null) 'couponId': cartService.appliedCoupon!.id,
@@ -1827,6 +2199,8 @@ class _CartScreenState extends State<CartScreen> {
 
     await cartService.clearCart();
     _notesController.clear();
+    // Clear notified items when order is successful
+    _notifiedOutOfStockItems.clear();
   }
 
   void _showOrderConfirmationDialog() {
@@ -1845,7 +2219,7 @@ class _CartScreenState extends State<CartScreen> {
             Text('Your order has been placed successfully', textAlign: TextAlign.center, style: AppTextStyles.bodyText1),
             const SizedBox(height: 8),
             Text(
-              'Order will be prepared at ${_getBranchesDisplayName(_currentBranchIds)}', // Updated to use helper method
+              'Order will be prepared at ${_getBranchesDisplayName(_currentBranchIds)}',
               textAlign: TextAlign.center,
               style: AppTextStyles.bodyText2.copyWith(color: Colors.green),
             ),
@@ -1874,22 +2248,172 @@ class _CartScreenState extends State<CartScreen> {
   }
 }
 
+
 class _CartItemWidget extends StatefulWidget {
   final CartModel item;
   final CartService cartService;
   final Function(CartModel) onRemove;
+  final Set<String> notifiedOutOfStockItems;
+  final Function(String) onItemNotified;
 
-  const _CartItemWidget({Key? key, required this.item, required this.cartService, required this.onRemove}) : super(key: key);
+  const _CartItemWidget({
+    Key? key,
+    required this.item,
+    required this.cartService,
+    required this.onRemove,
+    required this.notifiedOutOfStockItems,
+    required this.onItemNotified,
+  }) : super(key: key);
 
   @override
   State<_CartItemWidget> createState() => _CartItemWidgetState();
 }
 
 class _CartItemWidgetState extends State<_CartItemWidget> {
+  bool _isItemAvailable = true;
+  String _imageUrl = '';
+  bool _isCheckingAvailability = false;
+  bool _hasShownDialog = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadItemData();
+  }
+
+  Future<void> _loadItemData() async {
+    try {
+      if (mounted) {
+        setState(() => _isCheckingAvailability = true);
+      }
+
+      final menuItemSnap = await FirebaseFirestore.instance
+          .collection('menu_items')
+          .doc(widget.item.id)
+          .get();
+
+      if (!mounted) return;
+
+      if (menuItemSnap.exists) {
+        final data = menuItemSnap.data()!;
+        _imageUrl = data['imageUrl'] ?? '';
+
+        final outOfStockBranches = List<String>.from(data['outOfStockBranches'] ?? []);
+        final isAvailable = data['isAvailable'] ?? true;
+        final isAvailableInBranch = isAvailable &&
+            !outOfStockBranches.contains(widget.cartService.currentBranchIds.first);
+
+        if (mounted) {
+          setState(() {
+            _isItemAvailable = isAvailableInBranch;
+            _isCheckingAvailability = false;
+          });
+        }
+
+        // Show popup if item becomes unavailable while in cart
+        if (!isAvailableInBranch &&
+            widget.item.quantity > 0 &&
+            mounted &&
+            !widget.notifiedOutOfStockItems.contains(widget.item.id) &&
+            !_hasShownDialog) {
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && !_hasShownDialog) {
+              _showOutOfStockDialog();
+              _hasShownDialog = true;
+            }
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() => _isCheckingAvailability = false);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading item data: $e');
+      if (mounted) {
+        setState(() => _isCheckingAvailability = false);
+      }
+    }
+  }
+
+  void _showOutOfStockDialog() {
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.inventory_2_outlined, color: Colors.orange, size: 24),
+            const SizedBox(width: 8),
+            Text('Item Unavailable', style: AppTextStyles.headline2),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${widget.item.name} is currently out of stock in the selected branch.',
+              style: AppTextStyles.bodyText1,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Would you like to remove it from your cart?',
+              style: AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade600),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              widget.onItemNotified(widget.item.id);
+              _hasShownDialog = true;
+              Navigator.pop(context);
+            },
+            child: Text('Keep in Cart', style: AppTextStyles.bodyText1),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              widget.cartService.removeFromCart(widget.item.id);
+              widget.onItemNotified(widget.item.id);
+              _hasShownDialog = true;
+              Navigator.pop(context);
+
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('${widget.item.name} removed from cart'),
+                    backgroundColor: Colors.orange,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Remove', style: AppTextStyles.buttonText),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleOutOfStockTap() {
+    if (!mounted) return;
+
+    _showOutOfStockDialog();
+  }
+
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
-    final cartService = widget.cartService;
     final bool hasDiscount = item.discountedPrice != null;
     final double displayPrice = hasDiscount ? item.discountedPrice! : item.price;
 
@@ -1902,43 +2426,128 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
         alignment: Alignment.centerRight,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(colors: [Colors.red.shade200, Colors.red.shade500], begin: Alignment.centerLeft, end: Alignment.centerRight),
+          gradient: LinearGradient(
+            colors: [Colors.red.shade200, Colors.red.shade500],
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+          ),
         ),
         child: const Icon(Icons.delete_sweep_outlined, color: Colors.white, size: 32),
       ),
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: AppColors.white,
+          color: _isItemAvailable ? AppColors.white : Colors.grey.shade50,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: AppColors.primaryBlue.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 4))],
+          border: _isItemAvailable
+              ? null
+              : Border.all(color: Colors.orange.withOpacity(0.5), width: 1.5),
+          boxShadow: _isItemAvailable
+              ? [BoxShadow(color: AppColors.primaryBlue.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 4))]
+              : [BoxShadow(color: Colors.orange.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 2))],
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: CachedNetworkImage(
-                imageUrl: item.imageUrl,
-                width: 70,
-                height: 70,
-                fit: BoxFit.cover,
-                placeholder: (context, url) => Container(color: Colors.grey.shade100),
-                errorWidget: (context, url, error) => Container(
-                  color: Colors.grey.shade100,
-                  child: Icon(Icons.fastfood_outlined, color: Colors.grey.shade400),
+            // Image with out-of-stock overlay
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: 70,
+                    height: 70,
+                    child: _imageUrl.isNotEmpty
+                        ? CachedNetworkImage(
+                      imageUrl: _imageUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Container(
+                        color: AppColors.lightGrey,
+                        child: const Icon(Icons.fastfood_outlined, color: Colors.grey),
+                      ),
+                      errorWidget: (context, url, error) => Container(
+                        color: AppColors.lightGrey,
+                        child: const Icon(Icons.fastfood_outlined, color: Colors.grey),
+                      ),
+                    )
+                        : Container(
+                      color: AppColors.lightGrey,
+                      child: const Icon(Icons.fastfood_outlined, color: Colors.grey),
+                    ),
+                  ),
                 ),
-              ),
+                if (!_isItemAvailable)
+                  Container(
+                    width: 70,
+                    height: 70,
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.block,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(item.name, style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold, color: AppColors.darkGrey), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.name,
+                          style: AppTextStyles.bodyText1.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: _isItemAvailable ? AppColors.darkGrey : Colors.grey,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (_isCheckingAvailability)
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(AppColors.primaryBlue),
+                          ),
+                        )
+                      else if (!_isItemAvailable)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.orange,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'OUT OF STOCK',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                   const SizedBox(height: 4),
                   if (item.addons != null && item.addons!.isNotEmpty)
-                    Text('Add-ons: ${item.addons!.join(', ')}', style: AppTextStyles.bodyText2.copyWith(fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(
+                      'Add-ons: ${item.addons!.join(', ')}',
+                      style: AppTextStyles.bodyText2.copyWith(
+                        fontSize: 12,
+                        color: _isItemAvailable ? null : Colors.grey,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   const SizedBox(height: 8),
                   if (hasDiscount)
                     Column(
@@ -1946,96 +2555,178 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
                       children: [
                         Row(
                           children: [
-                            Text('QAR ${displayPrice.toStringAsFixed(2)}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
+                            Text(
+                              'QAR ${displayPrice.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: _isItemAvailable ? Colors.green : Colors.grey,
+                              ),
+                            ),
                             const SizedBox(width: 8),
-                            Flexible(child: Text('QAR ${item.price.toStringAsFixed(2)}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.normal, color: Colors.grey, decoration: TextDecoration.lineThrough), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                            Flexible(
+                              child: Text(
+                                'QAR ${item.price.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.normal,
+                                  color: Colors.grey,
+                                  decoration: TextDecoration.lineThrough,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                           ],
                         ),
-                        const SizedBox(height: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
-                          child: Text('Save QAR ${(item.price - displayPrice).toStringAsFixed(2)}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green)),
-                        ),
+                        if (_isItemAvailable) const SizedBox(height: 4),
+                        if (_isItemAvailable)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              'Save QAR ${(item.price - displayPrice).toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green,
+                              ),
+                            ),
+                          ),
                       ],
                     )
                   else
-                    Text('QAR ${displayPrice.toStringAsFixed(2)}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.primaryBlue)),
+                    Text(
+                      'QAR ${displayPrice.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: _isItemAvailable ? AppColors.primaryBlue : Colors.grey,
+                      ),
+                    ),
+                  if (!_isItemAvailable) ...[
+                    const SizedBox(height: 8),
+                    GestureDetector(
+                      onTap: _handleOutOfStockTap,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.info_outline, color: Colors.orange, size: 14),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Tap for options',
+                              style: TextStyle(
+                                color: Colors.orange,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
             const SizedBox(width: 8),
-            _buildQuantityControl(item, cartService),
+            _buildQuantityControl(),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildQuantityControl(CartModel item, CartService cartService) {
+  Widget _buildQuantityControl() {
+    final item = widget.item;
+
+    if (!_isItemAvailable) {
+      return InkWell(
+        onTap: _handleOutOfStockTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.orange,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: const Icon(Icons.info_outline, color: Colors.white, size: 20),
+        ),
+      );
+    }
+
     return Container(
-      decoration: BoxDecoration(color: AppColors.lightGrey, borderRadius: BorderRadius.circular(30)),
+      decoration: BoxDecoration(
+        color: AppColors.lightGrey,
+        borderRadius: BorderRadius.circular(30),
+      ),
       child: Row(
         children: [
           InkWell(
             onTap: () {
               if (item.quantity > 1) {
-                cartService.updateQuantity(item.id, item.quantity - 1);
+                widget.cartService.updateQuantity(item.id, item.quantity - 1);
               } else {
-                _showRemoveConfirmationDialog(item, cartService);
+                widget.cartService.removeFromCart(item.id);
               }
             },
             borderRadius: BorderRadius.circular(20),
             child: Padding(
               padding: const EdgeInsets.all(6.0),
-              child: Icon(Icons.remove, size: 20, color: item.quantity > 1 ? AppColors.primaryBlue : Colors.grey),
+              child: Icon(
+                Icons.remove,
+                size: 20,
+                color: item.quantity > 1 ? AppColors.primaryBlue : Colors.grey,
+              ),
             ),
           ),
-          ValueListenableBuilder<int>(
-            valueListenable: ValueNotifier(item.quantity),
-            builder: (context, quantity, child) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: Text(quantity.toString(), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.darkGrey)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: Text(
+              item.quantity.toString(),
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: AppColors.darkGrey,
+              ),
             ),
           ),
           InkWell(
-            onTap: () => cartService.updateQuantity(item.id, item.quantity + 1),
+            onTap: () => widget.cartService.updateQuantity(item.id, item.quantity + 1),
             borderRadius: BorderRadius.circular(20),
-            child: const Padding(padding: EdgeInsets.all(6.0), child: Icon(Icons.add, size: 20, color: AppColors.primaryBlue)),
+            child: const Padding(
+              padding: EdgeInsets.all(6.0),
+              child: Icon(Icons.add, size: 20, color: AppColors.primaryBlue),
+            ),
           ),
         ],
-      ),
-    );
-  }
-
-  void _showRemoveConfirmationDialog(CartModel item, CartService cartService) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(children: [const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent), const SizedBox(width: 12), Text('Remove Item?', style: AppTextStyles.headline2.copyWith(fontSize: 20))]),
-        content: Text('Are you sure you want to remove ${item.name} from your cart?', style: AppTextStyles.bodyText1),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel', style: AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey))),
-          ElevatedButton(
-            onPressed: () {
-              cartService.removeFromCart(item.id);
-              Navigator.pop(context);
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: AppColors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-            child: Text('Remove', style: AppTextStyles.buttonText.copyWith(fontSize: 14)),
-          ),
-        ],
-        actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       ),
     );
   }
 }
 
+
+
 class _DrinkCard extends StatefulWidget {
   final MenuItem drink;
-  const _DrinkCard({Key? key, required this.drink}) : super(key: key);
+  final List<String> currentBranchIds;
+
+  const _DrinkCard({
+    Key? key,
+    required this.drink,
+    required this.currentBranchIds,
+  }) : super(key: key);
+
   @override
   State<_DrinkCard> createState() => _DrinkCardState();
 }
@@ -2043,16 +2734,32 @@ class _DrinkCard extends StatefulWidget {
 class _DrinkCardState extends State<_DrinkCard> {
   void _updateDrinkQuantity(int change) {
     final cartService = CartService();
-    final currentItem = cartService.items.firstWhere((item) => item.id == widget.drink.id, orElse: () => CartModel(
-      id: widget.drink.id,
-      name: widget.drink.name,
-      imageUrl: widget.drink.imageUrl,
-      price: widget.drink.price,
-      discountedPrice: widget.drink.discountedPrice,
-      quantity: 0,
-    ));
+    final currentItem = cartService.items.firstWhere(
+            (item) => item.id == widget.drink.id,
+        orElse: () => CartModel(
+          id: widget.drink.id,
+          name: widget.drink.name,
+          imageUrl: widget.drink.imageUrl,
+          price: widget.drink.price,
+          discountedPrice: widget.drink.discountedPrice,
+          quantity: 0,
+        )
+    );
+
+    // Check if item is available before any quantity change
+    final isAvailable = widget.drink.isAvailableInBranch(widget.currentBranchIds.first);
+    if (!isAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${widget.drink.name} is not available in selected branch'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
 
     int newQuantity = currentItem.quantity + change;
+
     if (newQuantity > 0) {
       if (currentItem.quantity == 0) {
         cartService.addToCart(widget.drink, quantity: 1);
@@ -2064,20 +2771,91 @@ class _DrinkCardState extends State<_DrinkCard> {
     }
   }
 
+  Widget _buildAddButton(MenuItem item, String currentBranchId, Function(int) onUpdateQuantity, int currentQuantity) {
+    final isAvailable = item.isAvailableInBranch(currentBranchId);
+
+    // If item is not available, show OUT OF STOCK regardless of current quantity
+    if (!isAvailable) {
+      return SizedBox(
+        width: double.infinity,
+        child: ElevatedButton(
+          onPressed: null,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.grey.shade400,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+          ),
+          child: const Text(
+            'OUT OF STOCK',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Item is available, show normal quantity controls
+    return currentQuantity == 0
+        ? SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: () => onUpdateQuantity(1),
+        icon: const Icon(Icons.add_shopping_cart, size: 18),
+        label: Text('Add', style: AppTextStyles.buttonText.copyWith(fontSize: 14)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primaryBlue,
+          foregroundColor: AppColors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+        ),
+      ),
+    )
+        : Container(
+      height: 40,
+      decoration: BoxDecoration(color: AppColors.primaryBlue, borderRadius: BorderRadius.circular(10)),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          IconButton(
+            onPressed: () => onUpdateQuantity(-1),
+            icon: const Icon(Icons.remove, color: AppColors.white, size: 20),
+          ),
+          Text(
+            currentQuantity.toString(),
+            style: AppTextStyles.buttonText.copyWith(color: AppColors.white),
+          ),
+          IconButton(
+            onPressed: () => onUpdateQuantity(1),
+            icon: const Icon(Icons.add, color: AppColors.white, size: 20),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: CartService(),
       builder: (context, child) {
         final cartService = CartService();
-        final cartItem = cartService.items.firstWhere((item) => item.id == widget.drink.id, orElse: () => CartModel(
+        final cartItem = cartService.items.firstWhere(
+              (item) => item.id == widget.drink.id,
+          orElse: () => CartModel(
             id: widget.drink.id,
             name: '',
             imageUrl: '',
             price: 0,
             discountedPrice: widget.drink.discountedPrice,
-            quantity: 0));
+            quantity: 0,
+          ),
+        );
+
         int quantity = cartItem.quantity;
+        final isAvailable = widget.drink.isAvailableInBranch(widget.currentBranchIds.first);
 
         return Container(
           width: 160,
@@ -2085,7 +2863,13 @@ class _DrinkCardState extends State<_DrinkCard> {
           decoration: BoxDecoration(
             color: AppColors.white,
             borderRadius: BorderRadius.circular(16),
-            boxShadow: [BoxShadow(color: AppColors.darkGrey.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.darkGrey.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2093,12 +2877,74 @@ class _DrinkCardState extends State<_DrinkCard> {
               Expanded(
                 child: ClipRRect(
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                  child: CachedNetworkImage(
-                    imageUrl: widget.drink.imageUrl,
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    placeholder: (context, url) => Container(color: AppColors.lightGrey),
-                    errorWidget: (context, url, error) => const Icon(Icons.local_drink_outlined, size: 40, color: Colors.grey),
+                  child: Stack(
+                    children: [
+                      Opacity(
+                        opacity: isAvailable ? 1.0 : 0.6,
+                        child: CachedNetworkImage(
+                          imageUrl: widget.drink.imageUrl,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          placeholder: (context, url) => Container(color: AppColors.lightGrey),
+                          errorWidget: (context, url, error) => const Icon(Icons.local_drink_outlined, size: 40, color: Colors.grey),
+                        ),
+                      ),
+                      if (!isAvailable)
+                        Container(
+                          color: Colors.black54,
+                          child: const Center(
+                            child: Text(
+                              'Out of Stock',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                        ),
+                      // Show out of stock warning even if item is in cart
+                      if (!isAvailable && quantity > 0)
+                        Positioned(
+                          bottom: 8,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            color: Colors.red.withOpacity(0.9),
+                            child: Text(
+                              'Remove from cart',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      // Add a subtle indicator for discounted items
+                      if (widget.drink.discountedPrice != null && isAvailable)
+                        Positioned(
+                          top: 8,
+                          left: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.green,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              'OFFER',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ),
@@ -2107,49 +2953,67 @@ class _DrinkCardState extends State<_DrinkCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(widget.drink.name, style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold, color: AppColors.darkGrey), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(
+                      widget.drink.name,
+                      style: AppTextStyles.bodyText1.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: isAvailable ? AppColors.darkGrey : Colors.grey,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     const SizedBox(height: 4),
                     if (widget.drink.discountedPrice != null)
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('QAR ${widget.drink.discountedPrice!.toStringAsFixed(2)}', style: AppTextStyles.bodyText1.copyWith(color: Colors.green, fontWeight: FontWeight.w600)),
-                          Text('QAR ${widget.drink.price.toStringAsFixed(2)}', style: AppTextStyles.bodyText2.copyWith(color: Colors.grey, decoration: TextDecoration.lineThrough)),
+                          Text(
+                            'QAR ${widget.drink.discountedPrice!.toStringAsFixed(2)}',
+                            style: AppTextStyles.bodyText1.copyWith(
+                              color: isAvailable ? Colors.green : Colors.grey,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            'QAR ${widget.drink.price.toStringAsFixed(2)}',
+                            style: AppTextStyles.bodyText2.copyWith(
+                              color: Colors.grey,
+                              decoration: TextDecoration.lineThrough,
+                            ),
+                          ),
                         ],
                       )
                     else
-                      Text('QAR ${widget.drink.price.toStringAsFixed(2)}', style: AppTextStyles.bodyText1.copyWith(color: AppColors.primaryBlue, fontWeight: FontWeight.w600)),
+                      Text(
+                        'QAR ${widget.drink.price.toStringAsFixed(2)}',
+                        style: AppTextStyles.bodyText1.copyWith(
+                          color: isAvailable ? AppColors.primaryBlue : Colors.grey,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    // Show warning message if item is in cart but out of stock
+                    if (!isAvailable && quantity > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4.0),
+                        child: Text(
+                          'Item unavailable',
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                child: quantity == 0
-                    ? SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () => _updateDrinkQuantity(1),
-                    icon: const Icon(Icons.add_shopping_cart, size: 18),
-                    label: Text('Add', style: AppTextStyles.buttonText.copyWith(fontSize: 14)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryBlue,
-                      foregroundColor: AppColors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                    ),
-                  ),
-                )
-                    : Container(
-                  height: 40,
-                  decoration: BoxDecoration(color: AppColors.primaryBlue, borderRadius: BorderRadius.circular(10)),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      IconButton(onPressed: () => _updateDrinkQuantity(-1), icon: const Icon(Icons.remove, color: AppColors.white, size: 20)),
-                      Text(quantity.toString(), style: AppTextStyles.buttonText.copyWith(color: AppColors.white)),
-                      IconButton(onPressed: () => _updateDrinkQuantity(1), icon: const Icon(Icons.add, color: AppColors.white, size: 20)),
-                    ],
-                  ),
+                child: _buildAddButton(
+                  widget.drink,
+                  widget.currentBranchIds.first,
+                  _updateDrinkQuantity,
+                  quantity,
                 ),
               ),
             ],
@@ -2159,6 +3023,8 @@ class _DrinkCardState extends State<_DrinkCard> {
     );
   }
 }
+
+
 
 class CartService extends ChangeNotifier {
   static CartService? _instance;
@@ -2178,7 +3044,8 @@ class CartService extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   CouponModel? _appliedCoupon;
   double _couponDiscount = 0;
-  List<String> _currentBranchIds = ['Old_Airport']; // Changed to List
+  List<String> _currentBranchIds = ['Old_Airport'];
+  Timer? _stockMonitorTimer;
 
   List<CartModel> get items => _items;
   int get itemCount => _items.fold(0, (sum, item) => sum + item.quantity);
@@ -2194,7 +3061,7 @@ class CartService extends ChangeNotifier {
 
   CouponModel? get appliedCoupon => _appliedCoupon;
   double get couponDiscount => _couponDiscount;
-  List<String> get currentBranchIds => _currentBranchIds; // Changed to List
+  List<String> get currentBranchIds => _currentBranchIds;
 
   Future<void> _loadCartFromPrefs() async {
     try {
@@ -2215,7 +3082,6 @@ class CartService extends ChangeNotifier {
           _couponDiscount = cartData['couponDiscount']?.toDouble() ?? 0;
         }
 
-        // Handle both old string and new list format for backward compatibility
         if (cartData['branchIds'] != null) {
           _currentBranchIds = List<String>.from(cartData['branchIds']);
         } else if (cartData['branchId'] != null) {
@@ -2238,7 +3104,7 @@ class CartService extends ChangeNotifier {
         'items': _items.map((item) => item.toMap()).toList(),
         'coupon': _appliedCoupon?.toMap(),
         'couponDiscount': _couponDiscount,
-        'branchIds': _currentBranchIds, // Changed to branchIds (List)
+        'branchIds': _currentBranchIds,
       });
       await prefs.setString('cart_items', cartJson);
     } catch (e) {
@@ -2246,101 +3112,25 @@ class CartService extends ChangeNotifier {
     }
   }
 
-  Future<List<String>> _findNearestBranch() async { // Changed return type to List
-    try {
-      Position userPosition = await _getUserLocation();
-
-      final branchesSnapshot = await FirebaseFirestore.instance
-          .collection('Branch')
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      if (branchesSnapshot.docs.isEmpty) {
-        return ['Old_Airport'];
-      }
-
-      String nearestBranchId = 'Old_Airport';
-      double shortestDistance = double.infinity;
-
-      for (final branchDoc in branchesSnapshot.docs) {
-        final branchData = branchDoc.data();
-        final addressData = branchData['address'] as Map<String, dynamic>?;
-
-        if (addressData != null && addressData['geolocation'] != null) {
-          final geoPoint = addressData['geolocation'] as GeoPoint;
-          final branchLat = geoPoint.latitude;
-          final branchLng = geoPoint.longitude;
-
-          final distance = _calculateDistance(
-            userPosition.latitude,
-            userPosition.longitude,
-            branchLat,
-            branchLng,
-          );
-
-          if (distance < shortestDistance) {
-            shortestDistance = distance;
-            nearestBranchId = branchDoc.id;
-          }
-        }
-      }
-
-      debugPrint(
-          'Nearest branch: $nearestBranchId, Distance: ${shortestDistance.toStringAsFixed(2)} km');
-      return [nearestBranchId]; // Return as list
-    } catch (e) {
-      debugPrint('Error finding nearest branch: $e');
-      return ['Old_Airport'];
-    }
-  }
-
-  Future<Position> _getUserLocation() async {
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      throw Exception('Location services are disabled.');
+  // Enhanced add to cart with stock validation
+  Future<void> addToCartWithStockCheck(
+      MenuItem menuItem, {
+        int quantity = 1,
+        required String branchId,
+        Map<String, dynamic>? variants,
+        List<String>? addons,
+      }) async {
+    // Check if item is available in the selected branch
+    if (!menuItem.isAvailableInBranch(branchId)) {
+      throw Exception('${menuItem.name} is not available in the selected branch');
     }
 
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        throw Exception('Location permissions are denied');
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      throw Exception('Location permissions are permanently denied.');
-    }
-
-    return await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.medium,
-      timeLimit: Duration(seconds: 10),
+    await addToCart(
+        menuItem,
+        quantity: quantity,
+        variants: variants,
+        addons: addons
     );
-  }
-
-  double _calculateDistance(
-      double lat1, double lon1, double lat2, double lon2) {
-    const double earthRadius = 6371;
-
-    double dLat = _toRadians(lat2 - lat1);
-    double dLon = _toRadians(lon2 - lon1);
-
-    double a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(_toRadians(lat1)) *
-            cos(_toRadians(lat2)) *
-            sin(dLon / 2) *
-            sin(dLon / 2);
-
-    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-
-    return earthRadius * c;
-  }
-
-  double _toRadians(double degrees) {
-    return degrees * pi / 180;
   }
 
   Future<void> addToCart(
@@ -2366,6 +3156,114 @@ class CartService extends ChangeNotifier {
     }
     notifyListeners();
     await _saveCartToPrefs();
+  }
+
+  // New method to check for out-of-stock items
+  Future<List<CartModel>> getOutOfStockItems(List<String> branchIds) async {
+    final List<CartModel> outOfStockItems = [];
+
+    for (final item in _items) {
+      try {
+        final menuItemSnap = await FirebaseFirestore.instance
+            .collection('menu_items')
+            .doc(item.id)
+            .get();
+
+        if (!menuItemSnap.exists) {
+          outOfStockItems.add(item);
+          continue;
+        }
+
+        final menuItemData = menuItemSnap.data()!;
+        final outOfStockBranches = List<String>.from(menuItemData['outOfStockBranches'] ?? []);
+        final isAvailable = menuItemData['isAvailable'] as bool? ?? true;
+
+        // Check if item is unavailable in all selected branches
+        bool isAvailableInAnyBranch = false;
+        for (final branchId in branchIds) {
+          if (isAvailable && !outOfStockBranches.contains(branchId)) {
+            isAvailableInAnyBranch = true;
+            break;
+          }
+        }
+
+        if (!isAvailableInAnyBranch) {
+          outOfStockItems.add(item);
+        }
+      } catch (e) {
+        debugPrint('Error checking stock for ${item.name}: $e');
+        outOfStockItems.add(item);
+      }
+    }
+
+    return outOfStockItems;
+  }
+
+  // Method to remove multiple out-of-stock items
+  Future<void> removeOutOfStockItems(List<CartModel> outOfStockItems) async {
+    for (final item in outOfStockItems) {
+      _items.removeWhere((cartItem) => cartItem.id == item.id);
+    }
+    notifyListeners();
+    await _saveCartToPrefs();
+  }
+
+  // Validate entire cart stock before checkout
+  Future<void> validateCartStock(List<String> branchIds) async {
+    for (final item in _items) {
+      try {
+        // Fetch latest stock info from Firestore
+        final menuItemSnap = await FirebaseFirestore.instance
+            .collection('menu_items')
+            .doc(item.id)
+            .get();
+
+        if (!menuItemSnap.exists) {
+          throw Exception('${item.name} is no longer available');
+        }
+
+        final menuItemData = menuItemSnap.data()!;
+        final outOfStockBranches = List<String>.from(menuItemData['outOfStockBranches'] ?? []);
+        final isAvailable = menuItemData['isAvailable'] as bool? ?? true;
+
+        // Check availability for all selected branches
+        bool isAvailableInAnyBranch = false;
+        for (final branchId in branchIds) {
+          if (isAvailable && !outOfStockBranches.contains(branchId)) {
+            isAvailableInAnyBranch = true;
+            break;
+          }
+        }
+
+        if (!isAvailableInAnyBranch) {
+          throw Exception('${item.name} is out of stock in all selected branches');
+        }
+
+      } catch (e) {
+        debugPrint('Stock validation error for ${item.name}: $e');
+        rethrow;
+      }
+    }
+  }
+
+  // Real-time stock monitoring
+  void startStockMonitoring(List<String> branchIds) {
+    // Stop existing timer if any
+    _stockMonitorTimer?.cancel();
+
+    // Start new timer
+    _stockMonitorTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
+      final outOfStockItems = await getOutOfStockItems(branchIds);
+      if (outOfStockItems.isNotEmpty) {
+        notifyListeners(); // This will trigger UI updates
+      }
+    });
+  }
+
+  // Stop stock monitoring
+  void stopStockMonitoring() {
+    _stockMonitorTimer?.cancel();
+    _stockMonitorTimer = null;
   }
 
   Future<void> removeFromCart(String itemId) async {
@@ -2472,5 +3370,144 @@ class CartService extends ChangeNotifier {
     _couponDiscount = 0;
     notifyListeners();
     await _saveCartToPrefs();
+  }
+
+  Future<List<String>> _findNearestBranch() async {
+    try {
+      Position userPosition = await _getUserLocation();
+
+      final branchesSnapshot = await FirebaseFirestore.instance
+          .collection('Branch')
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      if (branchesSnapshot.docs.isEmpty) {
+        return ['Old_Airport'];
+      }
+
+      String nearestBranchId = 'Old_Airport';
+      double shortestDistance = double.infinity;
+
+      for (final branchDoc in branchesSnapshot.docs) {
+        final branchData = branchDoc.data();
+        final addressData = branchData['address'] as Map<String, dynamic>?;
+
+        if (addressData != null && addressData['geolocation'] != null) {
+          final geoPoint = addressData['geolocation'] as GeoPoint;
+          final branchLat = geoPoint.latitude;
+          final branchLng = geoPoint.longitude;
+
+          final distance = _calculateDistance(
+            userPosition.latitude,
+            userPosition.longitude,
+            branchLat,
+            branchLng,
+          );
+
+          if (distance < shortestDistance) {
+            shortestDistance = distance;
+            nearestBranchId = branchDoc.id;
+          }
+        }
+      }
+
+      debugPrint(
+          'Nearest branch: $nearestBranchId, Distance: ${shortestDistance.toStringAsFixed(2)} km');
+      return [nearestBranchId];
+    } catch (e) {
+      debugPrint('Error finding nearest branch: $e');
+      return ['Old_Airport'];
+    }
+  }
+
+  Future<Position> _getUserLocation() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      throw Exception('Location services are disabled.');
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        throw Exception('Location permissions are denied');
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      throw Exception('Location permissions are permanently denied.');
+    }
+
+    return await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.medium,
+      timeLimit: Duration(seconds: 10),
+    );
+  }
+
+  double _calculateDistance(
+      double lat1, double lon1, double lat2, double lon2) {
+    const double earthRadius = 6371;
+
+    double dLat = _toRadians(lat2 - lat1);
+    double dLon = _toRadians(lon2 - lon1);
+
+    double a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(_toRadians(lat1)) *
+            cos(_toRadians(lat2)) *
+            sin(dLon / 2) *
+            sin(dLon / 2);
+
+    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+
+    return earthRadius * c;
+  }
+
+  double _toRadians(double degrees) {
+    return degrees * pi / 180;
+  }
+
+  // Method to update current branch IDs
+  void updateCurrentBranchIds(List<String> branchIds) {
+    _currentBranchIds = branchIds;
+    notifyListeners();
+    _saveCartToPrefs();
+  }
+
+  // Method to check if an item is in cart
+  bool isItemInCart(String itemId) {
+    return _items.any((item) => item.id == itemId);
+  }
+
+  // Method to get quantity of specific item in cart
+  int getItemQuantity(String itemId) {
+    final item = _items.firstWhere(
+          (item) => item.id == itemId,
+      orElse: () => CartModel(
+        id: '',
+        name: '',
+        imageUrl: '',
+        price: 0,
+        quantity: 0,
+      ),
+    );
+    return item.quantity;
+  }
+
+  // Method to get cart item by ID
+  CartModel? getCartItem(String itemId) {
+    try {
+      return _items.firstWhere((item) => item.id == itemId);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _stockMonitorTimer?.cancel();
+    super.dispose();
   }
 }

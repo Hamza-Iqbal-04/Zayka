@@ -1372,14 +1372,16 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       name: itemData['name'] ?? 'Unknown Dish',
       description: itemData['description'] ?? '',
       price: (itemData['price'] ?? 0.0).toDouble(),
+      discountedPrice: itemData['discountedPrice']?.toDouble(),
       imageUrl: itemData['imageUrl'] ?? '',
       tags: {'isSpicy': itemData['isSpicy'] ?? false},
-      branchIds: [''], // NEW - wrap in array
-      categoryId: '',
-      isAvailable: true,
-      isPopular: false,
-      sortOrder: 0,
-      variants: const {},
+      branchIds: [''],
+      categoryId: itemData['categoryId'] ?? '',
+      isAvailable: itemData['isAvailable'] ?? true,
+      isPopular: itemData['isPopular'] ?? false,
+      sortOrder: itemData['sortOrder'] ?? 0,
+      variants: itemData['variants'] ?? const {},
+      outOfStockBranches: itemData['outOfStockBranches'] ?? const [],
     );
     cartService.addToCart(menuItem);
     ScaffoldMessenger.of(context).showSnackBar(

@@ -85,6 +85,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   bool _addressLoaded = false;
   bool _etaLoaded = false;
 
+  // Add these for tracking unavailable items
+  final Set<String> _notifiedUnavailableItems = {};
+  List<MenuItem> _previousMenuItems = [];
+  bool _isFirstMenuLoad = true;
+
   bool get _isEverythingLoaded =>
       _carouselLoaded &&
           _categoriesLoaded &&
@@ -174,6 +179,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _menuItemsLoaded = false;
           _popularItemsLoaded = false;
           _etaLoaded = false;
+
+          // Reset unavailable items tracking for new branch
+          _notifiedUnavailableItems.clear();
+          _isFirstMenuLoad = true;
+          _previousMenuItems = [];
         });
       }
     } catch (e) {
@@ -226,6 +236,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _popularItemsLoaded = false;
         _addressLoaded = false;
         _etaLoaded = false;
+
+        // Reset unavailable items tracking for new branch
+        _notifiedUnavailableItems.clear();
+        _isFirstMenuLoad = true;
+        _previousMenuItems = [];
       });
 
       Navigator.pop(context);
@@ -389,6 +404,28 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 
+  // Add this to both screens
+  void _showErrorSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+// Wrap all async operations
+  Future<void> _loadData() async {
+    try {
+      // your code
+    } catch (e, stackTrace) {
+      debugPrint('Error: $e\n$stackTrace');
+      _showErrorSnackBar('Failed to load data. Please try again.');
+    }
+  }
+
   Future<void> _precacheCarousel(BuildContext context) async {
     if (_carouselImages.isEmpty || !mounted) return;
     final dpr = MediaQuery.of(context).devicePixelRatio;
@@ -536,7 +573,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       final itemsSnap = await FirebaseFirestore.instance
           .collection('menu_items')
           .where(FieldPath.documentId, whereIn: topIds)
-          .where('branchIds', arrayContains: branchId) // Changed from branchId
+          .where('branchIds', arrayContains: branchId)
           .where('isAvailable', isEqualTo: true)
           .get();
 
@@ -548,7 +585,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         final m = byId[id];
         if (m != null) ordered.add(m);
       }
-      return ordered;
+
+      // REMOVE THE FILTER - Show all popular items
+      return ordered; // REMOVE the .where() filter
     } catch (e) {
       debugPrint("Error fetching top items: $e");
       return [];
@@ -636,34 +675,133 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
+  // Updated _listenToMenuItems method with availability tracking
   void _listenToMenuItems() {
-    _menuItemsSubscription?.cancel();
     _menuItemsSubscription = _firestore
         .collection('menu_items')
-        .where('branchIds', arrayContains: _currentBranchId) // Changed from branchId
+        .where('branchIds', arrayContains: _currentBranchId)
         .where('isAvailable', isEqualTo: true)
-        .orderBy('sortOrder')
         .snapshots()
         .listen((snapshot) {
       if (!mounted) return;
-      _allMenuItems = snapshot.docs.map((doc) => MenuItem.fromFirestore(doc)).toList();
-      _updateAndGroupMenuItems(_allMenuItems);
+
+      final allItems = snapshot.docs.map((doc) => MenuItem.fromFirestore(doc)).toList();
+      _updateAndGroupMenuItems(allItems);
+
+      // Check for newly unavailable items
+      _checkForNewlyUnavailableItems(allItems);
 
       setState(() {
         _menuItemsLoaded = true;
+        _allMenuItems = allItems;
       });
-
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _scheduleRecomputeOffsets();
-      });
-    }, onError: (error) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'Error loading items: $error';
-          _menuItemsLoaded = true;
-        });
-      }
     });
+  }
+
+  void _checkForNewlyUnavailableItems(List<MenuItem> currentItems) {
+    if (_isFirstMenuLoad) {
+      _previousMenuItems = currentItems;
+      _isFirstMenuLoad = false;
+      return;
+    }
+
+    // Find items that were available before but are now unavailable
+    final newlyUnavailableItems = _previousMenuItems.where((previousItem) {
+      // Check if this item exists in current items but is now unavailable
+      final currentItem = currentItems.firstWhere(
+            (item) => item.id == previousItem.id,
+        orElse: () => MenuItem(
+          id: '',
+          name: '',
+          price: 0,
+          discountedPrice: null,
+          imageUrl: '',
+          description: '',
+          categoryId: '',
+          branchIds: [],
+          isAvailable: false,
+          isPopular: false,
+          sortOrder: 0,
+          variants: {},
+          tags: {},
+          outOfStockBranches: [],
+        ),
+      );
+
+      // Item is newly unavailable if it was available before but not now
+      return previousItem.isAvailableInBranch(_currentBranchId) &&
+          !currentItem.isAvailableInBranch(_currentBranchId);
+    }).toList();
+
+    // Show notification for newly unavailable items that haven't been notified
+    for (final item in newlyUnavailableItems) {
+      if (!_notifiedUnavailableItems.contains(item.id)) {
+        _showItemUnavailableNotification(item);
+        _notifiedUnavailableItems.add(item.id);
+      }
+    }
+
+    // Clean up notified items that are available again
+    _notifiedUnavailableItems.removeWhere((itemId) {
+      final currentItem = currentItems.firstWhere(
+            (item) => item.id == itemId,
+        orElse: () => MenuItem(
+          id: '',
+          name: '',
+          price: 0,
+          discountedPrice: null,
+          imageUrl: '',
+          description: '',
+          categoryId: '',
+          branchIds: [],
+          isAvailable: false,
+          isPopular: false,
+          sortOrder: 0,
+          variants: {},
+          tags: {},
+          outOfStockBranches: [],
+        ),
+      );
+      return currentItem.isAvailableInBranch(_currentBranchId);
+    });
+
+    _previousMenuItems = currentItems;
+  }
+
+  void _showItemUnavailableNotification(MenuItem item) {
+    if (!mounted) return;
+
+    // Show a subtle snackbar instead of intrusive popup
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.inventory_2_outlined, color: Colors.orange, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '${item.name} is now out of stock',
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.orange.shade50,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: Colors.orange.shade200),
+        ),
+        action: SnackBarAction(
+          label: 'OK',
+          textColor: Colors.orange.shade800,
+          onPressed: () {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          },
+        ),
+      ),
+    );
   }
 
   void _updateAndGroupMenuItems(List<MenuItem> allItems) {
@@ -1966,7 +2104,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             itemCount: items.length,
             itemBuilder: (context, index) {
               final item = items[index];
-              return _PopularItemCard(item: item, cardWidth: cardW, imageHeight: imgH);
+              return _PopularItemCard(
+                item: item,
+                cardWidth: cardW,
+                imageHeight: imgH,
+                currentBranchId: _currentBranchId,
+              );
             },
           ),
         ),
@@ -1974,7 +2117,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       ],
     );
   }
-
   Widget _buildGroupedMenuSections() {
     final List<Widget> children = [];
 
@@ -1986,7 +2128,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           key: _sectionKeys['offers'],
           title: 'Offers',
           items: offersItems,
-          isOffersSection: true, // We'll handle this in _CategorySection
+          currentBranchId: _currentBranchId,
+          isOffersSection: true,
         ),
       );
     }
@@ -2003,6 +2146,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           key: _sectionKeys[cat.id],
           title: cat.name,
           items: list,
+          currentBranchId: _currentBranchId,
         ),
       );
     }
@@ -2055,11 +2199,13 @@ class _CategorySection extends StatelessWidget {
   final String title;
   final List<MenuItem> items;
   final bool isOffersSection;
+  final String currentBranchId;
 
   const _CategorySection({
     Key? key,
     required this.title,
     required this.items,
+    required this.currentBranchId,
     this.isOffersSection = false,
   }) : super(key: key);
 
@@ -2101,6 +2247,7 @@ class _CategorySection extends StatelessWidget {
               itemCount: items.length,
               itemBuilder: (_, index) => MenuItemCard(
                 item: items[index],
+                currentBranchId: currentBranchId, // FIXED: Remove underscore
                 showDiscountBadge: isOffersSection,
               ),
             ),
@@ -2109,28 +2256,43 @@ class _CategorySection extends StatelessWidget {
     );
   }
 }
-
 class _PopularItemCard extends StatelessWidget {
   const _PopularItemCard({
     Key? key,
     required this.item,
     required this.cardWidth,
     required this.imageHeight,
+    required this.currentBranchId,
   }) : super(key: key);
 
   final MenuItem item;
   final double cardWidth;
   final double imageHeight;
+  final String currentBranchId;
 
   @override
   Widget build(BuildContext context) {
+    final isAvailable = item.isAvailableInBranch(currentBranchId);
+
     return GestureDetector(
       onTap: () {
+        if (!isAvailable) {
+          // Show gentle feedback that item is unavailable
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${item.name} is currently out of stock'),
+              duration: const Duration(seconds: 2),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+
         showModalBottomSheet(
           context: context,
           isScrollControlled: true,
           backgroundColor: Colors.transparent,
-          builder: (context) => DishDetailsBottomSheet(item: item),
+          builder: (context) => DishDetailsBottomSheet(item: item, ),
         );
       },
       child: Container(
@@ -2157,45 +2319,114 @@ class _PopularItemCard extends StatelessWidget {
                 children: [
                   ClipRRect(
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                    child: CachedNetworkImage(
-                      imageUrl: item.imageUrl,
-                      width: cardWidth,
-                      height: imageHeight,
-                      fit: BoxFit.cover,
-                      fadeInDuration: const Duration(milliseconds: 150),
-                      fadeOutDuration: const Duration(milliseconds: 150),
-                      filterQuality: FilterQuality.low,
-                      placeholder: (_, __) => Container(color: Colors.grey.shade200),
-                      errorWidget: (_, __, ___) => const Icon(Icons.fastfood, color: Colors.grey),
+                    child: Opacity(
+                      opacity: isAvailable ? 1.0 : 0.6,
+                      child: CachedNetworkImage(
+                        imageUrl: item.imageUrl,
+                        width: cardWidth,
+                        height: imageHeight,
+                        fit: BoxFit.cover,
+                        fadeInDuration: const Duration(milliseconds: 150),
+                        fadeOutDuration: const Duration(milliseconds: 150),
+                        filterQuality: FilterQuality.low,
+                        placeholder: (_, __) => Container(color: Colors.grey.shade200),
+                        errorWidget: (_, __, ___) => const Icon(Icons.fastfood, color: Colors.grey),
+                      ),
                     ),
                   ),
-                  Positioned(
-                    right: 8,
-                    bottom: 8,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-                        child: Material(
-                          color: Colors.white.withOpacity(0.75),
-                          child: InkWell(
-                            onTap: () {
-                              final cart = context.read<CartService>();
-                              cart.addToCart(item);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('${item.name} added to cart'),
-                                  duration: const Duration(seconds: 1),
+
+                  // OUT OF STOCK OVERLAY
+                  if (!isAvailable)
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                        ),
+                        child: const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.inventory_2_outlined, color: Colors.white, size: 24),
+                              SizedBox(height: 4),
+                              Text(
+                                'OUT OF STOCK',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
                                 ),
-                              );
-                            },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // ADD BUTTON (ONLY SHOW IF AVAILABLE)
+                  if (isAvailable)
+                    Positioned(
+                      right: 8,
+                      bottom: 8,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                          child: Material(
+                            color: Colors.white.withOpacity(0.75),
+                            child: InkWell(
+                              onTap: () {
+                                final cart = CartService();
+                                cart.addToCart(item);
+
+                                // Add haptic feedback
+                                HapticFeedback.lightImpact();
+
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('${item.name} added to cart'),
+                                    duration: const Duration(seconds: 1),
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                child: const Row(
+                                  children: [
+                                    Text('ADD', style: TextStyle(color: AppColors.primaryBlue, fontWeight: FontWeight.w800, fontSize: 13)),
+                                    SizedBox(width: 2),
+                                    Icon(Icons.add_rounded, color: AppColors.primaryBlue, size: 20),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // OUT OF STOCK BUTTON (SHOW IF NOT AVAILABLE)
+                  if (!isAvailable)
+                    Positioned(
+                      right: 8,
+                      bottom: 8,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                          child: Material(
+                            color: Colors.grey.withOpacity(0.75),
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                               child: const Row(
                                 children: [
-                                  Text('ADD', style: TextStyle(color: AppColors.primaryBlue, fontWeight: FontWeight.w800, fontSize: 13)),
-                                  SizedBox(width: 2),
-                                  Icon(Icons.add_rounded, color: AppColors.primaryBlue, size: 20),
+                                  Icon(Icons.block, color: Colors.white, size: 16),
+                                  SizedBox(width: 4),
+                                  Text('UNAVAILABLE', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 10)),
                                 ],
                               ),
                             ),
@@ -2203,7 +2434,6 @@ class _PopularItemCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -2215,28 +2445,28 @@ class _PopularItemCard extends StatelessWidget {
                 textAlign: TextAlign.left,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                  color: isAvailable ? Colors.black : Colors.grey,
+                ),
               ),
             ),
             const SizedBox(height: 2),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: Text(
-                'QAR ${item.price.toStringAsFixed(2)}',
-                textAlign: TextAlign.left,
-                style: const TextStyle(color: AppColors.primaryBlue, fontWeight: FontWeight.w800, fontSize: 14),
-              ),
+              child: _buildPriceSection(item, isAvailable),
             ),
             const SizedBox(height: 4),
             if (item.tags['isSpicy'] == true)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8.0),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.start,
                   children: [
-                    Icon(Icons.local_fire_department_rounded, color: Colors.red, size: 16),
-                    SizedBox(width: 4),
-                    Text('Spicy', style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600, fontSize: 12.5)),
+                    Icon(Icons.local_fire_department_rounded, color: isAvailable ? Colors.red : Colors.grey, size: 16),
+                    const SizedBox(width: 4),
+                    Text('Spicy', style: TextStyle(color: isAvailable ? Colors.red : Colors.grey, fontWeight: FontWeight.w600, fontSize: 12.5)),
                   ],
                 ),
               ),
@@ -2244,6 +2474,65 @@ class _PopularItemCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _buildPriceSection(MenuItem item, bool isAvailable) {
+    if (item.discountedPrice != null && item.discountedPrice! > 0) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'QAR ${item.discountedPrice!.toStringAsFixed(2)}',
+                style: TextStyle(
+                  color: isAvailable ? Colors.green : Colors.grey,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'QAR ${item.price.toStringAsFixed(2)}',
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                  decoration: TextDecoration.lineThrough,
+                ),
+              ),
+            ],
+          ),
+          if (isAvailable) const SizedBox(height: 2),
+          if (isAvailable)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                'Save QAR ${(item.price - item.discountedPrice!).toStringAsFixed(2)}',
+                style: const TextStyle(
+                  color: Colors.green,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 10,
+                ),
+              ),
+            ),
+        ],
+      );
+    } else {
+      return Text(
+        'QAR ${item.price.toStringAsFixed(2)}',
+        textAlign: TextAlign.left,
+        style: TextStyle(
+          color: isAvailable ? AppColors.primaryBlue : Colors.grey,
+          fontWeight: FontWeight.w800,
+          fontSize: 14,
+        ),
+      );
+    }
   }
 }
 
@@ -2265,11 +2554,13 @@ class Order {
 class MenuItemCard extends StatefulWidget {
   final MenuItem item;
   final bool showDiscountBadge;
+  final String currentBranchId; // ADD THIS
 
   const MenuItemCard({
     Key? key,
     required this.item,
-    this.showDiscountBadge = false,
+    this.showDiscountBadge = true,
+    required this.currentBranchId, // ADD THIS
   }) : super(key: key);
 
   @override
@@ -2374,11 +2665,121 @@ class _MenuItemCardState extends State<MenuItemCard> {
     return index != -1 ? cartService.items[index].quantity : 0;
   }
 
+  // ADD THIS METHOD FOR OUT OF STOCK BUTTON
+  Widget _buildAddButton(bool isAvailable, int itemCount, CartService cartService) {
+    if (!isAvailable) {
+      return Container(
+        constraints: const BoxConstraints(minWidth: 132, minHeight: 44),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade400,
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: const Center(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'OUT OF STOCK',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return itemCount > 0
+        ? Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.primaryBlue,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryBlue.withOpacity(0.3),
+            blurRadius: 6,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: () => _updateQuantity(itemCount - 1, cartService),
+            child: const Padding(
+              padding: EdgeInsets.all(6),
+              child: Icon(Icons.remove, color: Colors.white, size: 18),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              itemCount.toString(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          GestureDetector(
+            onTap: () => _updateQuantity(itemCount + 1, cartService),
+            child: const Padding(
+              padding: EdgeInsets.all(6),
+              child: Icon(Icons.add, color: Colors.white, size: 18),
+            ),
+          ),
+        ],
+      ),
+    )
+        : Container(
+      constraints: const BoxConstraints(minWidth: 132, minHeight: 44),
+      decoration: BoxDecoration(
+        color: AppColors.primaryBlue,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryBlue.withOpacity(0.3),
+            blurRadius: 6,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _addItemToCart(widget.item, cartService),
+          borderRadius: BorderRadius.circular(22),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Center(
+              child: Text(
+                'ADD TO CART',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool hasDiscount = widget.item.discountedPrice != null && widget.item.discountedPrice! > 0;
     final String displayPrice = (hasDiscount ? widget.item.discountedPrice! : widget.item.price).toStringAsFixed(2);
     final String? originalPriceString = hasDiscount ? widget.item.price.toStringAsFixed(2) : null;
+
+    // ADD THIS AVAILABILITY CHECK
+    final isAvailable = widget.item.isAvailableInBranch(widget.currentBranchId);
 
     return Consumer<CartService>(
       builder: (context, cartService, _) {
@@ -2391,172 +2792,175 @@ class _MenuItemCardState extends State<MenuItemCard> {
               Padding(
                 padding: const EdgeInsets.only(
                     bottom: _buttonFloat + _extraBottomSpace),
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.07),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: InkWell(
-                    onTap: () => showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      backgroundColor: Colors.transparent,
-                      builder: (context) =>
-                          DishDetailsBottomSheet(item: widget.item),
+                child: Opacity(
+                  opacity: isAvailable ? 1.0 : 0.6, // ADD OPACITY WHEN OUT OF STOCK
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.07),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
                     ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      widget.item.name,
-                                      style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.black87,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  // This container ensures the icon button has a fixed size
-                                  // and aligns correctly to the top.
-                                  Container(
-                                    width: 24,
-                                    height: 24,
-                                    alignment: Alignment.center,
-                                    child: IconButton(
-                                      padding: EdgeInsets.zero,
-                                      splashRadius: 20,
-                                      iconSize: 22,
-                                      onPressed: _toggleFavorite,
-                                      icon: Icon(
-                                        _isFavorite
-                                            ? Icons.favorite
-                                            : Icons.favorite_border,
-                                        color: _isFavorite
-                                            ? Colors.red
-                                            : Colors.grey,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              // **FIX:** Reduced the gap between title and description.
-                              const SizedBox(height: 4),
-                              Text(
-                                widget.item.description,
-                                style: TextStyle(
-                                  fontSize: 12.5,
-                                  color: Colors.grey.shade700,
-                                  height: 1.4,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 12),
-                              // In the _MenuItemCardState build method, find this section and update it:
-                              Row(
-                                children: [
-                                  Row(
-                                    children: [
-                                      Text(
-                                        'QAR $displayPrice',
+                    child: InkWell(
+                      onTap: () => showModalBottomSheet(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: Colors.transparent,
+                        builder: (context) =>
+                            DishDetailsBottomSheet(item: widget.item),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        widget.item.name,
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w700,
-                                          color: hasDiscount ? Colors.blue : Colors.black87,
+                                          color: isAvailable ? Colors.black87 : Colors.grey, // GREY TEXT WHEN OUT OF STOCK
                                         ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                      if (originalPriceString != null) ...[
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          'QAR $originalPriceString',
-                                          style: const TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.normal,
-                                            color: Colors.grey,
-                                            decoration: TextDecoration.lineThrough,
-                                          ),
-                                        ),
-                                      ],
-                                      // Add more spacing before the OFFER tag
-                                      if (widget.showDiscountBadge && widget.item.discountedPrice != null) ...[
-                                        const SizedBox(width: 12), // Increased from 8 to 12
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), // Slightly increased padding
-                                          decoration: BoxDecoration(
-                                            color: Colors.red.withOpacity(0.1),
-                                            borderRadius: BorderRadius.circular(6), // Slightly larger border radius
-                                            border: Border.all(color: Colors.red, width: 1),
-                                          ),
-                                          child: Text(
-                                            'OFFER',
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.red,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                  const SizedBox(width: 8),
-                                  if (widget.item.offerText != null && widget.item.offerText!.isNotEmpty)
+                                    ),
+                                    const SizedBox(width: 8),
                                     Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.primaryBlue.withOpacity(0.1),
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: Text(
-                                        widget.item.offerText!,
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: AppColors.primaryBlue,
-                                          fontWeight: FontWeight.w600,
+                                      width: 24,
+                                      height: 24,
+                                      alignment: Alignment.center,
+                                      child: IconButton(
+                                        padding: EdgeInsets.zero,
+                                        splashRadius: 20,
+                                        iconSize: 22,
+                                        onPressed: isAvailable ? _toggleFavorite : null, // DISABLE FAVORITE WHEN OUT OF STOCK
+                                        icon: Icon(
+                                          _isFavorite
+                                              ? Icons.favorite
+                                              : Icons.favorite_border,
+                                          color: _isFavorite
+                                              ? Colors.red
+                                              : Colors.grey,
                                         ),
                                       ),
                                     ),
-                                ],
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  widget.item.description,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    color: Colors.grey.shade700,
+                                    height: 1.4,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Text(
+                                          'QAR $displayPrice',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w700,
+                                            color: isAvailable
+                                                ? (hasDiscount ? Colors.blue : Colors.black87)
+                                                : Colors.grey, // GREY TEXT WHEN OUT OF STOCK
+                                          ),
+                                        ),
+                                        if (originalPriceString != null) ...[
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'QAR $originalPriceString',
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.normal,
+                                              color: Colors.grey,
+                                              decoration: TextDecoration.lineThrough,
+                                            ),
+                                          ),
+                                        ],
+                                        if (widget.showDiscountBadge && widget.item.discountedPrice != null) ...[
+                                          const SizedBox(width: 12),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                            decoration: BoxDecoration(
+                                              color: Colors.red.withOpacity(0.1),
+                                              borderRadius: BorderRadius.circular(6),
+                                              border: Border.all(color: Colors.red, width: 1),
+                                            ),
+                                            child: Text(
+                                              'OFFER',
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.red,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                    const SizedBox(width: 8),
+                                    if (widget.item.offerText != null && widget.item.offerText!.isNotEmpty)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primaryBlue.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          widget.item.offerText!,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: AppColors.primaryBlue,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Opacity(
+                              opacity: isAvailable ? 1.0 : 0.6, // ADD OPACITY TO IMAGE WHEN OUT OF STOCK
+                              child: CachedNetworkImage(
+                                imageUrl: widget.item.imageUrl,
+                                width: 80,
+                                height: 80,
+                                fit: BoxFit.cover,
+                                placeholder: (context, url) =>
+                                    Container(color: Colors.grey.shade200),
+                                errorWidget: (context, url, error) => const Icon(
+                                    Icons.fastfood,
+                                    color: Colors.grey,
+                                    size: 30),
                               ),
-                            ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: CachedNetworkImage(
-                            imageUrl: widget.item.imageUrl,
-                            width: 80,
-                            height: 80,
-                            fit: BoxFit.cover,
-                            placeholder: (context, url) =>
-                                Container(color: Colors.grey.shade200),
-                            errorWidget: (context, url, error) => const Icon(
-                                Icons.fastfood,
-                                color: Colors.grey,
-                                size: 30),
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -2564,93 +2968,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
               Positioned(
                 right: 16,
                 bottom: 8,
-                child: itemCount > 0
-                    ? Container(
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryBlue,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.primaryBlue.withOpacity(0.3),
-                        blurRadius: 6,
-                        offset: const Offset(0, 3),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      GestureDetector(
-                        onTap: () =>
-                            _updateQuantity(itemCount - 1, cartService),
-                        child: const Padding(
-                          padding: EdgeInsets.all(6),
-                          child:
-                          Icon(Icons.remove, color: Colors.white, size: 18),
-                        ),
-                      ),
-                      Container(
-                        padding:
-                        const EdgeInsets.symmetric(horizontal: 10),
-                        child: Text(
-                          itemCount.toString(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () =>
-                            _updateQuantity(itemCount + 1, cartService),
-                        child: const Padding(
-                          padding: EdgeInsets.all(6),
-                          child:
-                          Icon(Icons.add, color: Colors.white, size: 18),
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-                    : Container(
-                  constraints:
-                  const BoxConstraints(minWidth: 132, minHeight: 44),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryBlue,
-                    borderRadius: BorderRadius.circular(22),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.primaryBlue.withOpacity(0.3),
-                        blurRadius: 6,
-                        offset: const Offset(0, 3),
-                      ),
-                    ],
-                  ),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: () => _addItemToCart(widget.item, cartService),
-                      borderRadius: BorderRadius.circular(22),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 16),
-                        child: Center(
-                          child: Text(
-                            'ADD TO CART',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+                child: _buildAddButton(isAvailable, itemCount, cartService), // USE THE NEW METHOD
               ),
             ],
           ),
@@ -2660,9 +2978,13 @@ class _MenuItemCardState extends State<MenuItemCard> {
   }
 }
 
+
 class DishDetailsBottomSheet extends StatefulWidget {
   final MenuItem item;
-  const DishDetailsBottomSheet({Key? key, required this.item}) : super(key: key);
+  const DishDetailsBottomSheet({
+    Key? key,
+    required this.item,
+  }) : super(key: key);
 
   @override
   _DishDetailsBottomSheetState createState() => _DishDetailsBottomSheetState();
@@ -2671,15 +2993,47 @@ class DishDetailsBottomSheet extends StatefulWidget {
 class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
   late int quantity;
   bool _isInitialized = false;
+  bool _isItemAvailable = true;
+  bool _isCheckingAvailability = false;
 
   @override
   void initState() {
     super.initState();
-    // Initialize with current cart quantity instead of always 1
-    final cart = context.read<CartService>();
+    // Initialize with current cart quantity
+    final cart = CartService();
     final index = cart.items.indexWhere((cartItem) => cartItem.id == widget.item.id);
     quantity = index != -1 ? cart.items[index].quantity : 1;
+
+    // Check item availability
+    _checkItemAvailability();
     _isInitialized = true;
+  }
+
+  Future<void> _checkItemAvailability() async {
+    if (_isCheckingAvailability) return;
+
+    setState(() => _isCheckingAvailability = true);
+
+    try {
+      // Get current branch IDs from CartService
+      final cart = CartService();
+      final currentBranchIds = cart.currentBranchIds;
+
+      // Check if item is available in the current branch
+      final isAvailable = widget.item.isAvailableInBranch(currentBranchIds.first);
+
+      if (mounted) {
+        setState(() {
+          _isItemAvailable = isAvailable;
+          _isCheckingAvailability = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error checking item availability: $e');
+      if (mounted) {
+        setState(() => _isCheckingAvailability = false);
+      }
+    }
   }
 
   void _showRemoveConfirmationDialog() {
@@ -2708,7 +3062,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
           ),
           ElevatedButton(
             onPressed: () {
-              final cart = context.read<CartService>();
+              final cart = CartService();
               cart.removeFromCart(widget.item.id);
               Navigator.pop(context); // Close confirmation dialog
               Navigator.pop(context); // Close bottom sheet
@@ -2737,7 +3091,52 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     );
   }
 
-  void _handleQuantityChange(int newQuantity, CartService cart) {
+  void _showOutOfStockDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.inventory_2_outlined, color: Colors.orange, size: 24),
+            const SizedBox(width: 12),
+            Text('Item Unavailable',
+                style: AppTextStyles.headline2.copyWith(fontSize: 20)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${widget.item.name} is currently out of stock.',
+              style: AppTextStyles.bodyText1,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Please check back later or choose a different item.',
+              style: AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade600),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('OK',
+                style: AppTextStyles.bodyText1.copyWith(color: AppColors.primaryBlue)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleQuantityChange(int newQuantity) {
+    if (!_isItemAvailable) {
+      _showOutOfStockDialog();
+      return;
+    }
+
     if (newQuantity == 0) {
       // Show confirmation dialog when quantity reaches 0
       _showRemoveConfirmationDialog();
@@ -2748,13 +3147,20 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     }
   }
 
-  void _handleAddOrUpdateItem(CartService cart, int existingQty) {
+  void _handleAddOrUpdateItem(int existingQty) {
+    // Prevent adding/updating if item is out of stock
+    if (!_isItemAvailable) {
+      _showOutOfStockDialog();
+      return;
+    }
+
     if (quantity == 0) {
       // If quantity is 0, show remove confirmation
       _showRemoveConfirmationDialog();
       return;
     }
 
+    final cart = CartService();
     if (existingQty == 0) {
       cart.addToCart(widget.item, quantity: quantity);
     } else if (quantity > 0) {
@@ -2777,14 +3183,114 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     );
   }
 
+  Widget _buildOutOfStockOverlay() {
+    return Positioned.fill(
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.block, color: Colors.white, size: 40),
+              const SizedBox(height: 8),
+              Text(
+                'OUT OF STOCK',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Not available in selected branch',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAvailabilityIndicator() {
+    if (_isCheckingAvailability) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(AppColors.primaryBlue),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Checking availability...',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (!_isItemAvailable) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.orange, size: 16),
+            const SizedBox(width: 8),
+            Text(
+              'Out of stock in selected branch',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.orange.shade700,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        children: [
+          Icon(Icons.check_circle, color: Colors.green, size: 16),
+          const SizedBox(width: 8),
+          Text(
+            'Available for order',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.green.shade700,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final cart = context.watch<CartService>();
+    final cart = CartService();
     final index = cart.items.indexWhere((cartItem) => cartItem.id == widget.item.id);
     final existingQty = index != -1 ? cart.items[index].quantity : 0;
-
-    // REMOVED the problematic WidgetsBinding.instance.addPostFrameCallback
-    // This was causing the quantity to reset to cart quantity on every rebuild
 
     // Check if item has discount
     final bool hasDiscount = widget.item.discountedPrice != null;
@@ -2814,25 +3320,41 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
             ),
             const SizedBox(height: 16),
 
-            // Image
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16.0),
-              child: CachedNetworkImage(
-                imageUrl: widget.item.imageUrl,
-                fit: BoxFit.cover,
-                height: 250,
-                placeholder: (c, u) => Container(height: 250, color: Colors.grey.shade200),
-                errorWidget: (c, u, e) => const Icon(Icons.fastfood, color: Colors.grey, size: 40),
-              ),
+            // Image with out-of-stock overlay
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16.0),
+                  child: Opacity(
+                    opacity: _isItemAvailable ? 1.0 : 0.6,
+                    child: CachedNetworkImage(
+                      imageUrl: widget.item.imageUrl,
+                      fit: BoxFit.cover,
+                      height: 250,
+                      placeholder: (c, u) => Container(height: 250, color: Colors.grey.shade200),
+                      errorWidget: (c, u, e) => const Icon(Icons.fastfood, color: Colors.grey, size: 40),
+                    ),
+                  ),
+                ),
+                if (!_isItemAvailable) _buildOutOfStockOverlay(),
+              ],
             ),
             const SizedBox(height: 16),
+
+            // Availability indicator
+            _buildAvailabilityIndicator(),
+            const SizedBox(height: 8),
 
             // Title
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Text(
                 widget.item.name,
-                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black),
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: _isItemAvailable ? Colors.black : Colors.grey,
+                ),
               ),
             ),
             const SizedBox(height: 8),
@@ -2847,10 +3369,12 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: hasDiscount ? Colors.green : AppColors.primaryBlue,
+                      color: _isItemAvailable
+                          ? (hasDiscount ? Colors.green : AppColors.primaryBlue)
+                          : Colors.grey,
                     ),
                   ),
-                  if (hasDiscount) ...[
+                  if (hasDiscount && _isItemAvailable) ...[
                     const SizedBox(width: 8),
                     Text(
                       'QAR ${widget.item.price.toStringAsFixed(2)}',
@@ -2891,13 +3415,17 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                 widget.item.description.isNotEmpty
                     ? widget.item.description
                     : 'No description available.',
-                style: TextStyle(fontSize: 14, color: Colors.grey.shade800, height: 1.5),
+                style: TextStyle(
+                  fontSize: 14,
+                  color: _isItemAvailable ? Colors.grey.shade800 : Colors.grey,
+                  height: 1.5,
+                ),
               ),
             ),
             const SizedBox(height: 24),
 
             // Current cart quantity indicator
-            if (existingQty > 0 && existingQty != quantity)
+            if (existingQty > 0 && existingQty != quantity && _isItemAvailable)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                 child: Text(
@@ -2910,68 +3438,120 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                 ),
               ),
 
+            // Warning message if item is in cart but out of stock
+            if (existingQty > 0 && !_isItemAvailable)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.warning_amber, color: Colors.orange, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'This item is out of stock but still in your cart. Please remove it.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.orange.shade800,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
             // Bottom Action Bar (Quantity and Add/Update button)
             Padding(
               padding: const EdgeInsets.only(bottom: 8.0),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Container(
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: Icon(Icons.remove,
-                              color: quantity > 1 ? Colors.black87 : Colors.grey),
-                          onPressed: () {
-                            if (quantity > 1) {
-                              _handleQuantityChange(quantity - 1, cart);
-                            } else if (quantity == 1) {
-                              _handleQuantityChange(0, cart);
+                  // Quantity selector - disabled if out of stock
+                  Opacity(
+                    opacity: _isItemAvailable ? 1.0 : 0.5,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: Icon(Icons.remove,
+                                color: _isItemAvailable
+                                    ? (quantity > 1 ? Colors.black87 : Colors.grey)
+                                    : Colors.grey),
+                            onPressed: _isItemAvailable
+                                ? () {
+                              if (quantity > 1) {
+                                _handleQuantityChange(quantity - 1);
+                              } else if (quantity == 1) {
+                                _handleQuantityChange(0);
+                              }
                             }
-                          },
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                        ),
-                        SizedBox(
-                          width: 40,
-                          child: Center(
-                            child: Text(
-                              quantity.toString(),
-                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                : null,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                          ),
+                          SizedBox(
+                            width: 40,
+                            child: Center(
+                              child: Text(
+                                quantity.toString(),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: _isItemAvailable ? Colors.black : Colors.grey,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.add, color: Colors.black87),
-                          onPressed: () {
-                            _handleQuantityChange(quantity + 1, cart);
-                          },
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                        ),
-                      ],
+                          IconButton(
+                            icon: Icon(Icons.add,
+                                color: _isItemAvailable ? Colors.black87 : Colors.grey),
+                            onPressed: _isItemAvailable
+                                ? () {
+                              _handleQuantityChange(quantity + 1);
+                            }
+                                : null,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   const Spacer(),
+                  // Add/Update button - disabled if out of stock
                   SizedBox(
                     height: 52,
                     child: ElevatedButton(
-                      onPressed: () {
-                        _handleAddOrUpdateItem(cart, existingQty);
-                      },
+                      onPressed: _isItemAvailable
+                          ? () {
+                        _handleAddOrUpdateItem(existingQty);
+                      }
+                          : null,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: quantity == 0 ? Colors.redAccent : AppColors.primaryBlue,
+                        backgroundColor: _isItemAvailable
+                            ? (quantity == 0 ? Colors.redAccent : AppColors.primaryBlue)
+                            : Colors.grey,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         elevation: 0,
                       ),
                       child: Text(
-                        quantity == 0 ? 'REMOVE ITEM' : (existingQty == 0 ? 'ADD ITEM' : 'UPDATE ITEM'),
+                        !_isItemAvailable
+                            ? 'OUT OF STOCK'
+                            : (quantity == 0 ? 'REMOVE ITEM' : (existingQty == 0 ? 'ADD ITEM' : 'UPDATE ITEM')),
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -3129,6 +3709,7 @@ class MenuItem {
   final Map<String, dynamic> tags;
   final Map<String, dynamic>? variants;
   final String? offerText;
+  final List<String> outOfStockBranches;
 
   MenuItem({
     required this.id,
@@ -3145,6 +3726,7 @@ class MenuItem {
     required this.tags,
     this.variants,
     this.offerText,
+    required this.outOfStockBranches,
   });
 
   factory MenuItem.fromFirestore(DocumentSnapshot doc) {
@@ -3164,8 +3746,19 @@ class MenuItem {
       tags: data['tags'] ?? {},
       variants: data['variants'],
       offerText: data['offerText'],
+      outOfStockBranches: List<String>.from(data['outOfStockBranches'] ?? []), // ADD THIS
+
     );
+
+
   }
+  bool isAvailableInBranch(String branchId) {
+    return branchIds.contains(branchId) &&
+        !outOfStockBranches.contains(branchId);
+  }
+
+  double get finalPrice => discountedPrice ?? price;
+
 }
 
 class MenuCategory {
@@ -3200,14 +3793,101 @@ class MenuCategory {
 
 class BranchService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   Future<String> getNearestBranch() async {
     try {
-      debugPrint('🔍 Finding nearest branch...');
+      debugPrint('🔍 Finding nearest branch by default address...');
+
+      // Get user's default address
+      final user = _auth.currentUser;
+      if (user == null || user.email == null) {
+        debugPrint('⚠️ User not logged in, using fallback');
+        return 'Old_Airport';
+      }
+
+      final userDoc = await _firestore.collection('Users').doc(user.email).get();
+      if (!userDoc.exists) {
+        debugPrint('⚠️ User document not found, using fallback');
+        return 'Old_Airport';
+      }
+
+      final userData = userDoc.data() as Map<String, dynamic>;
+      final addresses = (userData['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+      if (addresses.isEmpty) {
+        debugPrint('⚠️ No addresses found, using fallback');
+        return 'Old_Airport';
+      }
+
+      // Find default address
+      Map<String, dynamic> defaultAddress;
+      try {
+        defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true);
+      } catch (e) {
+        defaultAddress = addresses.first;
+        debugPrint('ℹ️ No default address found, using first address');
+      }
+
+      // Check if address has geolocation
+      if (defaultAddress['geolocation'] == null) {
+        debugPrint('⚠️ Default address has no geolocation, using fallback');
+        return 'Old_Airport';
+      }
+
+      final userGeoPoint = defaultAddress['geolocation'] as GeoPoint;
+      debugPrint('📍 User address location: ${userGeoPoint.latitude}, ${userGeoPoint.longitude}');
+
+      // Get all active branches
+      List<Branch> branches = await _getAllBranches();
+      debugPrint('🏪 Found ${branches.length} active branches');
+
+      if (branches.isEmpty) {
+        debugPrint('⚠️ No active branches found, using fallback');
+        return 'Old_Airport';
+      }
+
+      // Calculate distances and find nearest branch
+      Branch nearestBranch = branches.first;
+      double shortestDistance = double.infinity;
+
+      for (final branch in branches) {
+        if (branch.geolocation != null) {
+          double distance = Geolocator.distanceBetween(
+            userGeoPoint.latitude,
+            userGeoPoint.longitude,
+            branch.geolocation!.latitude,
+            branch.geolocation!.longitude,
+          );
+
+          debugPrint('📏 Distance from address to ${branch.name}: ${(distance / 1000).toStringAsFixed(2)} km');
+
+          if (distance < shortestDistance) {
+            shortestDistance = distance;
+            nearestBranch = branch;
+          }
+        } else {
+          debugPrint('⚠️ Branch ${branch.name} has no geolocation data');
+        }
+      }
+
+      debugPrint('🎯 Selected branch by address: ${nearestBranch.name} (${nearestBranch.id})');
+      debugPrint('📐 Shortest distance: ${(shortestDistance / 1000).toStringAsFixed(2)} km');
+
+      return nearestBranch.id;
+    } catch (e) {
+      debugPrint('❌ Error finding nearest branch by address: $e');
+      return 'Old_Airport';
+    }
+  }
+
+  Future<String> getNearestBranchByGPS() async {
+    try {
+      debugPrint('🔍 Finding nearest branch by GPS...');
 
       // Get user's current location
       Position userPosition = await _getCurrentLocation();
-      debugPrint('📍 User location: ${userPosition.latitude}, ${userPosition.longitude}');
+      debugPrint('📍 GPS location: ${userPosition.latitude}, ${userPosition.longitude}');
 
       // Get all active branches
       List<Branch> branches = await _getAllBranches();
@@ -3231,7 +3911,7 @@ class BranchService {
             branch.geolocation!.longitude,
           );
 
-          debugPrint('📏 Distance to ${branch.name}: ${distance.toStringAsFixed(2)} meters');
+          debugPrint('📏 Distance from GPS to ${branch.name}: ${(distance / 1000).toStringAsFixed(2)} km');
 
           if (distance < shortestDistance) {
             shortestDistance = distance;
@@ -3242,13 +3922,21 @@ class BranchService {
         }
       }
 
-      debugPrint('🎯 Selected branch: ${nearestBranch.name} (${nearestBranch.id})');
-      debugPrint('📐 Shortest distance: ${shortestDistance.toStringAsFixed(2)} meters');
+      debugPrint('🎯 Selected branch by GPS: ${nearestBranch.name} (${nearestBranch.id})');
+      debugPrint('📐 Shortest distance: ${(shortestDistance / 1000).toStringAsFixed(2)} km');
 
       return nearestBranch.id;
     } catch (e) {
-      debugPrint('❌ Error finding nearest branch: $e');
+      debugPrint('❌ Error finding nearest branch by GPS: $e');
       return 'Old_Airport';
+    }
+  }
+
+  Future<String> getNearestBranchByOrderType(String orderType) async {
+    if (orderType == 'delivery') {
+      return await getNearestBranch(); // Use address for delivery
+    } else {
+      return await getNearestBranchByGPS(); // Use GPS for pickup
     }
   }
 
@@ -3305,6 +3993,72 @@ class BranchService {
     } catch (e) {
       debugPrint('Error fetching branches: $e');
       return [];
+    }
+  }
+
+  // Helper method to get branch display name
+  String getBranchDisplayName(String branchId) {
+    switch (branchId) {
+      case 'Old_Airport':
+        return 'Old Airport Branch';
+      case 'Mansoura':
+        return 'Mansoura Branch';
+      case 'West_Bay':
+        return 'West Bay Branch';
+      default:
+        return branchId.replaceAll('_', ' ') + ' Branch';
+    }
+  }
+
+  // Method to validate if a branch can deliver to user's address
+  Future<bool> canBranchDeliverToAddress(String branchId, String userEmail) async {
+    try {
+      if (userEmail.isEmpty) return true; // Allow if no user email
+
+      final branchDoc = await _firestore.collection('Branch').doc(branchId).get();
+      if (!branchDoc.exists) return false;
+
+      final branchData = branchDoc.data() as Map<String, dynamic>;
+      final noDeliveryRange = (branchData['noDeliveryRange'] ?? 0).toDouble();
+
+      // If no delivery range is 0, delivery is available everywhere
+      if (noDeliveryRange == 0) return true;
+
+      // Get user's default address
+      final userDoc = await _firestore.collection('Users').doc(userEmail).get();
+      if (!userDoc.exists) return true;
+
+      final userData = userDoc.data() as Map<String, dynamic>;
+      final addresses = (userData['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      if (addresses.isEmpty) return true;
+
+      Map<String, dynamic> defaultAddress;
+      try {
+        defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true);
+      } catch (e) {
+        defaultAddress = addresses.first;
+      }
+
+      if (defaultAddress['geolocation'] == null) return true;
+
+      final userGeoPoint = defaultAddress['geolocation'] as GeoPoint;
+      final branchAddress = branchData['address'] as Map<String, dynamic>?;
+
+      if (branchAddress == null || branchAddress['geolocation'] == null) return true;
+
+      final branchGeoPoint = branchAddress['geolocation'] as GeoPoint;
+
+      final distance = Geolocator.distanceBetween(
+        userGeoPoint.latitude,
+        userGeoPoint.longitude,
+        branchGeoPoint.latitude,
+        branchGeoPoint.longitude,
+      ) / 1000; // Convert to kilometers
+
+      return distance <= noDeliveryRange;
+    } catch (e) {
+      debugPrint('Error checking delivery availability: $e');
+      return true; // Allow delivery on error
     }
   }
 }

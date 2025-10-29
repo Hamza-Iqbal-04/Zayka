@@ -527,7 +527,7 @@ class _OrderScreenState extends State<OrdersScreen> {
                         isPopular: false,
                         sortOrder: 0,
                         tags: itemData['tags'] as Map<String, dynamic>? ?? {},
-                        variants: itemData['variants'] as Map<String, dynamic>? ?? {},
+                        variants: itemData['variants'] as Map<String, dynamic>? ?? {}, outOfStockBranches: [],
                       );
                       cartService.addToCart(
                         menuItem,
@@ -594,7 +594,7 @@ class OrderDetailsScreen extends StatelessWidget {
         isPopular: false,
         sortOrder: 0,
         tags: itemData['tags'] as Map<String, dynamic>? ?? {},
-        variants: itemData['variants'] as Map<String, dynamic>? ?? {},
+        variants: itemData['variants'] as Map<String, dynamic>? ?? {}, outOfStockBranches: [],
       );
       cartService.addToCart(
         menuItem,
