@@ -21,7 +21,7 @@ import '../Widgets/bottom_nav.dart';
 const Color kChipActive = AppColors.primaryBlue;
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();

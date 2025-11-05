@@ -17,11 +17,10 @@ class CouponsScreen extends StatefulWidget {
 
 class _CouponsScreenState extends State<CouponsScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final String _currentBranchId = 'Old_Airport';
   List<CouponModel> _availableCoupons = [];
   bool _isLoading = true;
   String? _error;
-  CouponModel? _selectedCoupon;
+
 
   @override
   void initState() {
