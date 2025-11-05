@@ -15,12 +15,14 @@ import 'CouponsScreen.dart';
 import 'Profile.dart';
 import '../Widgets/models.dart';
 import 'package:shimmer/shimmer.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({Key? key}) : super(key: key);
   @override
   _CartScreenState createState() => _CartScreenState();
 }
+
 class _CartScreenState extends State<CartScreen> {
   final RestaurantService _restaurantService = RestaurantService();
   final Set<String> _notifiedOutOfStockItems = {};
@@ -445,6 +447,11 @@ class _CartScreenState extends State<CartScreen> {
         }
 
         await loadDeliveryFee(branchIds.first);
+
+        // Calculate distance for pickup orders
+        if (_orderType == 'pickup') {
+          await _calculateDistanceForPickup();
+        }
       }
     } catch (e) {
       debugPrint('Error setting nearest branch: $e');
@@ -457,6 +464,11 @@ class _CartScreenState extends State<CartScreen> {
         });
         CartService().updateCurrentBranchIds(fallbackBranch);
         await loadDeliveryFee(fallbackBranch.first);
+
+        // Calculate distance for pickup orders even with fallback
+        if (_orderType == 'pickup') {
+          await _calculateDistanceForPickup();
+        }
       }
     }
   }
@@ -972,12 +984,202 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  void _onOrderTypeChanged(String newType) {
+  Widget _buildNavigationSection() {
+    if (_orderType != 'pickup' || _distanceToBranch <= 0) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      children: [
+        const Divider(height: 24, thickness: 0.5),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4.0),
+          child: Row(
+            children: [
+              const Icon(Icons.navigation_outlined, color: AppColors.primaryBlue, size: 28),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('DISTANCE TO BRANCH',
+                      style: AppTextStyles.bodyText2.copyWith(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_distanceToBranch.toStringAsFixed(1)} km',
+                      style: AppTextStyles.bodyText1.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.darkGrey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _buildNavigationButton(),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNavigationButton() {
+    return PopupMenuButton<String>(
+      onSelected: (value) => _openNavigationApp(value),
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      itemBuilder: (BuildContext context) => [
+        PopupMenuItem<String>(
+          value: 'googlemaps',
+          child: Row(
+            children: [
+              // Google Maps logo using Container with colors
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.grey.shade300, width: 0.5),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.asset('assets/googlemaps.png', width: 28, height: 28, fit: BoxFit.contain),
+
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text('Google Maps', style: TextStyle(fontSize: 15)),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'applemaps',
+          child: Row(
+            children: [
+              // Apple Maps logo using Container with colors
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.grey.shade300, width: 0.5),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.asset('assets/applemaps.png', width: 28, height: 28, fit: BoxFit.cover)
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text('Apple Maps', style: TextStyle(fontSize: 15)),
+            ],
+          ),
+        ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppColors.primaryBlue,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primaryBlue.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.navigation, color: Colors.white, size: 16),
+            const SizedBox(width: 6),
+            Text(
+              'Navigate',
+              style: AppTextStyles.bodyText2.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+
+  Future<void> _openNavigationApp(String app) async {
+    try {
+      final branchId = _currentBranchIds.first;
+      final branchDoc = await FirebaseFirestore.instance
+          .collection('Branch')
+          .doc(branchId)
+          .get();
+
+      if (!branchDoc.exists) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Branch information not found')),
+        );
+        return;
+      }
+
+      final branchData = branchDoc.data()!;
+      final addressData = branchData['address'] as Map<String, dynamic>?;
+
+      if (addressData == null || addressData['geolocation'] == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Branch location not available')),
+        );
+        return;
+      }
+
+      final geoPoint = addressData['geolocation'] as GeoPoint;
+      final double lat = geoPoint.latitude;
+      final double lng = geoPoint.longitude;
+
+      String url;
+
+      if (app == 'apple_maps') {
+        url = 'https://maps.apple.com/?q=$lat,$lng';
+      } else {
+        url = 'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng';
+      }
+
+      if (await canLaunch(url)) {
+        await launch(url);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open maps app')),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error opening navigation: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error opening navigation')),
+      );
+    }
+  }
+
+  void _onOrderTypeChanged(String newType) async {
     if (newType != _orderType) {
       setState(() => _orderType = newType);
-      _setNearestBranch(); // This will now use the correct method based on order type
-      if (newType == 'delivery') {
-        _calculateAndUpdateDeliveryFee();
+      await _setNearestBranch(); // This will now use the correct method based on order type
+
+      // Calculate distance specifically for pickup
+      if (newType == 'pickup') {
+        await _calculateDistanceForPickup();
+      } else {
+        await _calculateAndUpdateDeliveryFee();
       }
     }
   }
@@ -1506,48 +1708,54 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Widget buildPickupInfo() {
-    return InkWell(
-      onTap: _showBranchSelectionBottomSheet,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4.0),
-        child: Row(
-          children: [
-            _isFindingNearestBranch
-                ? const SizedBox(
-              width: 28,
-              height: 28,
-              child: CircularProgressIndicator(strokeWidth: 3),
-            )
-                : const Icon(Icons.storefront_outlined, color: AppColors.primaryBlue, size: 28),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('PICK UP FROM',
-                      style: AppTextStyles.bodyText2.copyWith(
-                          fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
-                  const SizedBox(height: 4),
-                  Text(
-                    _isFindingNearestBranch ? 'Finding nearest branch…' : _getBranchesDisplayName(_currentBranchIds),
-                    style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w600, color: AppColors.darkGrey),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+    return Column(
+      children: [
+        InkWell(
+          onTap: _showBranchSelectionBottomSheet,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4.0),
+            child: Row(
+              children: [
+                _isFindingNearestBranch
+                    ? const SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(strokeWidth: 3),
+                )
+                    : const Icon(Icons.storefront_outlined, color: AppColors.primaryBlue, size: 28),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('PICK UP FROM',
+                          style: AppTextStyles.bodyText2.copyWith(
+                              fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
+                      const SizedBox(height: 4),
+                      Text(
+                        _isFindingNearestBranch ? 'Finding nearest branch…' : _getBranchesDisplayName(_currentBranchIds),
+                        style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w600, color: AppColors.darkGrey),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (_isDefaultNearest && !_isFindingNearestBranch)
+                        Text(
+                          'Nearest to your address',
+                          style: AppTextStyles.bodyText2.copyWith(color: Colors.green, fontSize: 11),
+                        ),
+                    ],
                   ),
-                  if (_isDefaultNearest && !_isFindingNearestBranch)
-                    Text(
-                      'Nearest to your address',
-                      style: AppTextStyles.bodyText2.copyWith(color: Colors.green, fontSize: 11),
-                    ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 8),
+                const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkGrey),
+              ],
             ),
-            const SizedBox(width: 8),
-            const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkGrey),
-          ],
+          ),
         ),
-      ),
+        // Add the navigation section here
+        _buildNavigationSection(),
+      ],
     );
   }
 
@@ -1941,7 +2149,7 @@ class _CartScreenState extends State<CartScreen> {
                   fontWeight: _currentBranchIds.contains(branch['id']) ? FontWeight.bold : FontWeight.normal,
                 )),
                 trailing: _currentBranchIds.contains(branch['id']) ? const Icon(Icons.check_circle, color: Colors.green) : null,
-                onTap: () {
+                onTap: () async {
                   setState(() {
                     _currentBranchIds = [branch['id']!];
                     _isDefaultNearest = (_currentBranchIds == _nearestBranchIds);
@@ -1949,9 +2157,17 @@ class _CartScreenState extends State<CartScreen> {
                     _notifiedOutOfStockItems.clear();
                     _isFirstStockCheck = true;
                   });
-                  _loadDrinks();
-                  _loadEstimatedTime();
-                  loadDeliveryFee(branch['id']!);
+
+                  // Load data for the new branch
+                  await _loadDrinks();
+                  await _loadEstimatedTime();
+                  await loadDeliveryFee(branch['id']!);
+
+                  // Calculate distance for pickup orders
+                  if (_orderType == 'pickup') {
+                    await _calculateDistanceForPickup();
+                  }
+
                   Navigator.pop(context);
                 },
               )),
@@ -1959,6 +2175,54 @@ class _CartScreenState extends State<CartScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _calculateDistanceForPickup() async {
+    if (_orderType != 'pickup') return;
+
+    try {
+      final userPosition = await _getCurrentLocation();
+      if (userPosition == null) {
+        debugPrint('Could not get user location for pickup distance calculation');
+        return;
+      }
+
+      final branchSnap = await FirebaseFirestore.instance
+          .collection('Branch')
+          .doc(_currentBranchIds.first)
+          .get();
+
+      final branchData = branchSnap.data();
+      if (branchData == null || branchData['address'] == null) {
+        debugPrint('Could not get branch location');
+        return;
+      }
+
+      final branchAddress = branchData['address'] as Map<String, dynamic>;
+      final branchGeoPoint = branchAddress['geolocation'] as GeoPoint?;
+
+      if (branchGeoPoint == null) {
+        debugPrint('Branch geolocation not found');
+        return;
+      }
+
+      final distance = _calculateDistance(
+        userPosition.latitude,
+        userPosition.longitude,
+        branchGeoPoint.latitude,
+        branchGeoPoint.longitude,
+      );
+
+      if (mounted) {
+        setState(() {
+          _distanceToBranch = distance;
+        });
+      }
+
+      debugPrint('📍 Pickup distance to ${_currentBranchIds.first}: ${distance.toStringAsFixed(2)} km');
+    } catch (e) {
+      debugPrint('Error calculating pickup distance: $e');
+    }
   }
 
   void _showAddressBottomSheet(Function(String label, String fullAddress) onAddressSelected) {
@@ -2247,7 +2511,6 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 }
-
 
 class _CartItemWidget extends StatefulWidget {
   final CartModel item;
@@ -2715,8 +2978,6 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
   }
 }
 
-
-
 class _DrinkCard extends StatefulWidget {
   final MenuItem drink;
   final List<String> currentBranchIds;
@@ -3023,8 +3284,6 @@ class _DrinkCardState extends State<_DrinkCard> {
     );
   }
 }
-
-
 
 class CartService extends ChangeNotifier {
   static CartService? _instance;
