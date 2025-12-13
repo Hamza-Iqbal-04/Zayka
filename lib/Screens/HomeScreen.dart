@@ -664,6 +664,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           _sectionKeys.putIfAbsent('offers', () => GlobalKey());
           _categoriesLoaded = true;
         });
+
+        // FIX: Recompute offsets after categories are loaded and rendered
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _scheduleRecomputeOffsets();
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -831,6 +836,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     if (mounted) {
       setState(() {
         _groupedMenuItems = newGrouped;
+      });
+      // FIX: Recompute offsets after menu items are rendered
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scheduleRecomputeOffsets();
       });
     }
   }
@@ -1079,37 +1088,40 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void _recomputeSectionOffsets() {
     if (!mounted || !_mainScrollController.hasClients) return;
 
-    final RenderBox? scrollBox = context.findRenderObject() as RenderBox?;
-    if (scrollBox == null) return;
+    // Use the CustomScrollView's render object context
+    final RenderObject? scrollRenderObject = context.findRenderObject();
+    if (scrollRenderObject == null) return;
 
-    final topGlobal = scrollBox.localToGlobal(Offset.zero).dy;
     final Map<String, double> newOffsets = {};
 
-    // Include Offers section if it has items
-    final offersItems = _groupedMenuItems['offers'] ?? [];
-    if (offersItems.isNotEmpty) {
-      final key = _sectionKeys['offers'];
+    // Helper to get offset relative to the scroll view
+    void addOffset(String keyId) {
+      final key = _sectionKeys[keyId];
       if (key?.currentContext != null) {
-        final box = key!.currentContext!.findRenderObject() as RenderBox?;
+        final RenderBox? box = key!.currentContext!.findRenderObject() as RenderBox?;
         if (box != null) {
-          final dy = box.localToGlobal(Offset.zero, ancestor: scrollBox).dy;
+          // Calculate Y position relative to the scroll view's render object
+          final dy = box.localToGlobal(Offset.zero, ancestor: scrollRenderObject).dy;
+
+          // Absolute scroll offset = Current Scroll Position + Relative Position from Top
           final offset = _mainScrollController.offset + dy;
-          newOffsets['offers'] = offset;
+          newOffsets[keyId] = offset;
         }
       }
     }
 
+    // Include Offers section if it has items
+    final offersItems = _groupedMenuItems['offers'] ?? [];
+    if (offersItems.isNotEmpty) {
+      addOffset('offers');
+    }
+
     // Include regular categories
     for (final c in _categories) {
-      final key = _sectionKeys[c.id];
-      if (key?.currentContext == null) continue;
-
-      final box = key!.currentContext!.findRenderObject() as RenderBox?;
-      if (box == null) continue;
-
-      final dy = box.localToGlobal(Offset.zero, ancestor: scrollBox).dy;
-      final offset = _mainScrollController.offset + dy;
-      newOffsets[c.id] = offset;
+      // Only check categories that have items
+      if (_groupedMenuItems[c.id]?.isNotEmpty ?? false) {
+        addOffset(c.id);
+      }
     }
 
     _sectionOffsets
@@ -1118,9 +1130,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   void _onMainScroll() {
-    if (_isAnimatingToSection || _sectionOffsets.isEmpty) return;
+    if (_isAnimatingToSection) return;
 
-    final currentOffset = _mainScrollController.offset + (kToolbarHeight) + 52;
+    // FIX: If offsets are empty (data loaded but math didn't run), try to run it now
+    if (_sectionOffsets.isEmpty) {
+      _recomputeSectionOffsets();
+      // If still empty after trying, we can't calculate highlighting yet
+      if (_sectionOffsets.isEmpty) return;
+    }
+
+    // Calculate effective offset (accounting for sticky headers)
+    // kToolbarHeight + TabBar height (52) + some buffer
+    final double headerHeight = kToolbarHeight + 52 + 10;
+    final currentOffset = _mainScrollController.offset + headerHeight;
 
     // Add a threshold - don't select any category when at the very top
     final double selectionThreshold = 10.0; // pixels
@@ -1141,6 +1163,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       final sectionOffset = _sectionOffsets[categoryId];
 
       if (sectionOffset != null) {
+        // We look for sections that are above or at the current scroll position
         if (currentOffset >= sectionOffset) {
           final distance = currentOffset - sectionOffset;
           if (distance < smallestDistance) {
@@ -1199,9 +1222,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       key!.currentContext!,
       duration: const Duration(milliseconds: 420),
       curve: Curves.easeInOutCubic,
-      alignment: 0.0,
+      alignment: 0.0, // align to top
     );
 
+    // Add a small delay after animation finishes before re-enabling scroll listener
     Future.delayed(const Duration(milliseconds: 450), () {
       if(mounted) {
         _isAnimatingToSection = false;
@@ -2256,6 +2280,7 @@ class _CategorySection extends StatelessWidget {
     );
   }
 }
+
 class _PopularItemCard extends StatelessWidget {
   const _PopularItemCard({
     Key? key,
@@ -2873,68 +2898,68 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                 const SizedBox(height: 12),
                                 Row(
                                   children: [
-                                    Row(
-                                      children: [
-                                        Text(
-                                          'QAR $displayPrice',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w700,
-                                            color: isAvailable
-                                                ? (hasDiscount ? Colors.blue : Colors.black87)
-                                                : Colors.grey, // GREY TEXT WHEN OUT OF STOCK
-                                          ),
-                                        ),
-                                        if (originalPriceString != null) ...[
-                                          const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Wrap(
+                                        crossAxisAlignment: WrapCrossAlignment.center,
+                                        spacing: 8,
+                                        runSpacing: 4,
+                                        children: [
                                           Text(
-                                            'QAR $originalPriceString',
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.normal,
-                                              color: Colors.grey,
-                                              decoration: TextDecoration.lineThrough,
+                                            'QAR $displayPrice',
+                                            style: TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w700,
+                                              color: isAvailable
+                                                  ? (hasDiscount ? Colors.blue : Colors.black87)
+                                                  : Colors.grey, // GREY TEXT WHEN OUT OF STOCK
                                             ),
                                           ),
-                                        ],
-                                        if (widget.showDiscountBadge && widget.item.discountedPrice != null) ...[
-                                          const SizedBox(width: 12),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                            decoration: BoxDecoration(
-                                              color: Colors.red.withOpacity(0.1),
-                                              borderRadius: BorderRadius.circular(6),
-                                              border: Border.all(color: Colors.red, width: 1),
-                                            ),
-                                            child: Text(
-                                              'OFFER',
-                                              style: TextStyle(
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.red,
+                                          if (originalPriceString != null)
+                                            Text(
+                                              'QAR $originalPriceString',
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.normal,
+                                                color: Colors.grey,
+                                                decoration: TextDecoration.lineThrough,
                                               ),
                                             ),
-                                          ),
+                                          if (widget.showDiscountBadge && widget.item.discountedPrice != null)
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                              decoration: BoxDecoration(
+                                                color: Colors.red.withOpacity(0.1),
+                                                borderRadius: BorderRadius.circular(6),
+                                                border: Border.all(color: Colors.red, width: 1),
+                                              ),
+                                              child: Text(
+                                                'OFFER',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.red,
+                                                ),
+                                              ),
+                                            ),
+                                          if (widget.item.offerText != null && widget.item.offerText!.isNotEmpty)
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                              decoration: BoxDecoration(
+                                                color: AppColors.primaryBlue.withOpacity(0.1),
+                                                borderRadius: BorderRadius.circular(4),
+                                              ),
+                                              child: Text(
+                                                widget.item.offerText!,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: AppColors.primaryBlue,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
                                         ],
-                                      ],
-                                    ),
-                                    const SizedBox(width: 8),
-                                    if (widget.item.offerText != null && widget.item.offerText!.isNotEmpty)
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                        decoration: BoxDecoration(
-                                          color: AppColors.primaryBlue.withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(4),
-                                        ),
-                                        child: Text(
-                                          widget.item.offerText!,
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            color: AppColors.primaryBlue,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
                                       ),
+                                    ),
                                   ],
                                 ),
                               ],
@@ -2977,7 +3002,6 @@ class _MenuItemCardState extends State<MenuItemCard> {
     );
   }
 }
-
 
 class DishDetailsBottomSheet extends StatefulWidget {
   final MenuItem item;
@@ -3322,6 +3346,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
 
             // Image with out-of-stock overlay
             Stack(
+              alignment: Alignment.center, // Add alignment here
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(16.0),
@@ -3331,6 +3356,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                       imageUrl: widget.item.imageUrl,
                       fit: BoxFit.cover,
                       height: 250,
+                      width: double.infinity, // Add width: double.infinity
                       placeholder: (c, u) => Container(height: 250, color: Colors.grey.shade200),
                       errorWidget: (c, u, e) => const Icon(Icons.fastfood, color: Colors.grey, size: 40),
                     ),
