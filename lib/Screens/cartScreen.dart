@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 import 'package:geolocator/geolocator.dart';
+import 'package:myfatoorah_flutter/MFModels.dart';
 import '../Screens/HomeScreen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,6 +17,7 @@ import 'Profile.dart';
 import '../Widgets/models.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../Services/PaymentService.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({Key? key}) : super(key: key);
@@ -31,6 +33,9 @@ class _CartScreenState extends State<CartScreen> {
   Set<String> get notifiedOutOfStockItems => _notifiedOutOfStockItems;
 
   String _estimatedTime = 'Loading...';
+  List<MFPaymentMethod> _mfPaymentMethods = [];
+  MFPaymentMethod? _selectedMfPaymentMethod;
+  bool _isLoadingPaymentMethods = false;
   double deliveryFee = 0;
   bool _isFindingNearestBranch = false;
   List<String> _currentBranchIds = ['OldAirport'];
@@ -68,6 +73,12 @@ class _CartScreenState extends State<CartScreen> {
     super.initState();
     _initializeData();
     CartService().addListener(_onCartChanged);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      PaymentService.init(); // Initialize SDK
+      CartService().startStockMonitoring(_currentBranchIds);
+      _checkForOutOfStockItems();
+    });
 
     // Start stock monitoring
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -781,6 +792,7 @@ class _CartScreenState extends State<CartScreen> {
 
   // Enhanced checkout with stock validation
   Future<void> _proceedToCheckout() async {
+    // 1. Basic Validations
     if (_orderType == 'delivery' && _isOutOfDeliveryRange) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Sorry, we do not deliver to your location. Maximum delivery range is $_noDeliveryRange km.'),
@@ -800,7 +812,7 @@ class _CartScreenState extends State<CartScreen> {
     try {
       final cartService = CartService();
 
-      // NEW: Check for out-of-stock items before validation
+      // 2. Stock Checks
       final outOfStockItems = await cartService.getOutOfStockItems(_currentBranchIds);
       if (outOfStockItems.isNotEmpty) {
         setState(() {
@@ -811,13 +823,12 @@ class _CartScreenState extends State<CartScreen> {
         return;
       }
 
-      // Validate stock before proceeding
       await cartService.validateCartStock(_currentBranchIds);
-
       setState(() => _isValidatingStock = false);
 
       if (cartService.items.isEmpty) throw Exception("Your cart is empty");
 
+      // 3. User & Address Data
       final user = FirebaseAuth.instance.currentUser;
       if (user == null || user.email == null) throw Exception("User not authenticated");
 
@@ -834,8 +845,12 @@ class _CartScreenState extends State<CartScreen> {
       final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
       final userData = userDoc.data() as Map<String, dynamic>;
       final String userName = userData['name'] ?? 'Customer';
-      final String userPhone = userData['phone'] ?? 'No phone provided';
+      final String userPhone = userData['phone'] ?? '12345678'; // Fallback if phone is missing
 
+      // 4. Calculate Final Amount
+      final double totalForPayment = cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0);
+
+      // 5. Create Order in Pending State
       final orderDoc = await _createOrderInFirestore(
         user: user,
         cartService: cartService,
@@ -846,16 +861,68 @@ class _CartScreenState extends State<CartScreen> {
         orderType: _orderType,
       );
 
-      final double totalForPayment = cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0);
-      final paymentMeta = _composePaymentMeta(totalForPayment);
-      await orderDoc.update(paymentMeta);
+      // 6. Branch Logic: COD vs Online Payment
+      if (_paymentType == 'Cash on Delivery' || _selectedMfPaymentMethod == null) {
+        // --- COD FLOW ---
+        final paymentMeta = _composePaymentMeta(totalForPayment);
+        await orderDoc.update(paymentMeta);
+        await _handleSuccessfulPayment(orderDoc, {
+          'id': 'cod_transaction',
+          'amount': totalForPayment,
+        });
+        _showOrderConfirmationDialog();
 
-      await _handleSuccessfulPayment(orderDoc, {
-        'id': paymentMeta['transactionId'] ?? 'no_payment',
-        'amount': totalForPayment,
-      });
+      } else {
+        // --- ONLINE PAYMENT FLOW (MyFatoorah) ---
 
-      _showOrderConfirmationDialog();
+        // Ensure we have a valid Method ID
+        if (_selectedMfPaymentMethod?.paymentMethodId == null) {
+          throw Exception("Invalid Payment Method Selected");
+        }
+
+        await PaymentService.executePayment(
+          paymentMethodId: _selectedMfPaymentMethod!.paymentMethodId!,
+          amount: totalForPayment,
+          customerName: userName,
+          customerEmail: user.email!,
+          customerMobile: userPhone,
+          onSuccess: (String invoiceId) async {
+            // Payment Successful on Gateway
+            debugPrint("Payment Success! Invoice: $invoiceId");
+
+            // Update Firestore with transaction info
+            await orderDoc.update({
+              'paymentType': _paymentType,
+              'paymentStatus': 'paid',
+              'transactionId': invoiceId, // Store Invoice ID as Trans ID
+              'paymentDate': FieldValue.serverTimestamp(),
+              'paymentDetails': {
+                'method': _selectedMfPaymentMethod?.paymentMethodEn,
+                'amount': totalForPayment,
+                'gateway': 'MyFatoorah',
+                'invoiceId': invoiceId
+              },
+            });
+
+            // Run existing success logic (clear cart, reduce stock if implemented, etc)
+            await _handleSuccessfulPayment(orderDoc, {
+              'id': invoiceId,
+              'amount': totalForPayment,
+            });
+
+            if (mounted) _showOrderConfirmationDialog();
+          },
+          onFailure: (String errorMessage) {
+            // Payment Failed
+            debugPrint("Payment Failed: $errorMessage");
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('Payment Failed: $errorMessage'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 5),
+            ));
+          },
+        );
+      }
     } catch (e, st) {
       debugPrint('Checkout error → $e\n$st');
       if (mounted) {
@@ -2077,36 +2144,142 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   void _showPaymentMethodsBottomSheet() {
+    final cartService = CartService();
+    // Calculate current total for the API
+    final double currentTotal = cartService.totalAfterDiscount +
+        (_orderType == 'delivery' ? deliveryFee : 0.0);
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) {
-        return Container(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 24, left: 16, right: 16, top: 12),
-          decoration: const BoxDecoration(
-            color: AppColors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
-              const SizedBox(height: 20),
-              Text('Select Payment Method', style: AppTextStyles.headline2),
-              const SizedBox(height: 16),
-              ...['Cash on Delivery', 'Card', 'Apple Pay', 'Google Pay'].map((method) => ListTile(
-                leading: CircleAvatar(backgroundColor: AppColors.lightGrey, child: Icon(_getPaymentIcon(method), color: AppColors.primaryBlue)),
-                title: Text(method, style: AppTextStyles.bodyText1.copyWith(fontWeight: _paymentType == method ? FontWeight.bold : FontWeight.normal)),
-                trailing: _paymentType == method ? const Icon(Icons.check_circle, color: Colors.green) : null,
-                onTap: () {
-                  setState(() => _paymentType = method);
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$method selected')));
-                },
-              )),
-            ],
-          ),
+      builder: (bottomSheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            // Fetch methods if list is empty
+            if (_mfPaymentMethods.isEmpty && !_isLoadingPaymentMethods) {
+              _isLoadingPaymentMethods = true;
+              PaymentService.getPaymentMethods(currentTotal).then((methods) {
+                if (mounted) {
+                  setSheetState(() {
+                    _mfPaymentMethods = methods;
+                    _isLoadingPaymentMethods = false;
+                  });
+                  // Also update main state
+                  setState(() {});
+                }
+              }).catchError((e) {
+                if (mounted) {
+                  setSheetState(() => _isLoadingPaymentMethods = false);
+                }
+                debugPrint("Error loading methods: $e");
+              });
+            }
+
+            return Container(
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+                  left: 16,
+                  right: 16,
+                  top: 12
+              ),
+              decoration: const BoxDecoration(
+                color: AppColors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(2)
+                      )
+                  ),
+                  const SizedBox(height: 20),
+                  Text('Select Payment Method', style: AppTextStyles.headline2),
+                  const SizedBox(height: 16),
+
+                  // 1. Cash on Delivery Option
+                  ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: AppColors.lightGrey,
+                      child: Icon(Icons.money_outlined, color: AppColors.primaryBlue),
+                    ),
+                    title: Text(
+                        'Cash on Delivery',
+                        style: AppTextStyles.bodyText1.copyWith(
+                            fontWeight: _paymentType == 'Cash on Delivery'
+                                ? FontWeight.bold
+                                : FontWeight.normal
+                        )
+                    ),
+                    trailing: _paymentType == 'Cash on Delivery'
+                        ? const Icon(Icons.check_circle, color: Colors.green)
+                        : null,
+                    onTap: () {
+                      setState(() {
+                        _paymentType = 'Cash on Delivery';
+                        _selectedMfPaymentMethod = null; // Clear online selection
+                      });
+                      Navigator.pop(context);
+                    },
+                  ),
+
+                  const Divider(),
+
+                  // 2. Dynamic MyFatoorah Options
+                  if (_isLoadingPaymentMethods)
+                    const Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (_mfPaymentMethods.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Text("No online payment methods available",
+                          style: AppTextStyles.bodyText2),
+                    )
+                  else
+                    ..._mfPaymentMethods.map((method) {
+                      final isSelected = _selectedMfPaymentMethod?.paymentMethodId == method.paymentMethodId;
+                      return ListTile(
+                        leading: SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: CachedNetworkImage(
+                            imageUrl: method.imageUrl ?? '',
+                            errorWidget: (_, __, ___) => const Icon(Icons.credit_card),
+                            placeholder: (_, __) => const Padding(
+                              padding: EdgeInsets.all(8.0),
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        ),
+                        title: Text(
+                            method.paymentMethodEn ?? 'Unknown',
+                            style: AppTextStyles.bodyText1.copyWith(
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal
+                            )
+                        ),
+                        trailing: isSelected
+                            ? const Icon(Icons.check_circle, color: Colors.green)
+                            : null,
+                        onTap: () {
+                          setState(() {
+                            _paymentType = method.paymentMethodEn ?? 'Card';
+                            _selectedMfPaymentMethod = method;
+                          });
+                          Navigator.pop(context);
+                        },
+                      );
+                    }).toList(),
+                ],
+              ),
+            );
+          },
         );
       },
     );

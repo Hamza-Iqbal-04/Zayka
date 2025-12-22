@@ -1,145 +1,81 @@
-import 'dart:convert';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:webview_flutter/webview_flutter.dart';
-import '../Widgets/models.dart';
+import 'package:myfatoorah_flutter/myfatoorah_flutter.dart';
 
 class PaymentService {
-  static const String _apiKey = '3ebee910-5232-488b-a7c0-6d5dbcd67a32';
-  static const String _baseUrl =
-      'https://api.fatora.io'; // Sandbox or production
+  // Public Test Token (Kuwait)
+  static const String _apiToken = 'SK_KWT_vVZlnnAqu8jRByOWaRPNId4ShzEDNt256dvnjebuyzo52dXjAfRx2ixW5umjWSUx';
 
-  Future<Map<String, dynamic>> createPayment({
+  /// Initialize the SDK
+  static Future<void> init() async {
+    try {
+      await MFSDK.init(_apiToken, MFCountry.KUWAIT, MFEnvironment.TEST);
+      // V3 Method: setUpActionBar (instead of setUpAppBar)
+      MFSDK.setUpActionBar(
+        toolBarTitle: "Checkout",
+        toolBarTitleColor: '#FFFFFF',
+        toolBarBackgroundColor: '#004E92',
+        isShowToolBar: true,
+      );
+    } catch (e) {
+      debugPrint("MyFatoorah Init Error: $e");
+    }
+  }
+
+  /// Get Payment Methods
+  static Future<List<MFPaymentMethod>> getPaymentMethods(double invoiceAmount) async {
+    try {
+      var request = MFInitiatePaymentRequest(
+        invoiceAmount: invoiceAmount,
+        currencyIso: MFCurrencyISO.KUWAIT_KWD,
+      );
+
+      // V3 Method: returns response directly
+      final response = await MFSDK.initiatePayment(request, MFLanguage.ENGLISH);
+
+      return response.paymentMethods ?? [];
+    } catch (e) {
+      debugPrint("Error fetching methods: $e");
+      rethrow;
+    }
+  }
+
+  /// Execute Payment
+  static Future<void> executePayment({
+    required int paymentMethodId,
     required double amount,
-    required String currency,
-    required String customerEmail,
     required String customerName,
-    required String orderId,
-    required String successUrl,
-    required String cancelUrl,
+    required String customerEmail,
+    required String customerMobile,
+    required Function(String invoiceId) onSuccess,
+    required Function(String errorMessage) onFailure,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/v1/payments'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $_apiKey',
-        },
-        body: jsonEncode({
-          'amount': amount,
-          'currency': currency,
-          'customer_email': customerEmail,
-          'customer_name': customerName,
-          'order_id': orderId,
-          'success_url': successUrl,
-          'cancel_url': cancelUrl,
-          'metadata': {
-            'order_id': orderId,
-          },
-        }),
+      var request = MFExecutePaymentRequest(
+        invoiceValue: amount,
+        paymentMethodId: paymentMethodId,
       );
 
-      final responseData = jsonDecode(response.body);
-      if (response.statusCode != 200) {
-        throw Exception(responseData['message'] ?? 'Payment creation failed');
-      }
+      request.customerName = customerName;
+      request.customerEmail = customerEmail;
+      request.customerMobile = customerMobile;
+      request.displayCurrencyIso = MFCurrencyISO.KUWAIT_KWD;
 
-      return responseData;
-    } catch (e) {
-      throw Exception('Payment error: $e');
-    }
-  }
-
-  Future<Map<String, dynamic>> verifyPayment(String paymentId) async {
-    try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/v1/payments/$paymentId'),
-        headers: {
-          'Authorization': 'Bearer $_apiKey',
+      // V3 Method: No context passed, different callback structure
+      await MFSDK.executePayment(
+        request,
+        MFLanguage.ENGLISH,
+            (String invoiceId) {
+          debugPrint("Invoice Created: $invoiceId");
+          onSuccess(invoiceId);
         },
-      );
+      ).then((value) {
+        debugPrint("Payment Finished");
+      }).catchError((error) {
+        onFailure(error.toString());
+      });
 
-      final responseData = jsonDecode(response.body);
-      if (response.statusCode != 200) {
-        throw Exception(
-            responseData['message'] ?? 'Payment verification failed');
-      }
-
-      return responseData;
     } catch (e) {
-      throw Exception('Verification error: $e');
+      onFailure(e.toString());
     }
-  }
-}
-
-class WebViewScreen extends StatefulWidget {
-  final String url;
-  final String title;
-
-  const WebViewScreen({required this.url, required this.title, Key? key})
-      : super(key: key);
-
-  @override
-  _WebViewScreenState createState() => _WebViewScreenState();
-}
-
-class _WebViewScreenState extends State<WebViewScreen> {
-  late final WebViewController _controller;
-  bool _isLoading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onProgress: (int progress) {
-            // Update loading bar
-          },
-          onPageStarted: (String url) {
-            setState(() => _isLoading = true);
-          },
-          onPageFinished: (String url) {
-            setState(() => _isLoading = false);
-          },
-          onWebResourceError: (WebResourceError error) {
-            // Handle error
-          },
-          onNavigationRequest: (NavigationRequest request) {
-            // Check for payment success/failure URLs
-            if (request.url.contains('payment-success')) {
-              Navigator.pop(context, true); // Payment success
-              return NavigationDecision.prevent;
-            } else if (request.url.contains('payment-cancel')) {
-              Navigator.pop(context, false); // Payment cancelled
-              return NavigationDecision.prevent;
-            }
-            return NavigationDecision.navigate;
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(widget.url));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-      ),
-      body: Stack(
-        children: [
-          WebViewWidget(controller: _controller),
-          if (_isLoading)
-            Center(
-              child: CircularProgressIndicator(
-                color: AppColors.primaryBlue,
-              ),
-            ),
-        ],
-      ),
-    );
   }
 }

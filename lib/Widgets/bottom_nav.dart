@@ -23,8 +23,11 @@ class MainApp extends StatefulWidget {
   State<MainApp> createState() => _MainAppState();
 }
 
-class _MainAppState extends State<MainApp> {
+// 1. Add SingleTickerProviderStateMixin
+class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
   late int _currentIndex;
+  // 2. Add TabController
+  late TabController _tabController;
   final String _currentBranchId = 'Old_Airport';
   bool _isRestaurantOpen = true;
   bool _isLoading = true;
@@ -35,13 +38,12 @@ class _MainAppState extends State<MainApp> {
     super.initState();
     _currentIndex = widget.initialIndex ?? 0;
 
-    // Don't set the value here to avoid the setState during build
-    // BottomNavController.index.value = _currentIndex;
+    // 3. Initialize TabController
+    _tabController = TabController(length: 5, vsync: this, initialIndex: _currentIndex);
 
     _checkRestaurantStatus();
     _setupCartListener();
 
-    // Add listener after initialization is complete
     WidgetsBinding.instance.addPostFrameCallback((_) {
       BottomNavController.index.addListener(_handleExternalIndexChange);
     });
@@ -83,12 +85,11 @@ class _MainAppState extends State<MainApp> {
 
   void _handleExternalIndexChange() {
     if (BottomNavController.index.value != _currentIndex && mounted) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          setState(() {
-            _currentIndex = BottomNavController.index.value;
-          });
-        }
+      // 4. Animate controller when external change happens (like from CartScreen)
+      _tabController.animateTo(BottomNavController.index.value);
+
+      setState(() {
+        _currentIndex = BottomNavController.index.value;
       });
     }
   }
@@ -96,6 +97,8 @@ class _MainAppState extends State<MainApp> {
   @override
   void dispose() {
     BottomNavController.index.removeListener(_handleExternalIndexChange);
+    // 5. Dispose controller
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -120,6 +123,7 @@ class _MainAppState extends State<MainApp> {
 
             if (_currentIndex != 0) {
               setState(() => _currentIndex = 0);
+              _tabController.animateTo(0); // Sync controller on back press
               BottomNavController.index.value = 0;
               return;
             }
@@ -145,25 +149,10 @@ class _MainAppState extends State<MainApp> {
     );
   }
 
-  void _setupRestaurantStatusListener() {
-    FirebaseFirestore.instance
-        .collection('Branch')
-        .doc(_currentBranchId)
-        .snapshots()
-        .listen((snapshot) {
-      if (mounted && snapshot.exists) {
-        final isOpen = snapshot.data()?['isOpen'] ?? true;
-        if (isOpen != _isRestaurantOpen) {
-          setState(() {
-            _isRestaurantOpen = isOpen;
-          });
-        }
-      }
-    });
-  }
-
   Widget _buildBottomNav(CartService cart) {
     return ConvexAppBar(
+      // 6. Provide the controller to the AppBar
+      controller: _tabController,
       style: TabStyle.fixedCircle,
       height: 64,
       curveSize: 90,
@@ -186,9 +175,11 @@ class _MainAppState extends State<MainApp> {
         ),
         const TabItem(icon: Icons.person, title: 'Profile'),
       ],
-      initialActiveIndex: _currentIndex,
+      // Remove initialActiveIndex as controller takes precedence
       onTap: (i) {
         if (_currentIndex == i) return;
+        // 7. Use animateTo to sync everything on manual tap
+        _tabController.animateTo(i);
         setState(() => _currentIndex = i);
         BottomNavController.index.value = i;
       },
