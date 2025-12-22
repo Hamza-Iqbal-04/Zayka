@@ -792,7 +792,7 @@ class _CartScreenState extends State<CartScreen> {
 
   // Enhanced checkout with stock validation
   Future<void> _proceedToCheckout() async {
-    // 1. Basic Validations
+    // 1. Basic Validations (Delivery Range)
     if (_orderType == 'delivery' && _isOutOfDeliveryRange) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Sorry, we do not deliver to your location. Maximum delivery range is $_noDeliveryRange km.'),
@@ -804,6 +804,7 @@ class _CartScreenState extends State<CartScreen> {
     final String notes = _notesController.text.trim();
     if (!mounted) return;
 
+    // Start Loading State
     setState(() {
       _isCheckingOut = true;
       _isValidatingStock = true;
@@ -812,7 +813,8 @@ class _CartScreenState extends State<CartScreen> {
     try {
       final cartService = CartService();
 
-      // 2. Stock Checks
+      // 2. Stock Checks (Pre-Order)
+      // Check for out-of-stock items before validation
       final outOfStockItems = await cartService.getOutOfStockItems(_currentBranchIds);
       if (outOfStockItems.isNotEmpty) {
         setState(() {
@@ -823,12 +825,13 @@ class _CartScreenState extends State<CartScreen> {
         return;
       }
 
+      // Validate stock before proceeding
       await cartService.validateCartStock(_currentBranchIds);
       setState(() => _isValidatingStock = false);
 
       if (cartService.items.isEmpty) throw Exception("Your cart is empty");
 
-      // 3. User & Address Data
+      // 3. User & Address Data Preparation
       final user = FirebaseAuth.instance.currentUser;
       if (user == null || user.email == null) throw Exception("User not authenticated");
 
@@ -836,8 +839,10 @@ class _CartScreenState extends State<CartScreen> {
       if (_orderType == 'delivery') {
         final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
         if (!userDoc.exists) throw Exception("User document not found");
+
         final userData = userDoc.data() as Map<String, dynamic>;
         final addresses = ((userData['address'] as List?) ?? []).map((a) => Map<String, dynamic>.from(a as Map)).toList();
+
         if (addresses.isEmpty) throw Exception("No delivery address set");
         defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true, orElse: () => addresses[0]);
       }
@@ -845,12 +850,10 @@ class _CartScreenState extends State<CartScreen> {
       final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
       final userData = userDoc.data() as Map<String, dynamic>;
       final String userName = userData['name'] ?? 'Customer';
-      final String userPhone = userData['phone'] ?? '12345678'; // Fallback if phone is missing
+      final String userPhone = userData['phone'] ?? '12345678';
 
-      // 4. Calculate Final Amount
-      final double totalForPayment = cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0);
-
-      // 5. Create Order in Pending State
+      // 4. Create Pending Order in Firestore
+      // We create the order first so we have an ID to link to the payment
       final orderDoc = await _createOrderInFirestore(
         user: user,
         cartService: cartService,
@@ -861,21 +864,24 @@ class _CartScreenState extends State<CartScreen> {
         orderType: _orderType,
       );
 
-      // 6. Branch Logic: COD vs Online Payment
+      final double totalForPayment = cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0);
+
+      // 5. Payment Execution
       if (_paymentType == 'Cash on Delivery' || _selectedMfPaymentMethod == null) {
         // --- COD FLOW ---
         final paymentMeta = _composePaymentMeta(totalForPayment);
         await orderDoc.update(paymentMeta);
+
         await _handleSuccessfulPayment(orderDoc, {
           'id': 'cod_transaction',
           'amount': totalForPayment,
         });
+
         _showOrderConfirmationDialog();
 
       } else {
         // --- ONLINE PAYMENT FLOW (MyFatoorah) ---
 
-        // Ensure we have a valid Method ID
         if (_selectedMfPaymentMethod?.paymentMethodId == null) {
           throw Exception("Invalid Payment Method Selected");
         }
@@ -887,14 +893,13 @@ class _CartScreenState extends State<CartScreen> {
           customerEmail: user.email!,
           customerMobile: userPhone,
           onSuccess: (String invoiceId) async {
-            // Payment Successful on Gateway
+            // PAYMENT SUCCESS: Finalize the order
             debugPrint("Payment Success! Invoice: $invoiceId");
 
-            // Update Firestore with transaction info
             await orderDoc.update({
               'paymentType': _paymentType,
               'paymentStatus': 'paid',
-              'transactionId': invoiceId, // Store Invoice ID as Trans ID
+              'transactionId': invoiceId,
               'paymentDate': FieldValue.serverTimestamp(),
               'paymentDetails': {
                 'method': _selectedMfPaymentMethod?.paymentMethodEn,
@@ -904,7 +909,6 @@ class _CartScreenState extends State<CartScreen> {
               },
             });
 
-            // Run existing success logic (clear cart, reduce stock if implemented, etc)
             await _handleSuccessfulPayment(orderDoc, {
               'id': invoiceId,
               'amount': totalForPayment,
@@ -912,14 +916,16 @@ class _CartScreenState extends State<CartScreen> {
 
             if (mounted) _showOrderConfirmationDialog();
           },
-          onFailure: (String errorMessage) {
-            // Payment Failed
-            debugPrint("Payment Failed: $errorMessage");
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('Payment Failed: $errorMessage'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 5),
-            ));
+          onFailure: (String errorMessage) async {
+            // PAYMENT FAILED/CANCELLED: Delete the pending order
+            debugPrint("Payment Failed/Cancelled: $errorMessage");
+
+            // This line fixes the bug: remove the pending order so it doesn't stay in "My Orders"
+            await orderDoc.delete();
+
+            if (mounted) {
+              _showPaymentFailedDialog(errorMessage);
+            }
           },
         );
       }
@@ -932,6 +938,7 @@ class _CartScreenState extends State<CartScreen> {
         ));
       }
     } finally {
+      // Ensure loading spinner stops whether success or failure
       if (mounted) {
         setState(() {
           _isCheckingOut = false;
@@ -1093,6 +1100,49 @@ class _CartScreenState extends State<CartScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  void _showPaymentFailedDialog(String errorMessage) {
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.error_outline_rounded, color: Colors.red, size: 28),
+            const SizedBox(width: 10),
+            Text('Payment Failed', style: AppTextStyles.headline2),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Your payment could not be processed.',
+              style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              errorMessage.replaceAll('Payment Cancelled', 'The payment was cancelled.'),
+              style: AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade700),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Try Again',
+              style: AppTextStyles.buttonText.copyWith(color: AppColors.primaryBlue),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

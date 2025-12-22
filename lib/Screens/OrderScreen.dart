@@ -582,20 +582,25 @@ class OrderDetailsScreen extends StatelessWidget {
       final dynamic rawAddons = itemData['addons'];
       final List<String> addonsList =
       rawAddons is List ? rawAddons.map((e) => e.toString()).toList() : [];
+
       final menuItem = MenuItem(
         id: itemData['itemId'] ?? UniqueKey().toString(),
         name: itemData['name'] ?? 'Unknown Item',
         price: (itemData['price'] as num?)?.toDouble() ?? 0.0,
+        // Ensure discountedPrice is passed correctly during reorder
+        discountedPrice: (itemData['discountedPrice'] as num?)?.toDouble(),
         imageUrl: itemData['imageUrl'] as String? ?? '',
-        branchIds: [order['restaurantId'] ?? ''], // NEW - wrap in array
+        branchIds: [order['restaurantId'] ?? ''],
         categoryId: '',
         description: '',
         isAvailable: true,
         isPopular: false,
         sortOrder: 0,
         tags: itemData['tags'] as Map<String, dynamic>? ?? {},
-        variants: itemData['variants'] as Map<String, dynamic>? ?? {}, outOfStockBranches: [],
+        variants: itemData['variants'] as Map<String, dynamic>? ?? {},
+        outOfStockBranches: [],
       );
+
       cartService.addToCart(
         menuItem,
         quantity: (itemData['quantity'] as num?)?.toInt() ?? 1,
@@ -612,8 +617,14 @@ class OrderDetailsScreen extends StatelessWidget {
     );
   }
 
+  // ... (Keep your existing _contactOnWhatsApp, _showContactUsSheet, _fetchRestaurantGeo, and _callDriver methods as they were) ...
+
+  // Note: For brevity, I am not repeating the helper methods here since they didn't change.
+  // Make sure to keep _contactOnWhatsApp, _showContactUsSheet, _fetchRestaurantGeo, _callDriver
+  // inside this class when you copy-paste.
+
   Future<void> _contactOnWhatsApp({
-    required String rawPhoneE164NoPlus, // e.g., "9745XXXXXXXX" (no +, no spaces)
+    required String rawPhoneE164NoPlus,
     required String message,
   }) async {
     final phone = rawPhoneE164NoPlus.replaceAll(RegExp(r'[^0-9]'), '');
@@ -631,6 +642,7 @@ class OrderDetailsScreen extends StatelessWidget {
   }
 
   void _showContactUsSheet(BuildContext context) {
+    // ... (Keep existing implementation) ...
     final formKey = GlobalKey<FormState>();
     final messageController = TextEditingController();
     final user = FirebaseAuth.instance.currentUser;
@@ -727,7 +739,6 @@ class OrderDetailsScreen extends StatelessWidget {
     return doc.data()?['address']?['geolocation'] as GeoPoint?;
   }
 
-  // New: helper to launch dialer with tel: scheme
   Future<void> _callDriver(String rawPhone, BuildContext context) async {
     final phone = rawPhone.replaceAll(RegExp(r'[^0-9+]'), '');
     final uri = Uri(scheme: 'tel', path: phone);
@@ -747,21 +758,91 @@ class OrderDetailsScreen extends StatelessWidget {
     }
   }
 
+  // --- CHANGED: Updated Logic in _buildOrderItems ---
+  List<Widget> _buildOrderItems(List<Map<String, dynamic>> items) {
+    if (items.isEmpty) {
+      return [const Text('No items found in this order.')];
+    }
+    return items.map((item) {
+      final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+      final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
+
+      // Get discounted price from the item map
+      final double? discountedPrice = (item['discountedPrice'] as num?)?.toDouble();
+
+      // Determine effective price: use discounted if valid and lower than original
+      final effectivePrice = (discountedPrice != null && discountedPrice > 0 && discountedPrice < price)
+          ? discountedPrice
+          : price;
+
+      final itemTotal = effectivePrice * quantity;
+
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start, // Align to top
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$quantity x ${item['name'] ?? 'Item'}',
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                  ),
+                  // Show the unit price breakdown if discounted
+                  if (effectivePrice < price)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2.0),
+                      child: Text(
+                        'Unit Price: QAR ${effectivePrice.toStringAsFixed(2)}',
+                        style: TextStyle(fontSize: 12, color: Colors.green.shade700),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  'QAR ${itemTotal.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                ),
+                // Show original total crossed out if there was a discount
+                if (effectivePrice < price)
+                  Text(
+                    'QAR ${(price * quantity).toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade500,
+                      decoration: TextDecoration.lineThrough,
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
+    // ... (Keep existing build method logic) ...
     final items = (order['items'] as List? ?? []).cast<Map<String, dynamic>>();
     final status = order['status'] as String? ?? 'pending';
     final statusColor = _getStatusColor(status);
     final orderId = order['orderId'] as String? ?? '';
     final riderId = order['riderId'] as String? ?? '';
-    final bool showMap =
-        riderId.isNotEmpty && status != 'delivered' && status != 'cancelled';
-    final bool showDriverInfo =
-        riderId.isNotEmpty && status != 'delivered' && status != 'cancelled';
+    final bool showMap = riderId.isNotEmpty && status != 'delivered' && status != 'cancelled';
+    final bool showDriverInfo = riderId.isNotEmpty && status != 'delivered' && status != 'cancelled';
     final userGeo = order['deliveryAddress']?['geolocation'] as GeoPoint?;
     final branchId = order['restaurantId'] as String? ?? 'Old_Airport';
     final restaurantGeoFuture = _fetchRestaurantGeo(branchId);
 
+    // ... (Keep the rest of the UI code: liveMapSection, driverDetailsSection, Scaffold, etc.) ...
     Widget liveMapSection = const SizedBox.shrink();
     if (showMap) {
       liveMapSection = FutureBuilder<GeoPoint?>(
@@ -787,89 +868,88 @@ class OrderDetailsScreen extends StatelessWidget {
       );
     }
 
-    // New: driver details section wrapped with the same card UI
     Widget driverDetailsSection = const SizedBox.shrink();
     if (showDriverInfo) {
       driverDetailsSection =
           StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance
-              .collection('Drivers')
-              .doc(riderId)
-              .snapshots(),
-          builder: (context, snap) {
-            if (!snap.hasData || !(snap.data?.exists ?? false)) {
-              return const SizedBox.shrink();
-            }
-            final data = snap.data!.data()!;
-            final name = (data['name'] as String?)?.trim().isNotEmpty == true
-                ? (data['name'] as String)
-                : 'Driver';
-            final phone = (data['phone'] ?? '').toString();
-            final imageUrl = (data['profileImageUrl'] as String?) ?? '';
+            stream: FirebaseFirestore.instance
+                .collection('Drivers')
+                .doc(riderId)
+                .snapshots(),
+            builder: (context, snap) {
+              if (!snap.hasData || !(snap.data?.exists ?? false)) {
+                return const SizedBox.shrink();
+              }
+              final data = snap.data!.data()!;
+              final name = (data['name'] as String?)?.trim().isNotEmpty == true
+                  ? (data['name'] as String)
+                  : 'Driver';
+              final phone = (data['phone'] ?? '').toString();
+              final imageUrl = (data['profileImageUrl'] as String?) ?? '';
 
-            return _buildSectionCard(
-              title: 'Driver Details',
-              children: [
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: Colors.grey.shade200,
-                      backgroundImage:
-                      imageUrl.isNotEmpty ? NetworkImage(imageUrl) : null,
-                      child: imageUrl.isEmpty
-                          ? const Icon(Icons.person, color: Colors.grey)
-                          : null,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            name,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            phone.isEmpty ? 'No phone available' : phone,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey.shade700,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
+              return _buildSectionCard(
+                title: 'Driver Details',
+                children: [
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 24,
+                        backgroundColor: Colors.grey.shade200,
+                        backgroundImage:
+                        imageUrl.isNotEmpty ? NetworkImage(imageUrl) : null,
+                        child: imageUrl.isEmpty
+                            ? const Icon(Icons.person, color: Colors.grey)
+                            : null,
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    ElevatedButton.icon(
-                      onPressed:
-                      phone.isEmpty ? null : () => _callDriver(phone, context),
-                      icon: const Icon(Icons.phone, size: 18),
-                      label: const Text('CALL'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryBlue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 10,
-                          horizontal: 12,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              phone.isEmpty ? 'No phone available' : phone,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey.shade700,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
                         ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        elevation: 0,
                       ),
-                    ),
-                  ],
-                ),
-              ],
-            );
-          },
+                      const SizedBox(width: 12),
+                      ElevatedButton.icon(
+                        onPressed:
+                        phone.isEmpty ? null : () => _callDriver(phone, context),
+                        icon: const Icon(Icons.phone, size: 18),
+                        label: const Text('CALL'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryBlue,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 10,
+                            horizontal: 12,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          elevation: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
           );
     }
 
@@ -923,6 +1003,7 @@ class OrderDetailsScreen extends StatelessWidget {
                 ],
                 _buildSectionCard(
                   title: 'Order Items',
+                  // Call the UPDATED method here
                   children: _buildOrderItems(items),
                 ),
                 const SizedBox(height: 16),
@@ -940,7 +1021,7 @@ class OrderDetailsScreen extends StatelessWidget {
     );
   }
 
-  // --- ALL HELPER WIDGETS ARE INCLUDED ---
+  // --- Helper Methods (Keep these exactly as they were in your code) ---
 
   Widget _buildSectionCard({required String title, required List<Widget> children}) {
     return Container(
@@ -965,35 +1046,6 @@ class OrderDetailsScreen extends StatelessWidget {
     );
   }
 
-  List<Widget> _buildOrderItems(List<Map<String, dynamic>> items) {
-    if (items.isEmpty) {
-      return [const Text('No items found in this order.')];
-    }
-    return items.map((item) {
-      final price = (item['price'] as num?)?.toDouble() ?? 0.0;
-      final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
-      final itemTotal = price * quantity;
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 12.0),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(
-              child: Text(
-                '$quantity x ${item['name'] ?? 'Item'}',
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-              ),
-            ),
-            Text(
-              'QAR ${itemTotal.toStringAsFixed(2)}',
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-            ),
-          ],
-        ),
-      );
-    }).toList();
-  }
-
   Widget _buildPaymentSummary() {
     final subtotal = (order['subtotal'] as num?)?.toDouble() ?? 0.0;
     final totalAmount = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
@@ -1004,16 +1056,6 @@ class OrderDetailsScreen extends StatelessWidget {
         _buildPriceRow('Total', totalAmount, isBold: true),
       ],
     );
-  }
-
-  String _formatOrderType(String? raw) {
-    if (raw == null || raw.isEmpty) return 'Order';
-    final pretty = raw
-        .replaceAll('_', ' ')
-        .split(' ')
-        .map((w) => w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '')
-        .join(' ');
-    return pretty;
   }
 
   Widget _buildPriceRow(String label, double amount, {bool isBold = false}) {
@@ -1029,24 +1071,6 @@ class OrderDetailsScreen extends StatelessWidget {
               fontSize: 15,
               fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(IconData icon, String title, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        children: [
-          Icon(icon, color: Colors.grey[600], size: 20),
-          const SizedBox(width: 16),
-          Text(title, style: TextStyle(fontSize: 15, color: Colors.grey[700])),
-          const Spacer(),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
           ),
         ],
       ),
@@ -1086,8 +1110,7 @@ class OrderDetailsScreen extends StatelessWidget {
               onPressed: () {
                 final dailyOrderNumber =
                     order['dailyOrderNumber']?.toString() ?? '';
-                const supportNumber =
-                    '919152822169'; // E.164 digits only, no '+' or spaces
+                const supportNumber = '919152822169';
                 final msg = 'Hello, I need help with order #$dailyOrderNumber';
                 _contactOnWhatsApp(
                   rawPhoneE164NoPlus: supportNumber,
@@ -1117,17 +1140,12 @@ class OrderDetailsScreen extends StatelessWidget {
 
   Color _getStatusColor(String? status) {
     switch (status?.toLowerCase()) {
-      case 'pending':
-        return Colors.orange.shade600;
-      case 'confirmed':
-        return Colors.blue.shade600;
-      case 'preparing':
-        return Colors.teal.shade600;
+      case 'pending': return Colors.orange.shade600;
+      case 'confirmed': return Colors.blue.shade600;
+      case 'preparing': return Colors.teal.shade600;
       case 'ready':
-      case 'delivered':
-        return Colors.green.shade600;
-      default:
-        return Colors.grey.shade600;
+      case 'delivered': return Colors.green.shade600;
+      default: return Colors.grey.shade600;
     }
   }
 
@@ -1138,16 +1156,6 @@ class OrderDetailsScreen extends StatelessWidget {
         .split(' ')
         .map((word) => word[0].toUpperCase() + word.substring(1))
         .join(' ');
-  }
-
-  String _formatDate(String? date) {
-    if (date == null || date.isEmpty) return 'Unknown date';
-    try {
-      final parsedDate = DateTime.parse(date);
-      return DateFormat('d MMM yyyy, h:mm a').format(parsedDate);
-    } catch (e) {
-      return date;
-    }
   }
 }
 

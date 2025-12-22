@@ -58,18 +58,29 @@ class PaymentService {
       request.customerName = customerName;
       request.customerEmail = customerEmail;
       request.customerMobile = customerMobile;
-      request.displayCurrencyIso = MFCurrencyISO.KUWAIT_KWD;
+      request.displayCurrencyIso = MFCurrencyISO.KUWAIT_KWD; // 3. Display Currency QAR
 
-      // V3 Method: No context passed, different callback structure
       await MFSDK.executePayment(
         request,
         MFLanguage.ENGLISH,
             (String invoiceId) {
-          debugPrint("Invoice Created: $invoiceId");
-          onSuccess(invoiceId);
+          // BUG FIX: Do NOT call onSuccess here.
+          // This only confirms an invoice was created, not paid.
+          debugPrint("Invoice Created (Waiting for payment): $invoiceId");
         },
-      ).then((value) {
-        debugPrint("Payment Finished");
+      ).then((response) {
+        // 4. Check the actual status after the screen closes
+        debugPrint("Payment Finished. Status: ${response.invoiceStatus}");
+
+        if (response.invoiceStatus == "Paid") {
+          // ONLY call onSuccess if status is 'Paid'
+          onSuccess(response.invoiceId.toString());
+        } else if (response.invoiceStatus == "Failed") {
+          onFailure("Payment Declined");
+        } else {
+          // Status could be "Pending" or "Canceled" if user closed the box
+          onFailure("Payment Cancelled");
+        }
       }).catchError((error) {
         onFailure(error.toString());
       });

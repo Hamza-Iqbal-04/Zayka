@@ -1421,7 +1421,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           }
 
           return ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), // Add bottom padding to avoid overlap with cart bar
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 120), // Add bottom padding to avoid overlap with cart bar
             itemCount: favorites.length,
             itemBuilder: (context, index) {
               final itemId = favorites.keys.elementAt(index);
