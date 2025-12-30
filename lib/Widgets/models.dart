@@ -2,6 +2,9 @@ import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../Services/language_provider.dart';
 
 class CouponModel {
   final String id;
@@ -121,6 +124,7 @@ class CouponModel {
 class CartModel {
   final String id;
   final String name;
+  final String nameAr;
   final String imageUrl;
   final double price;
   final double? discountedPrice;
@@ -134,6 +138,7 @@ class CartModel {
   CartModel({
     required this.id,
     required this.name,
+    this.nameAr = '',
     required this.imageUrl,
     required this.price,
     required this.quantity,
@@ -144,6 +149,11 @@ class CartModel {
     this.couponId,
     this.couponDiscount,
   });
+
+  String getLocalizedName(BuildContext context) {
+    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    return isArabic && (nameAr.isNotEmpty ?? false) ? nameAr : name;
+  }
 
   // CORRECTED: This getter should use discountedPrice when available
   double get finalPrice {
@@ -164,6 +174,7 @@ class CartModel {
     return {
       'id': id,
       'name': name,
+      'nameAr': nameAr,
       'imageUrl': imageUrl,
       'price': price,
       'discountedPrice': discountedPrice,
@@ -180,6 +191,7 @@ class CartModel {
     return CartModel(
       id: map['id'] ?? '',
       name: map['name'] ?? '',
+      nameAr: map['nameAr'],
       imageUrl: map['imageUrl'] ?? '',
       price: (map['price'] ?? 0).toDouble(),
       discountedPrice: map['discountedPrice']?.toDouble(),

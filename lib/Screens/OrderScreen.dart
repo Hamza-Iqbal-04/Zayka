@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:intl/date_symbol_data_local.dart'; // Import this for date localization
 import 'package:provider/provider.dart';
 import '../Widgets/bottom_nav.dart';
 import 'cartScreen.dart';
@@ -12,6 +13,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:ui';
+import '../Services/language_provider.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({Key? key}) : super(key: key);
@@ -34,13 +36,17 @@ class _OrderScreenState extends State<OrdersScreen> {
   // Local lists and UI state
   List<Map<String, dynamic>> _allOrders = [];
   List<Map<String, dynamic>> _filteredOrders = [];
-  String _selectedFilter = 'All';
-  final List<String> _statusFilters = const [
-    'All',
-    'Pending',
-    'Preparing',
-    'On the Way',
-    'Delivered',
+
+  // Use internal keys instead of translated strings for state
+  String _selectedFilterKey = 'all';
+
+  // Internal filter keys
+  final List<String> _filterKeys = const [
+    'all',
+    'pending',
+    'preparing',
+    'on_the_way',
+    'delivered',
   ];
 
   final TextEditingController _searchController = TextEditingController();
@@ -48,6 +54,11 @@ class _OrderScreenState extends State<OrdersScreen> {
   @override
   void initState() {
     super.initState();
+    // Initialize date formatting data (essential for Arabic dates)
+    initializeDateFormatting().then((_) {
+      if (mounted) setState(() {});
+    });
+
     _searchController.addListener(_applySearchFilter);
     _resetAndFetch();
   }
@@ -66,9 +77,10 @@ class _OrderScreenState extends State<OrdersScreen> {
         .where('customerId', isEqualTo: user.email)
         .orderBy('timestamp', descending: true);
 
-    if (_selectedFilter != 'All') {
-      query = query.where('status', isEqualTo: _selectedFilter.toLowerCase());
+    if (_selectedFilterKey != 'all') {
+      query = query.where('status', isEqualTo: _selectedFilterKey.toLowerCase());
     }
+
     return query;
   }
 
@@ -104,7 +116,6 @@ class _OrderScreenState extends State<OrdersScreen> {
     try {
       Query<Map<String, dynamic>> query =
       _buildBaseQuery(user).limit(_pageSize);
-
       if (_lastDoc != null) {
         query = query.startAfterDocument(_lastDoc!);
       }
@@ -122,13 +133,13 @@ class _OrderScreenState extends State<OrdersScreen> {
               ?.toString()
               .trim();
 
-          return <String, dynamic>{
+          return {
             ...data,
             'id': doc.id,
             'items':
             (data['items'] as List? ?? []).cast<Map<String, dynamic>>(),
-            'formattedDate':
-            _formatTimestamp(data['timestamp'] as Timestamp?),
+            // We removed 'formattedDate' here to handle it dynamically in the UI
+            'timestamp': data['timestamp'],
             'statusDisplay':
             _formatOrderStatus(data['status'] as String?),
             'customerName': customerName,
@@ -164,26 +175,23 @@ class _OrderScreenState extends State<OrdersScreen> {
           : _allOrders.where((order) {
         final items =
         (order['items'] as List).cast<Map<String, dynamic>>();
-        return items.any((item) =>
-            (item['name'] as String? ?? '')
-                .toLowerCase()
-                .contains(searchQuery));
+        // Check both English and Arabic names for search
+        return items.any((item) {
+          final name = (item['name'] as String? ?? '').toLowerCase();
+          final nameAr = (item['name_ar'] as String? ?? '').toLowerCase();
+          return name.contains(searchQuery) || nameAr.contains(searchQuery);
+        });
       }).toList();
     });
   }
 
   String _formatOrderStatus(String? status) {
-    if (status == null || status.isEmpty) return 'Unknown';
+    if (status == null || status.isEmpty) return AppStrings.get('unknown', context);
     return status
         .replaceAll('_', ' ')
         .split(' ')
         .map((word) => word.isNotEmpty ? word[0].toUpperCase() + word.substring(1) : '')
         .join(' ');
-  }
-
-  String _formatTimestamp(Timestamp? timestamp) {
-    if (timestamp == null) return '--';
-    return DateFormat('d MMM, h:mm a').format(timestamp.toDate());
   }
 
   Color _getStatusColor(String? status) {
@@ -193,6 +201,7 @@ class _OrderScreenState extends State<OrdersScreen> {
       case 'preparing':
         return Colors.blue.shade600;
       case 'on the way':
+      case 'on_the_way':
         return Colors.purple.shade600;
       case 'delivered':
         return Colors.green.shade600;
@@ -216,12 +225,11 @@ class _OrderScreenState extends State<OrdersScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Keep bright UI
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text(
-          'Your Orders',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        title: Text(
+          AppStrings.get('your_orders', context),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.white,
         elevation: 0,
@@ -248,12 +256,10 @@ class _OrderScreenState extends State<OrdersScreen> {
     }
 
     if (_filteredOrders.isEmpty) {
-      return const Center(child: Text('No orders found.'));
+      return Center(child: Text(AppStrings.get('no_orders_found', context)));
     }
 
-    // Footer will be a "Load more" button or a spinner or nothing
     final footerCount = 1;
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 100),
       child: ListView.builder(
@@ -263,7 +269,7 @@ class _OrderScreenState extends State<OrdersScreen> {
           if (index < _filteredOrders.length) {
             return _buildOrderCard(_filteredOrders[index]);
           }
-      
+
           // Footer
           if (_isFetchingMore) {
             return const Padding(
@@ -277,28 +283,31 @@ class _OrderScreenState extends State<OrdersScreen> {
               ),
             );
           }
-      
+
           if (_hasMore) {
             return Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: OutlinedButton.icon(
                 onPressed: _fetchNextPage,
-                icon: const Icon(Icons.expand_more,color: Colors.blue,),
-                label: const Text('Load more', style: TextStyle(color: Colors.blue)),
+                icon: const Icon(Icons.expand_more, color: Colors.blue),
+                label: Text(
+                  AppStrings.get('load_more', context),
+                  style: const TextStyle(color: Colors.blue),
+                ),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                   side: const BorderSide(
-                    color: Colors.lightBlue, // light blue border
+                    color: Colors.lightBlue,
                     width: 1.5,
                   ),
                 ),
               ),
             );
           }
-      
+
           return const SizedBox.shrink();
         },
       ),
@@ -311,16 +320,18 @@ class _OrderScreenState extends State<OrdersScreen> {
       child: TextField(
         controller: _searchController,
         decoration: InputDecoration(
-          hintText: 'Search by dish name...',
+          hintText: AppStrings.get('search_by_dish', context),
           prefixIcon: const Icon(Icons.search, color: Colors.grey),
           filled: true,
           fillColor: Colors.white,
           border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey.shade300)),
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
           enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey.shade300)),
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
         ),
       ),
     );
@@ -333,21 +344,21 @@ class _OrderScreenState extends State<OrdersScreen> {
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
-          children: _statusFilters.map((filter) {
-            final isSelected = _selectedFilter == filter;
-
-            final Color activeColor = filter == 'All'
+          children: _filterKeys.map((filterKey) {
+            final filterLabel = AppStrings.get(filterKey, context);
+            final isSelected = _selectedFilterKey == filterKey;
+            final Color activeColor = filterKey == 'all'
                 ? AppColors.primaryBlue
-                : _getStatusColor(filter.toLowerCase());
+                : _getStatusColor(filterKey.toLowerCase());
 
             return Padding(
               padding: const EdgeInsets.only(right: 8),
               child: ChoiceChip(
-                label: Text(filter),
+                label: Text(filterLabel),
                 selected: isSelected,
                 onSelected: (selected) {
                   setState(() {
-                    _selectedFilter = selected ? filter : 'All';
+                    _selectedFilterKey = selected ? filterKey : 'all';
                   });
                   _resetAndFetch();
                 },
@@ -374,28 +385,46 @@ class _OrderScreenState extends State<OrdersScreen> {
 
   Widget _buildOrderCard(Map<String, dynamic> order) {
     final totalAmount = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
-    final items =
-    (order['items'] as List).cast<Map<String, dynamic>>();
+    final items = (order['items'] as List).cast<Map<String, dynamic>>();
     final orderType = order['Order_type'] as String? ?? 'delivery';
     final restaurantAddress = order['restaurantAddress'] as String? ?? '';
     final status = order['status'] as String?;
-    final itemSummary =
-    items.map((item) => "${item['quantity']}x ${item['name']}").join(', ');
+
+    // --- Dynamic Date Formatting ---
+    final timestamp = order['timestamp'] as Timestamp?;
+    String formattedDate = '--';
+    if (timestamp != null) {
+      final isArabic = Provider.of<LanguageProvider>(context).isArabic;
+      final locale = isArabic ? 'ar' : 'en';
+      formattedDate = DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
+    }
+    // -------------------------------
+
+    // --- Localization Logic for Item Summary ---
+    final isArabic = Provider.of<LanguageProvider>(context).isArabic;
+    final itemSummary = items.map((item) {
+      final name = item['name'] as String? ?? '';
+      final nameAr = item['name_ar'] as String? ?? '';
+      final displayName = (isArabic && nameAr.isNotEmpty) ? nameAr : name;
+      return "${item['quantity']}x $displayName";
+    }).join(', ');
+    // -------------------------------------------
+
     final statusColor = _getStatusColor(status);
 
     String formattedOrderType;
     switch (orderType.toLowerCase()) {
       case 'delivery':
-        formattedOrderType = 'Delivery Order';
+        formattedOrderType = AppStrings.get('delivery_order', context);
         break;
       case 'dine-in':
-        formattedOrderType = 'Dine In Order';
+        formattedOrderType = AppStrings.get('dine_in_order', context);
         break;
       case 'take_away':
-        formattedOrderType = 'Takeaway Order';
+        formattedOrderType = AppStrings.get('takeaway_order', context);
         break;
       default:
-        formattedOrderType = 'Order';
+        formattedOrderType = AppStrings.get('order', context);
     }
 
     return Card(
@@ -444,7 +473,9 @@ class _OrderScreenState extends State<OrdersScreen> {
                             child: Text(
                               restaurantAddress,
                               style: TextStyle(
-                                  fontSize: 13, color: Colors.grey.shade600),
+                                fontSize: 13,
+                                color: Colors.grey.shade600,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -491,7 +522,7 @@ class _OrderScreenState extends State<OrdersScreen> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      order['statusDisplay'] as String? ?? 'Unknown',
+                      order['statusDisplay'] as String? ?? AppStrings.get('unknown', context),
                       style: TextStyle(
                         fontSize: 12,
                         color: statusColor,
@@ -500,10 +531,10 @@ class _OrderScreenState extends State<OrdersScreen> {
                     ),
                   ),
                   const Spacer(),
+                  // Now using the dynamically formatted date
                   Text(
-                    'Placed on ${order['formattedDate']}',
-                    style:
-                    TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    '${AppStrings.get('placed_on', context)} $formattedDate',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                   ),
                 ],
               ),
@@ -518,39 +549,42 @@ class _OrderScreenState extends State<OrdersScreen> {
                       final menuItem = MenuItem(
                         id: itemData['itemId'] ?? UniqueKey().toString(),
                         name: itemData['name'] ?? 'Unknown Item',
+                        nameAr: itemData['name_ar'] ?? '', // Added Arabic name to MenuItem
                         price: (itemData['price'] as num?)?.toDouble() ?? 0.0,
                         imageUrl: itemData['imageUrl'] as String? ?? '',
-                        branchIds: [order['restaurantId'] ?? ''], // NEW - wrap in array
+                        branchIds: [order['restaurantId'] ?? ''],
                         categoryId: '',
                         description: '',
                         isAvailable: true,
                         isPopular: false,
                         sortOrder: 0,
                         tags: itemData['tags'] as Map<String, dynamic>? ?? {},
-                        variants: itemData['variants'] as Map<String, dynamic>? ?? {}, outOfStockBranches: [],
+                        variants: itemData['variants'] as Map<String, dynamic>? ?? {},
+                        outOfStockBranches: [],
                       );
                       cartService.addToCart(
                         menuItem,
-                        quantity:
-                        (itemData['quantity'] as num?)?.toInt() ?? 1,
-                        variants:
-                        itemData['variants'] as Map<String, dynamic>?,
+                        quantity: (itemData['quantity'] as num?)?.toInt() ?? 1,
+                        variants: itemData['variants'] as Map<String, dynamic>?,
                         addons: (itemData['addons'] as List?)
                             ?.map((e) => e.toString())
                             .toList(),
                       );
                     }
                     Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 3)),
+                      MaterialPageRoute(
+                        builder: (_) => const MainApp(initialIndex: 3),
+                      ),
                     );
                   },
                   icon: const Icon(Icons.replay, size: 18),
-                  label: const Text('REORDER'),
+                  label: Text(AppStrings.get('reorder', context)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: statusColor,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     elevation: 0,
                   ),
@@ -566,14 +600,16 @@ class _OrderScreenState extends State<OrdersScreen> {
 
 class OrderDetailsScreen extends StatelessWidget {
   final Map<String, dynamic> order;
+
   const OrderDetailsScreen({Key? key, required this.order}) : super(key: key);
 
   void _reorderItems(BuildContext context) {
     final cartService = Provider.of<CartService>(context, listen: false);
     final items = (order['items'] as List? ?? []).cast<Map<String, dynamic>>();
+
     if (items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This order has no items to reorder.')),
+        SnackBar(content: Text(AppStrings.get('no_items_to_reorder', context))),
       );
       return;
     }
@@ -586,8 +622,8 @@ class OrderDetailsScreen extends StatelessWidget {
       final menuItem = MenuItem(
         id: itemData['itemId'] ?? UniqueKey().toString(),
         name: itemData['name'] ?? 'Unknown Item',
+        nameAr: itemData['name_ar'] ?? '', // Added Arabic name to MenuItem
         price: (itemData['price'] as num?)?.toDouble() ?? 0.0,
-        // Ensure discountedPrice is passed correctly during reorder
         discountedPrice: (itemData['discountedPrice'] as num?)?.toDouble(),
         imageUrl: itemData['imageUrl'] as String? ?? '',
         branchIds: [order['restaurantId'] ?? ''],
@@ -612,16 +648,11 @@ class OrderDetailsScreen extends StatelessWidget {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 3)),
     );
+
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Items added to your cart!')),
+      SnackBar(content: Text(AppStrings.get('items_added_to_cart', context))),
     );
   }
-
-  // ... (Keep your existing _contactOnWhatsApp, _showContactUsSheet, _fetchRestaurantGeo, and _callDriver methods as they were) ...
-
-  // Note: For brevity, I am not repeating the helper methods here since they didn't change.
-  // Make sure to keep _contactOnWhatsApp, _showContactUsSheet, _fetchRestaurantGeo, _callDriver
-  // inside this class when you copy-paste.
 
   Future<void> _contactOnWhatsApp({
     required String rawPhoneE164NoPlus,
@@ -634,6 +665,7 @@ class OrderDetailsScreen extends StatelessWidget {
     final webUri = Uri.parse(
       'https://wa.me/$phone?text=${Uri.encodeComponent(message)}',
     );
+
     if (await canLaunchUrl(appUri)) {
       await launchUrl(appUri, mode: LaunchMode.externalApplication);
     } else {
@@ -642,7 +674,6 @@ class OrderDetailsScreen extends StatelessWidget {
   }
 
   void _showContactUsSheet(BuildContext context) {
-    // ... (Keep existing implementation) ...
     final formKey = GlobalKey<FormState>();
     final messageController = TextEditingController();
     final user = FirebaseAuth.instance.currentUser;
@@ -654,34 +685,38 @@ class OrderDetailsScreen extends StatelessWidget {
       backgroundColor: Colors.transparent,
       builder: (context) {
         return Padding(
-          padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
           child: Container(
             padding: const EdgeInsets.all(24),
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius:
-              BorderRadius.only(topLeft: Radius.circular(20), topRight: Radius.circular(20)),
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+              ),
             ),
             child: Wrap(
               runSpacing: 20,
               children: [
-                Text('Contact Support about order #$orderId',
-                    style:
-                    const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                Text(
+                  '${AppStrings.get('contact_support_order', context)}$orderId',
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
                 Form(
                   key: formKey,
                   child: TextFormField(
                     controller: messageController,
                     decoration: InputDecoration(
-                      hintText: 'Describe your issue...',
+                      hintText: AppStrings.get('describe_issue', context),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
                     maxLines: 4,
                     validator: (value) =>
-                    (value == null || value.isEmpty) ? 'Please enter your message' : null,
+                    (value == null || value.isEmpty)
+                        ? AppStrings.get('enter_message', context)
+                        : null,
                   ),
                 ),
                 SizedBox(
@@ -690,9 +725,7 @@ class OrderDetailsScreen extends StatelessWidget {
                     onPressed: () async {
                       if (formKey.currentState!.validate()) {
                         try {
-                          await FirebaseFirestore.instance
-                              .collection('support')
-                              .add({
+                          await FirebaseFirestore.instance.collection('support').add({
                             'userId': user?.uid,
                             'userEmail': user?.email,
                             'orderId': orderId,
@@ -700,16 +733,17 @@ class OrderDetailsScreen extends StatelessWidget {
                             'timestamp': FieldValue.serverTimestamp(),
                             'status': 'pending',
                           });
+
                           if (context.mounted) {
                             Navigator.pop(context);
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Your message has been sent.')),
+                              SnackBar(content: Text(AppStrings.get('message_sent', context))),
                             );
                           }
                         } catch (e) {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Error: $e')),
+                              SnackBar(content: Text('${AppStrings.get('error', context)} $e')),
                             );
                           }
                         }
@@ -719,10 +753,11 @@ class OrderDetailsScreen extends StatelessWidget {
                       backgroundColor: AppColors.primaryBlue,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape:
-                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                    child: const Text('SEND MESSAGE'),
+                    child: Text(AppStrings.get('send_message', context)),
                   ),
                 ),
               ],
@@ -734,8 +769,7 @@ class OrderDetailsScreen extends StatelessWidget {
   }
 
   Future<GeoPoint?> _fetchRestaurantGeo(String branchId) async {
-    final doc =
-    await FirebaseFirestore.instance.collection('Branch').doc(branchId).get();
+    final doc = await FirebaseFirestore.instance.collection('Branch').doc(branchId).get();
     return doc.data()?['address']?['geolocation'] as GeoPoint?;
   }
 
@@ -746,57 +780,58 @@ class OrderDetailsScreen extends StatelessWidget {
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!ok && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open the dialer')),
+          SnackBar(content: Text(AppStrings.get('could_not_open_dialer', context))),
         );
       }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          SnackBar(content: Text('${AppStrings.get('error', context)} $e')),
         );
       }
     }
   }
 
-  // --- CHANGED: Updated Logic in _buildOrderItems ---
-  List<Widget> _buildOrderItems(List<Map<String, dynamic>> items) {
+  List<Widget> _buildOrderItems(BuildContext context, List<Map<String, dynamic>> items) {
     if (items.isEmpty) {
-      return [const Text('No items found in this order.')];
+      return [Text(AppStrings.get('no_items_in_order', context))];
     }
+
+    final isArabic = Provider.of<LanguageProvider>(context).isArabic;
+
     return items.map((item) {
       final price = (item['price'] as num?)?.toDouble() ?? 0.0;
       final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
-
-      // Get discounted price from the item map
       final double? discountedPrice = (item['discountedPrice'] as num?)?.toDouble();
-
-      // Determine effective price: use discounted if valid and lower than original
       final effectivePrice = (discountedPrice != null && discountedPrice > 0 && discountedPrice < price)
           ? discountedPrice
           : price;
-
       final itemTotal = effectivePrice * quantity;
+
+      // Localization Logic
+      final name = item['name'] as String? ?? 'Item';
+      final nameAr = item['name_ar'] as String? ?? '';
+      final displayName = (isArabic && nameAr.isNotEmpty) ? nameAr : name;
 
       return Padding(
         padding: const EdgeInsets.only(bottom: 12.0),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.start, // Align to top
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '$quantity x ${item['name'] ?? 'Item'}',
+                    '$quantity x $displayName', // Uses localized display name
                     style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
                   ),
-                  // Show the unit price breakdown if discounted
                   if (effectivePrice < price)
                     Padding(
                       padding: const EdgeInsets.only(top: 2.0),
                       child: Text(
-                        'Unit Price: QAR ${effectivePrice.toStringAsFixed(2)}',
+                        '${AppStrings.get('unit_price', context)} QAR ${effectivePrice.toStringAsFixed(2)}',
                         style: TextStyle(fontSize: 12, color: Colors.green.shade700),
                       ),
                     ),
@@ -810,7 +845,6 @@ class OrderDetailsScreen extends StatelessWidget {
                   'QAR ${itemTotal.toStringAsFixed(2)}',
                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
                 ),
-                // Show original total crossed out if there was a discount
                 if (effectivePrice < price)
                   Text(
                     'QAR ${(price * quantity).toStringAsFixed(2)}',
@@ -830,7 +864,6 @@ class OrderDetailsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ... (Keep existing build method logic) ...
     final items = (order['items'] as List? ?? []).cast<Map<String, dynamic>>();
     final status = order['status'] as String? ?? 'pending';
     final statusColor = _getStatusColor(status);
@@ -842,7 +875,16 @@ class OrderDetailsScreen extends StatelessWidget {
     final branchId = order['restaurantId'] as String? ?? 'Old_Airport';
     final restaurantGeoFuture = _fetchRestaurantGeo(branchId);
 
-    // ... (Keep the rest of the UI code: liveMapSection, driverDetailsSection, Scaffold, etc.) ...
+    // --- Dynamic Date Formatting for Order Details Screen ---
+    final timestamp = order['timestamp'] as Timestamp?;
+    String formattedDate = '--';
+    if (timestamp != null) {
+      final isArabic = Provider.of<LanguageProvider>(context).isArabic;
+      final locale = isArabic ? 'ar' : 'en';
+      formattedDate = DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
+    }
+    // --------------------------------------------------------
+
     Widget liveMapSection = const SizedBox.shrink();
     if (showMap) {
       liveMapSection = FutureBuilder<GeoPoint?>(
@@ -856,9 +898,7 @@ class OrderDetailsScreen extends StatelessWidget {
               borderRadius: BorderRadius.circular(16),
               clipBehavior: Clip.antiAlias,
               child: LiveTrackingMap(
-                driverRef: FirebaseFirestore.instance
-                    .collection('Drivers')
-                    .doc(riderId),
+                driverRef: FirebaseFirestore.instance.collection('Drivers').doc(riderId),
                 userGeo: userGeo,
                 restaurantGeo: restaurantGeo,
               ),
@@ -870,87 +910,83 @@ class OrderDetailsScreen extends StatelessWidget {
 
     Widget driverDetailsSection = const SizedBox.shrink();
     if (showDriverInfo) {
-      driverDetailsSection =
-          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            stream: FirebaseFirestore.instance
-                .collection('Drivers')
-                .doc(riderId)
-                .snapshots(),
-            builder: (context, snap) {
-              if (!snap.hasData || !(snap.data?.exists ?? false)) {
-                return const SizedBox.shrink();
-              }
-              final data = snap.data!.data()!;
-              final name = (data['name'] as String?)?.trim().isNotEmpty == true
-                  ? (data['name'] as String)
-                  : 'Driver';
-              final phone = (data['phone'] ?? '').toString();
-              final imageUrl = (data['profileImageUrl'] as String?) ?? '';
+      driverDetailsSection = StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance.collection('Drivers').doc(riderId).snapshots(),
+        builder: (context, snap) {
+          if (!snap.hasData || !(snap.data?.exists ?? false)) {
+            return const SizedBox.shrink();
+          }
 
-              return _buildSectionCard(
-                title: 'Driver Details',
+          final data = snap.data!.data()!;
+          final name = (data['name'] as String?)?.trim().isNotEmpty == true
+              ? (data['name'] as String)
+              : AppStrings.get('driver', context);
+          final phone = (data['phone'] ?? '').toString();
+          final imageUrl = (data['profileImageUrl'] as String?) ?? '';
+
+          return _buildSectionCard(
+            context: context,
+            title: AppStrings.get('driver_details', context),
+            children: [
+              Row(
                 children: [
-                  Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 24,
-                        backgroundColor: Colors.grey.shade200,
-                        backgroundImage:
-                        imageUrl.isNotEmpty ? NetworkImage(imageUrl) : null,
-                        child: imageUrl.isEmpty
-                            ? const Icon(Icons.person, color: Colors.grey)
-                            : null,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              name,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              phone.isEmpty ? 'No phone available' : phone,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey.shade700,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      ElevatedButton.icon(
-                        onPressed:
-                        phone.isEmpty ? null : () => _callDriver(phone, context),
-                        icon: const Icon(Icons.phone, size: 18),
-                        label: const Text('CALL'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primaryBlue,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 10,
-                            horizontal: 12,
+                  CircleAvatar(
+                    radius: 24,
+                    backgroundColor: Colors.grey.shade200,
+                    backgroundImage: imageUrl.isNotEmpty ? NetworkImage(imageUrl) : null,
+                    child: imageUrl.isEmpty
+                        ? const Icon(Icons.person, color: Colors.grey)
+                        : null,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          elevation: 0,
+                          overflow: TextOverflow.ellipsis,
                         ),
+                        const SizedBox(height: 4),
+                        Text(
+                          phone.isEmpty ? AppStrings.get('no_phone_available', context) : phone,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey.shade700,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: phone.isEmpty ? null : () => _callDriver(phone, context),
+                    icon: const Icon(Icons.phone, size: 18),
+                    label: Text(AppStrings.get('call', context)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryBlue,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 10,
+                        horizontal: 12,
                       ),
-                    ],
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      elevation: 0,
+                    ),
                   ),
                 ],
-              );
-            },
+              ),
+            ],
           );
+        },
+      );
     }
 
     return Scaffold(
@@ -968,7 +1004,9 @@ class OrderDetailsScreen extends StatelessWidget {
               title: Text(
                 'Order #${orderId.split('-').last.padLeft(3, '0')}',
                 style: const TextStyle(
-                    fontWeight: FontWeight.bold, color: Colors.white),
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
               ),
               centerTitle: true,
               background: Container(color: statusColor),
@@ -996,20 +1034,30 @@ class OrderDetailsScreen extends StatelessWidget {
             padding: const EdgeInsets.all(16.0),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 16.0),
+                    child: Text(
+                      '${AppStrings.get('placed_on', context)} $formattedDate',
+                      style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                    ),
+                  ),
+                ),
                 liveMapSection,
                 if (showDriverInfo) ...[
                   driverDetailsSection,
                   const SizedBox(height: 16),
                 ],
                 _buildSectionCard(
-                  title: 'Order Items',
-                  // Call the UPDATED method here
-                  children: _buildOrderItems(items),
+                  context: context,
+                  title: AppStrings.get('order_items', context),
+                  children: _buildOrderItems(context, items),
                 ),
                 const SizedBox(height: 16),
                 _buildSectionCard(
-                  title: 'Payment Summary',
-                  children: [_buildPaymentSummary()],
+                  context: context,
+                  title: AppStrings.get('payment_summary', context),
+                  children: [_buildPaymentSummary(context)],
                 ),
                 const SizedBox(height: 16),
               ]),
@@ -1021,9 +1069,11 @@ class OrderDetailsScreen extends StatelessWidget {
     );
   }
 
-  // --- Helper Methods (Keep these exactly as they were in your code) ---
-
-  Widget _buildSectionCard({required String title, required List<Widget> children}) {
+  Widget _buildSectionCard({
+    required BuildContext context,
+    required String title,
+    required List<Widget> children,
+  }) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1036,9 +1086,14 @@ class OrderDetailsScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title.toUpperCase(),
-              style: const TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey)),
+          Text(
+            title.toUpperCase(),
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey,
+            ),
+          ),
           const Divider(height: 24),
           ...children,
         ],
@@ -1046,25 +1101,29 @@ class OrderDetailsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildPaymentSummary() {
+  Widget _buildPaymentSummary(BuildContext context) {
     final subtotal = (order['subtotal'] as num?)?.toDouble() ?? 0.0;
     final totalAmount = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
+
     return Column(
       children: [
-        _buildPriceRow('Subtotal', subtotal),
+        _buildPriceRow(context, AppStrings.get('subtotal', context), subtotal),
         const Divider(height: 24),
-        _buildPriceRow('Total', totalAmount, isBold: true),
+        _buildPriceRow(context, AppStrings.get('total', context), totalAmount, isBold: true),
       ],
     );
   }
 
-  Widget _buildPriceRow(String label, double amount, {bool isBold = false}) {
+  Widget _buildPriceRow(BuildContext context, String label, double amount, {bool isBold = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontSize: 15, color: Colors.grey[700])),
+          Text(
+            label,
+            style: TextStyle(fontSize: 15, color: Colors.grey[700]),
+          ),
           Text(
             'QAR ${amount.toStringAsFixed(2)}',
             style: TextStyle(
@@ -1094,13 +1153,16 @@ class OrderDetailsScreen extends StatelessWidget {
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 side: BorderSide(color: Colors.grey.shade300),
               ),
-              child: const Text(
-                'REORDER',
-                style:
-                TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
+              child: Text(
+                AppStrings.get('reorder', context),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
               ),
             ),
           ),
@@ -1108,8 +1170,7 @@ class OrderDetailsScreen extends StatelessWidget {
           Expanded(
             child: ElevatedButton.icon(
               onPressed: () {
-                final dailyOrderNumber =
-                    order['dailyOrderNumber']?.toString() ?? '';
+                final dailyOrderNumber = order['dailyOrderNumber']?.toString() ?? '';
                 const supportNumber = '919152822169';
                 final msg = 'Hello, I need help with order #$dailyOrderNumber';
                 _contactOnWhatsApp(
@@ -1122,13 +1183,14 @@ class OrderDetailsScreen extends StatelessWidget {
                 color: Colors.white,
                 size: 18,
               ),
-              label: const Text('CONTACT US'),
+              label: Text(AppStrings.get('contact_us', context)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF25D366),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 elevation: 0,
               ),
             ),
@@ -1140,12 +1202,17 @@ class OrderDetailsScreen extends StatelessWidget {
 
   Color _getStatusColor(String? status) {
     switch (status?.toLowerCase()) {
-      case 'pending': return Colors.orange.shade600;
-      case 'confirmed': return Colors.blue.shade600;
-      case 'preparing': return Colors.teal.shade600;
+      case 'pending':
+        return Colors.orange.shade600;
+      case 'confirmed':
+        return Colors.blue.shade600;
+      case 'preparing':
+        return Colors.teal.shade600;
       case 'ready':
-      case 'delivered': return Colors.green.shade600;
-      default: return Colors.grey.shade600;
+      case 'delivered':
+        return Colors.green.shade600;
+      default:
+        return Colors.grey.shade600;
     }
   }
 
@@ -1163,8 +1230,8 @@ class LiveTrackingMap extends StatefulWidget {
   const LiveTrackingMap({
     super.key,
     required this.driverRef,
-    required this.userGeo, // customer GeoPoint (nullable)
-    required this.restaurantGeo, // restaurant GeoPoint (nullable)
+    required this.userGeo,
+    required this.restaurantGeo,
   });
 
   final DocumentReference<Map<String, dynamic>> driverRef;
@@ -1186,7 +1253,6 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
     super.initState();
     _map = MapController();
 
-    // Initialize pulse animation for driver marker
     _pulseController = AnimationController(
       duration: const Duration(seconds: 2),
       vsync: this,
@@ -1200,19 +1266,17 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
       curve: Curves.easeInOut,
     ));
 
-    // listen to driver doc for live GPS
     widget.driverRef.snapshots().listen((snap) {
       final data = snap.data();
       final geo = data?['currentLocation'];
       if (geo is GeoPoint) {
         final pos = LatLng(geo.latitude, geo.longitude);
         setState(() => _driverPos = pos);
-        // Schedule after first frame to avoid accessing camera before build
+
         WidgetsBinding.instance.addPostFrameCallback((_) {
           try {
             _map.move(pos, _map.camera.zoom ?? 15);
           } catch (_) {
-            // If camera still not ready on first microtask, try once more
             Future.microtask(() {
               try {
                 _map.move(pos, _map.camera.zoom ?? 15);
@@ -1292,7 +1356,6 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
 
   void _fitAllMarkers() {
     final points = <LatLng>[];
-
     if (_driverPos != null) points.add(_driverPos!);
     if (widget.userGeo != null) {
       points.add(LatLng(widget.userGeo!.latitude, widget.userGeo!.longitude));
@@ -1337,14 +1400,14 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
                 height: 40,
                 child: CircularProgressIndicator(
                   strokeWidth: 3,
-                  valueColor: AlwaysStoppedAnimation<Color>(
+                  valueColor: AlwaysStoppedAnimation(
                     Theme.of(context).primaryColor,
                   ),
                 ),
               ),
               const SizedBox(height: 16),
               Text(
-                'Loading driver location...',
+                AppStrings.get('loading_driver_location', context),
                 style: TextStyle(
                   color: Colors.grey.shade600,
                   fontSize: 14,
@@ -1357,10 +1420,8 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
       );
     }
 
-    // Build the markers with enhanced styling
     final markers = [
       Marker(
-        // Driver marker with pulsing animation
         point: _driverPos!,
         width: 50,
         height: 50,
@@ -1371,7 +1432,6 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
     if (widget.userGeo != null) {
       markers.add(
         Marker(
-          // Customer marker
           point: LatLng(widget.userGeo!.latitude, widget.userGeo!.longitude),
           width: 45,
           height: 45,
@@ -1383,10 +1443,9 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
     if (widget.restaurantGeo != null) {
       markers.add(
         Marker(
-          // Restaurant marker
           point: LatLng(
-              widget.restaurantGeo!.latitude,
-              widget.restaurantGeo!.longitude
+            widget.restaurantGeo!.latitude,
+            widget.restaurantGeo!.longitude,
           ),
           width: 45,
           height: 45,
@@ -1431,8 +1490,6 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
                 MarkerLayer(markers: markers),
               ],
             ),
-
-            // Modern glass-morphism header overlay - Fixed backdrop filter
             Positioned(
               top: 0,
               left: 0,
@@ -1474,7 +1531,7 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                'Live Tracking',
+                                AppStrings.get('live_tracking', context),
                                 style: TextStyle(
                                   color: Colors.grey.shade800,
                                   fontSize: 12,
@@ -1490,35 +1547,28 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
                 ),
               ),
             ),
-
-            // Modern floating action buttons with glass effect
             Positioned(
               right: 12,
               bottom: 12,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Fit all markers button
                   if (markers.length > 1) ...[
                     _modernFloatingButton(
                       icon: Icons.fullscreen,
                       onPressed: _fitAllMarkers,
-                      tooltip: 'Fit all locations',
+                      tooltip: AppStrings.get('fit_all_locations', context),
                     ),
                     const SizedBox(height: 8),
                   ],
-
-                  // Center on driver button
                   _modernFloatingButton(
                     icon: Icons.my_location,
                     onPressed: _centerOnDriver,
-                    tooltip: 'Center on driver',
+                    tooltip: AppStrings.get('center_on_driver', context),
                   ),
                 ],
               ),
             ),
-
-            // Modern legend at bottom left
             Positioned(
               left: 12,
               bottom: 12,
@@ -1538,14 +1588,26 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _legendItem(Icons.directions_car_filled, Colors.blue, 'Driver'),
+                    _legendItem(
+                      Icons.directions_car_filled,
+                      Colors.blue,
+                      AppStrings.get('driver', context),
+                    ),
                     if (widget.userGeo != null) ...[
                       const SizedBox(width: 8),
-                      _legendItem(Icons.home, Colors.green, 'You'),
+                      _legendItem(
+                        Icons.home,
+                        Colors.green,
+                        AppStrings.get('you', context),
+                      ),
                     ],
                     if (widget.restaurantGeo != null) ...[
                       const SizedBox(width: 8),
-                      _legendItem(Icons.restaurant, Colors.orange, 'Restaurant'),
+                      _legendItem(
+                        Icons.restaurant,
+                        Colors.orange,
+                        AppStrings.get('restaurant', context),
+                      ),
                     ],
                   ],
                 ),

@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter_localizations/flutter_localizations.dart'; // Added for localization
 import 'package:mitra_da_dhaba/Screens/splash_screen.dart';
 import 'package:mitra_da_dhaba/Screens/welcome_screen.dart';
 import 'Services/NotificationService.dart';
@@ -16,11 +17,12 @@ import 'Widgets/appbar.dart';
 import 'Widgets/authentication.dart';
 import 'Widgets/bottom_nav.dart';
 import 'Screens/cartScreen.dart';
-import 'Widgets/Offline_Screen.dart'; // contains OfflineScreen UI only
+import 'Widgets/Offline_Screen.dart';
 import 'firebase_options.dart';
 import 'Widgets/models.dart';
 import 'Services/AddressService.dart';
 import 'Services/BranchService.dart';
+import 'Services/language_provider.dart'; // Make sure you created this file as per previous steps
 
 const Color kChipActive = Color(0xFF1E88E5);
 
@@ -47,6 +49,8 @@ Future<void> main() async {
         ),
         // 3️⃣ Your cart logic
         ChangeNotifierProvider<CartService>(create: (_) => CartService()),
+        // 4️⃣ Language Provider (New)
+        ChangeNotifierProvider<LanguageProvider>(create: (_) => LanguageProvider()),
       ],
       // No ConnectivityGate here; overlay is added inside MaterialApp.builder
       child: const MyApp(),
@@ -83,32 +87,52 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Mitra Da Dhaba',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: Colors.white,
-        primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
-        fontFamily: 'Inter',
-        bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-          selectedItemColor: AppColors.primaryBlue,
-          unselectedItemColor: Colors.grey,
-        ),
-      ),
-      // Inject connectivity overlay INSIDE MaterialApp so OfflineScreen has Theme/MediaQuery
-      builder: (context, child) {
-        final media = MediaQuery.of(context);
-        final clamped = media.textScaleFactor.clamp(0.9, 1.1);
-        final content = MediaQuery(
-          data: media.copyWith(textScaleFactor: clamped),
-          child: child ?? const SizedBox.shrink(),
+    // Wrap MaterialApp with Consumer to rebuild when language changes
+    return Consumer<LanguageProvider>(
+      builder: (context, languageProvider, child) {
+        return MaterialApp(
+          title: 'Mitra Da Dhaba',
+          debugShowCheckedModeBanner: false,
+
+          // --- Localization Setup ---
+          locale: languageProvider.appLocale,
+          supportedLocales: const [
+            Locale('en', 'US'),
+            Locale('ar', 'AE'),
+          ],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          // --------------------------
+
+          theme: ThemeData(
+            useMaterial3: true,
+            scaffoldBackgroundColor: Colors.white,
+            primarySwatch: Colors.blue,
+            visualDensity: VisualDensity.adaptivePlatformDensity,
+            // Switch font based on language if desired (e.g., Cairo for Arabic)
+            fontFamily: languageProvider.isArabic ? 'Cairo' : 'Inter',
+            bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+              selectedItemColor: AppColors.primaryBlue,
+              unselectedItemColor: Colors.grey,
+            ),
+          ),
+          // Inject connectivity overlay INSIDE MaterialApp so OfflineScreen has Theme/MediaQuery
+          builder: (context, child) {
+            final media = MediaQuery.of(context);
+            final clamped = media.textScaleFactor.clamp(0.9, 1.1);
+            final content = MediaQuery(
+              data: media.copyWith(textScaleFactor: clamped),
+              child: child ?? const SizedBox.shrink(),
+            );
+            return ConnectivityOverlay(child: content);
+          },
+          // AppLoader decides Welcome/Login/MainApp instantly without transitions
+          home: AppLoader(initializationFuture: _initializationFuture),
         );
-        return ConnectivityOverlay(child: content);
       },
-      // AppLoader decides Welcome/Login/MainApp instantly without transitions
-      home: AppLoader(initializationFuture: _initializationFuture),
     );
   }
 }

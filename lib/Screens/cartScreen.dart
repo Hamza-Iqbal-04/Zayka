@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:ui';
 import 'package:geolocator/geolocator.dart';
 import 'package:myfatoorah_flutter/MFModels.dart';
+import 'package:provider/provider.dart';
 import '../Screens/HomeScreen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -18,6 +19,7 @@ import '../Widgets/models.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../Services/PaymentService.dart';
+import '../Services/language_provider.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({Key? key}) : super(key: key);
@@ -161,7 +163,7 @@ class _CartScreenState extends State<CartScreen> {
           children: [
             Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 24),
             const SizedBox(width: 8),
-            Text('Item Unavailable', style: AppTextStyles.headline2),
+            Text(AppStrings.get('item_unavailable_title', context), style: AppTextStyles.headline2),
           ],
         ),
         content: Column(
@@ -169,7 +171,7 @@ class _CartScreenState extends State<CartScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'The following items are no longer available:',
+              AppStrings.get('items_no_longer_available', context),
               style: AppTextStyles.bodyText1,
             ),
             const SizedBox(height: 12),
@@ -192,7 +194,7 @@ class _CartScreenState extends State<CartScreen> {
             )),
             const SizedBox(height: 16),
             Text(
-              'Would you like to remove these items from your cart?',
+              AppStrings.get('remove_items_question', context),
               style: AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade600),
             ),
           ],
@@ -207,7 +209,7 @@ class _CartScreenState extends State<CartScreen> {
               Navigator.pop(context);
             },
             child: Text(
-              'Keep Items',
+              AppStrings.get('keep_items', context),
               style: AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey),
             ),
           ),
@@ -220,7 +222,7 @@ class _CartScreenState extends State<CartScreen> {
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
-            child: Text('Remove All', style: AppTextStyles.buttonText),
+            child: Text(AppStrings.get('remove_all', context), style: AppTextStyles.buttonText),
           ),
         ],
       ),
@@ -238,8 +240,8 @@ class _CartScreenState extends State<CartScreen> {
       SnackBar(
         content: Text(
           outOfStockItems.length == 1
-              ? '${outOfStockItems.first.name} removed (out of stock)'
-              : '${outOfStockItems.length} items removed (out of stock)',
+              ? '${outOfStockItems.first.name} ${AppStrings.get('removed_out_of_stock', context)}'
+              : '${outOfStockItems.length} ${AppStrings.get('items_removed_out_of_stock', context)}',
         ),
         backgroundColor: Colors.orange,
         behavior: SnackBarBehavior.floating,
@@ -500,7 +502,6 @@ class _CartScreenState extends State<CartScreen> {
 
   Future<void> _loadDrinks() async {
     if (!mounted) return;
-
     setState(() => _isLoadingDrinks = true);
 
     try {
@@ -535,10 +536,12 @@ class _CartScreenState extends State<CartScreen> {
         return MenuItem(
           id: d.id,
           name: data['name'] ?? 'Unknown Drink',
+          nameAr: data['name_ar'] ?? '',  // ✅ ADD THIS LINE
           price: (data['price'] ?? 0).toDouble(),
           discountedPrice: data['discountedPrice']?.toDouble(),
           imageUrl: data['imageUrl'] ?? '',
           description: data['description'] ?? '',
+          descriptionAr: data['description_ar'] ?? '',  // ✅ ADD THIS TOO
           categoryId: data['categoryId'] ?? '',
           branchIds: branchIds,
           isAvailable: data['isAvailable'] ?? true,
@@ -741,6 +744,17 @@ class _CartScreenState extends State<CartScreen> {
   double _toRadians(double degrees) {
     return degrees * pi / 180;
   }
+  String _getPaymentTypeDisplay(BuildContext context, String paymentType) {
+    switch (paymentType) {
+      case 'Cash on Delivery':
+        return AppStrings.get('cash_on_delivery', context);
+      case 'Online Payment':
+        return AppStrings.get('online_payment', context);
+      default:
+        return paymentType;
+    }
+  }
+
 
   Future<void> _loadUserAddress(String userEmail) async {
     if (_isLoadingAddress) return;
@@ -795,7 +809,7 @@ class _CartScreenState extends State<CartScreen> {
     // 1. Basic Validations (Delivery Range)
     if (_orderType == 'delivery' && _isOutOfDeliveryRange) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Sorry, we do not deliver to your location. Maximum delivery range is $_noDeliveryRange km.'),
+        content: Text('${AppStrings.get('delivery_range_error', context)} $_noDeliveryRange ${AppStrings.get('km', context)}.'),
         backgroundColor: Colors.red,
       ));
       return;
@@ -829,21 +843,21 @@ class _CartScreenState extends State<CartScreen> {
       await cartService.validateCartStock(_currentBranchIds);
       setState(() => _isValidatingStock = false);
 
-      if (cartService.items.isEmpty) throw Exception("Your cart is empty");
+      if (cartService.items.isEmpty) throw Exception(AppStrings.get("your_cart_empty", context));
 
       // 3. User & Address Data Preparation
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null || user.email == null) throw Exception("User not authenticated");
+      if (user == null || user.email == null) throw Exception(AppStrings.get("user_not_authenticated", context));
 
       Map<String, dynamic>? defaultAddress;
       if (_orderType == 'delivery') {
         final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
-        if (!userDoc.exists) throw Exception("User document not found");
+        if (!userDoc.exists) throw Exception(AppStrings.get("user_doc_not_found", context));
 
         final userData = userDoc.data() as Map<String, dynamic>;
         final addresses = ((userData['address'] as List?) ?? []).map((a) => Map<String, dynamic>.from(a as Map)).toList();
 
-        if (addresses.isEmpty) throw Exception("No delivery address set");
+        if (addresses.isEmpty) throw Exception(AppStrings.get("no_delivery_address", context));
         defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true, orElse: () => addresses[0]);
       }
 
@@ -883,7 +897,7 @@ class _CartScreenState extends State<CartScreen> {
         // --- ONLINE PAYMENT FLOW (MyFatoorah) ---
 
         if (_selectedMfPaymentMethod?.paymentMethodId == null) {
-          throw Exception("Invalid Payment Method Selected");
+          throw Exception(AppStrings.get("invalid_payment_method", context));
         }
 
         await PaymentService.executePayment(
@@ -959,7 +973,7 @@ class _CartScreenState extends State<CartScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('You might also like', style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+            Text(AppStrings.get('you_might_also_like', context), style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
             const SizedBox(height: 16),
             SizedBox(
               height: 260,
@@ -1018,7 +1032,7 @@ class _CartScreenState extends State<CartScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('You might also like', style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+            Text(AppStrings.get('you_might_also_like', context), style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(16),
@@ -1027,7 +1041,7 @@ class _CartScreenState extends State<CartScreen> {
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Text(
-                'No drinks available for selected branches',
+                AppStrings.get('no_drinks_available', context),
                 style: AppTextStyles.bodyText1,
                 textAlign: TextAlign.center,
               ),
@@ -1042,7 +1056,7 @@ class _CartScreenState extends State<CartScreen> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-          child: Text('You might also like', style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+          child: Text(AppStrings.get('you_might_also_like', context), style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
         ),
         SizedBox(
           height: 260,
@@ -1076,7 +1090,7 @@ class _CartScreenState extends State<CartScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('DISTANCE TO BRANCH',
+                    Text(AppStrings.get('distance_to_branch', context),
                       style: AppTextStyles.bodyText2.copyWith(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
@@ -1115,7 +1129,7 @@ class _CartScreenState extends State<CartScreen> {
           children: [
             const Icon(Icons.error_outline_rounded, color: Colors.red, size: 28),
             const SizedBox(width: 10),
-            Text('Payment Failed', style: AppTextStyles.headline2),
+            Text(AppStrings.get('payment_failed', context), style: AppTextStyles.headline2),
           ],
         ),
         content: Column(
@@ -1192,8 +1206,8 @@ class _CartScreenState extends State<CartScreen> {
                   border: Border.all(color: Colors.grey.shade300, width: 0.5),
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: Image.asset('assets/applemaps.png', width: 28, height: 28, fit: BoxFit.cover)
+                    borderRadius: BorderRadius.circular(4),
+                    child: Image.asset('assets/applemaps.png', width: 28, height: 28, fit: BoxFit.cover)
                 ),
               ),
               const SizedBox(width: 12),
@@ -1245,7 +1259,7 @@ class _CartScreenState extends State<CartScreen> {
 
       if (!branchDoc.exists) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Branch information not found')),
+          SnackBar(content: Text(AppStrings.get('branch_info_not_found', context))),
         );
         return;
       }
@@ -1255,7 +1269,7 @@ class _CartScreenState extends State<CartScreen> {
 
       if (addressData == null || addressData['geolocation'] == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Branch location not available')),
+          SnackBar(content: Text(AppStrings.get('branch_location_unavailable', context))),
         );
         return;
       }
@@ -1276,13 +1290,13 @@ class _CartScreenState extends State<CartScreen> {
         await launch(url);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open maps app')),
+          SnackBar(content: Text(AppStrings.get('could_not_open_maps', context))),
         );
       }
     } catch (e) {
       debugPrint('Error opening navigation: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error opening navigation')),
+        SnackBar(content: Text(AppStrings.get('error_opening_navigation', context))),
       );
     }
   }
@@ -1388,7 +1402,7 @@ class _CartScreenState extends State<CartScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  'Your Items',
+                  AppStrings.get('your_items', context),
                   style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey),
                 ),
               ),
@@ -1435,7 +1449,7 @@ class _CartScreenState extends State<CartScreen> {
                 cartService.removeFromCart(item.id);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('${item.name} removed from cart.'),
+                    content: Text('${item.name} ${AppStrings.get('item_removed_from_cart', context)}.'),
                     behavior: SnackBarBehavior.floating,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     action: SnackBarAction(
@@ -1493,24 +1507,24 @@ class _CartScreenState extends State<CartScreen> {
             const SizedBox(height: 16),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _buildBillRow('Subtotal', cartService.totalAmount),
+              child: _buildBillRow(AppStrings.get('subtotal', context), cartService.totalAmount),
             ),
             if (_orderType == 'delivery' && deliveryFee > 0 && cartService.items.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _buildBillRow('Delivery Fee', deliveryFee),
+                child: _buildBillRow(AppStrings.get('delivery_fee', context), deliveryFee),
               ),
             if (cartService.couponDiscount > 0) ...[
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _buildBillRow('Coupon Discount', -cartService.couponDiscount, isDiscount: true),
+                child: _buildBillRow(AppStrings.get('discount', context), -cartService.couponDiscount, isDiscount: true),
               ),
               const Divider(height: 24, thickness: 0.5),
             ],
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: _buildBillRow(
-                'Total Amount',
+                AppStrings.get('total', context),
                 cartService.items.isEmpty
                     ? 0.0
                     : (cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0))
@@ -1535,13 +1549,13 @@ class _CartScreenState extends State<CartScreen> {
         isCartEmpty || hasUnavailableItems ||
         (_orderType == 'delivery' && _isOutOfDeliveryRange);
 
-    String buttonText = 'PLACE ORDER';
+    String buttonText = AppStrings.get('checkout', context);
     if (_isValidatingStock) {
-      buttonText = 'CHECKING STOCK...';
+      buttonText = AppStrings.get('checking_stock', context);
     } else if (_orderType == 'delivery' && _isOutOfDeliveryRange) {
-      buttonText = 'OUTSIDE DELIVERY RANGE';
+      buttonText = AppStrings.get('outside_delivery_range', context);
     } else if (hasUnavailableItems) {
-      buttonText = 'UNAVAILABLE ITEMS IN CART';
+      buttonText = AppStrings.get('unavailable_items_in_cart', context);
     }
 
     return SizedBox(
@@ -1567,7 +1581,7 @@ class _CartScreenState extends State<CartScreen> {
             ),
             const SizedBox(width: 12),
             Text(
-              _isValidatingStock ? 'CHECKING STOCK...' : 'PROCESSING...',
+              _isValidatingStock ? AppStrings.get('checking_stock', context) : AppStrings.get('processing', context),
               style: AppTextStyles.buttonText.copyWith(color: AppColors.white),
             ),
           ],
@@ -1592,7 +1606,7 @@ class _CartScreenState extends State<CartScreen> {
 
   AppBar _buildAppBar(CartService cartService) {
     return AppBar(
-      title: Text('My Cart', style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+      title: Text(AppStrings.get('cart_title', context), style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
       backgroundColor: AppColors.white,
       elevation: 0,
       centerTitle: true,
@@ -1621,11 +1635,11 @@ class _CartScreenState extends State<CartScreen> {
             Icon(Icons.shopping_cart_outlined,
                 size: 120, color: AppColors.primaryBlue.withOpacity(0.15)),
             const SizedBox(height: 24),
-            Text('Your Cart is Empty',
+            Text(AppStrings.get('cart_empty', context),
                 style: AppTextStyles.headline1.copyWith(color: AppColors.darkGrey, fontSize: 24)),
             const SizedBox(height: 12),
             Text(
-              'Looks like you haven\'t added anything to your cart yet.',
+              AppStrings.get('cart_empty_sub', context),
               textAlign: TextAlign.center,
               style: AppTextStyles.bodyText1.copyWith(color: Colors.grey.shade600),
             ),
@@ -1677,7 +1691,7 @@ class _CartScreenState extends State<CartScreen> {
 
           if (_orderType == 'delivery' && _distanceToBranch > 0) ...[
             const Divider(height: 16, thickness: 0.5),
-            _buildDeliveryRangeInfo(),
+            buildDeliveryRangeInfo(),
           ],
 
           const Divider(height: 24, thickness: 0.5),
@@ -1689,18 +1703,18 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Widget _buildDeliveryRangeInfo() {
+  Widget buildDeliveryRangeInfo() {
     String statusText;
     Color statusColor;
 
     if (_isOutOfDeliveryRange) {
-      statusText = 'Outside delivery range ($_noDeliveryRange km)';
+      statusText = "${AppStrings.get('delivery_range_error', context)} $_noDeliveryRange ${AppStrings.get('km', context)}";
       statusColor = Colors.red;
     } else if (deliveryFee == 0) {
-      statusText = 'Free delivery (within $_freeDeliveryRange km)';
+      statusText = "${AppStrings.get('free_delivery_within', context)} $_freeDeliveryRange ${AppStrings.get('kms', context)}";  // ✅ Changed
       statusColor = Colors.green;
     } else {
-      statusText = '${_distanceToBranch.toStringAsFixed(1)} km from branch';
+      statusText = "${_distanceToBranch.toStringAsFixed(1)} ${AppStrings.get('km', context)} ${AppStrings.get('from_branch', context)}";
       statusColor = AppColors.darkGrey;
     }
 
@@ -1728,6 +1742,7 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
+
   Widget _buildPaymentSection() {
     return InkWell(
       onTap: _showPaymentMethodsBottomSheet,
@@ -1742,7 +1757,7 @@ class _CartScreenState extends State<CartScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('PAYMENT METHOD',
+                  Text(AppStrings.get('payment_method', context),
                     style: AppTextStyles.bodyText2.copyWith(
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
@@ -1789,7 +1804,7 @@ class _CartScreenState extends State<CartScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  'Delivery',
+                  AppStrings.get('delivery', context),
                   textAlign: TextAlign.center,
                   style: AppTextStyles.bodyText1.copyWith(
                     color: _orderType == 'delivery' ? AppColors.white : AppColors.darkGrey,
@@ -1809,7 +1824,7 @@ class _CartScreenState extends State<CartScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  'Pickup',
+                  AppStrings.get('pickup', context),
                   textAlign: TextAlign.center,
                   style: AppTextStyles.bodyText1.copyWith(
                     color: _orderType == 'pickup' ? AppColors.white : AppColors.darkGrey,
@@ -1846,19 +1861,24 @@ class _CartScreenState extends State<CartScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('PICK UP FROM',
+                      Text(AppStrings.get('pick_up_from', context),
                           style: AppTextStyles.bodyText2.copyWith(
                               fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
                       const SizedBox(height: 4),
                       Text(
-                        _isFindingNearestBranch ? 'Finding nearest branch…' : _getBranchesDisplayName(_currentBranchIds),
-                        style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w600, color: AppColors.darkGrey),
+                        _isFindingNearestBranch
+                            ? AppStrings.get('finding_nearest_branch_loading', context)  // ✅ Changed from hardcoded
+                            : _getBranchesDisplayName(_currentBranchIds),
+                        style: AppTextStyles.bodyText1.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.darkGrey,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       if (_isDefaultNearest && !_isFindingNearestBranch)
                         Text(
-                          'Nearest to your address',
+                          AppStrings.get('nearest_to_address', context),
                           style: AppTextStyles.bodyText2.copyWith(color: Colors.green, fontSize: 11),
                         ),
                     ],
@@ -1879,7 +1899,7 @@ class _CartScreenState extends State<CartScreen> {
   Widget _buildAddressSection() {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.email == null) {
-      return const Text('Please log in to set an address.');
+      return  Text(AppStrings.get('please_login_address', context));;
     }
 
     if (_cachedAddress == null && !_isLoadingAddress) {
@@ -1908,7 +1928,7 @@ class _CartScreenState extends State<CartScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('DELIVER TO',
+                Text(AppStrings.get('deliver_to', context),
                   style: AppTextStyles.bodyText2.copyWith(
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
@@ -1917,10 +1937,10 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Loading address...',
+                  AppStrings.get('loading_address', context),  // ✅ Changed from hardcoded
                   style: AppTextStyles.bodyText1.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.darkGrey
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.darkGrey,
                   ),
                 ),
               ],
@@ -1949,7 +1969,7 @@ class _CartScreenState extends State<CartScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('DELIVER TO',
+                  Text(AppStrings.get('deliver_to', context),
                     style: AppTextStyles.bodyText2.copyWith(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
@@ -1958,7 +1978,7 @@ class _CartScreenState extends State<CartScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Set Delivery Address',
+                    AppStrings.get('set_delivery_address', context),
                     style: AppTextStyles.bodyText1.copyWith(
                         fontWeight: FontWeight.w600,
                         color: AppColors.darkGrey
@@ -2001,7 +2021,7 @@ class _CartScreenState extends State<CartScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('DELIVER TO',
+                  Text(AppStrings.get('deliver_to', context),
                     style: AppTextStyles.bodyText2.copyWith(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
@@ -2040,9 +2060,14 @@ class _CartScreenState extends State<CartScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('EST. ${_orderType.toUpperCase()} TIME',
-                    style: AppTextStyles.bodyText2.copyWith(
-                        fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
+                Text(
+                  "${AppStrings.get('est', context)} ${_orderType == 'delivery' ? AppStrings.get('delivery', context) : AppStrings.get('pickup', context)} ${AppStrings.get('time', context)}",  // ✅ Changed
+                  style: AppTextStyles.bodyText2.copyWith(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    color: Colors.grey,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 Text(
                   _estimatedTime,
@@ -2050,8 +2075,11 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 if (_orderType == 'pickup' && !_isFindingNearestBranch)
                   Text(
-                    'from ${_getBranchesDisplayName(_currentBranchIds)}',
-                    style: AppTextStyles.bodyText2.copyWith(color: Colors.green, fontSize: 11),
+                    "${AppStrings.get('from', context)} ${_getBranchesDisplayName(_currentBranchIds)}",  // ✅ Changed "from" text
+                    style: AppTextStyles.bodyText2.copyWith(
+                      color: Colors.green,
+                      fontSize: 11,
+                    ),
                   ),
               ],
             ),
@@ -2065,13 +2093,19 @@ class _CartScreenState extends State<CartScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Special Instructions', style: AppTextStyles.headline2.copyWith(fontSize: 18, color: AppColors.darkGrey)),
+        Text(
+          AppStrings.get('special_instructions', context),  // ✅ Changed from hardcoded
+          style: AppTextStyles.headline2.copyWith(
+            fontSize: 18,
+            color: AppColors.darkGrey,
+          ),
+        ),
         const SizedBox(height: 12),
         TextField(
           controller: _notesController,
           maxLines: 3,
           decoration: InputDecoration(
-            hintText: 'e.g. "No onions", "Extra spicy"...',
+            hintText: AppStrings.get('notes_placeholder', context),
             hintStyle: AppTextStyles.bodyText2,
             filled: true,
             fillColor: AppColors.white,
@@ -2126,7 +2160,7 @@ class _CartScreenState extends State<CartScreen> {
             children: [
               const Icon(Icons.discount_outlined, color: AppColors.primaryBlue),
               const SizedBox(width: 12),
-              Expanded(child: Text('Apply Coupon', style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w500, color: AppColors.primaryBlue))),
+              Expanded(child: Text(AppStrings.get('apply_coupon', context), style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w500, color: AppColors.primaryBlue))),
               const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.primaryBlue),
             ],
           ),
@@ -2142,8 +2176,8 @@ class _CartScreenState extends State<CartScreen> {
         fontSize: isTotal ? 18 : 16);
 
     String amountText;
-    if (label == 'Delivery Fee' && amount == 0) {
-      amountText = 'FREE';
+    if (label == AppStrings.get('delivery_fee', context) && amount == 0) {
+      amountText = AppStrings.get('free', context).toUpperCase();
     } else {
       amountText = isDiscount ? '- QAR ${amount.abs().toStringAsFixed(2)}' : 'QAR ${amount.toStringAsFixed(2)}';
     }
@@ -2158,7 +2192,7 @@ class _CartScreenState extends State<CartScreen> {
             amountText,
             style: style.copyWith(
               fontWeight: isTotal ? FontWeight.bold : FontWeight.w600,
-              color: label == 'Delivery Fee' && amount == 0 ? Colors.green : null,
+              color: label == AppStrings.get('delivery_fee', context) && amount == 0 ? Colors.green : null,
             ),
           ),
         ],
@@ -2172,26 +2206,42 @@ class _CartScreenState extends State<CartScreen> {
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('Clear Cart?', style: AppTextStyles.headline2),
-        content: Text('This will remove all items from your cart.', style: AppTextStyles.bodyText1),
+        title: Text(
+          AppStrings.get('clear_cart_title', context),
+          style: AppTextStyles.headline2,
+        ),
+        content: Text(
+          AppStrings.get('clear_cart_message', context),
+          style: AppTextStyles.bodyText1,
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey)),
+            child: Text(
+              AppStrings.get('cancel', context),
+              style: AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey),
+            ),
           ),
           TextButton(
             onPressed: () {
               cartService.clearCart();
               // Also clear notified items when cart is cleared
-              _notifiedOutOfStockItems.clear();
+              notifiedOutOfStockItems.clear();
               Navigator.pop(context);
             },
-            child: Text('Clear', style: AppTextStyles.bodyText1.copyWith(color: Colors.red, fontWeight: FontWeight.bold)),
+            child: Text(
+              AppStrings.get('clear', context),
+              style: AppTextStyles.bodyText1.copyWith(
+                color: Colors.red,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
     );
   }
+
 
   void _showPaymentMethodsBottomSheet() {
     final cartService = CartService();
@@ -2249,7 +2299,7 @@ class _CartScreenState extends State<CartScreen> {
                       )
                   ),
                   const SizedBox(height: 20),
-                  Text('Select Payment Method', style: AppTextStyles.headline2),
+                  Text(AppStrings.get('select_payment_method', context), style: AppTextStyles.headline2),
                   const SizedBox(height: 16),
 
                   // 1. Cash on Delivery Option
@@ -2358,10 +2408,16 @@ class _CartScreenState extends State<CartScreen> {
           children: [
             Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
             const SizedBox(height: 20),
-            Text('Select Pickup Branch', style: AppTextStyles.headline2),
+            Text(
+              AppStrings.get('select_pickup_branch', context),  // ✅ Changed from hardcoded
+              style: AppTextStyles.headline2,
+            ),
             const SizedBox(height: 16),
             if (_allBranches.isEmpty)
-              Padding(padding: const EdgeInsets.symmetric(vertical: 32), child: Text('No active branches available', style: AppTextStyles.bodyText2))
+              Padding(padding: const EdgeInsets.symmetric(vertical: 32), child: Text(
+                AppStrings.get('no_branches_available', context),  // ✅ Changed from hardcoded
+                style: AppTextStyles.bodyText2,
+              ),)
             else
               ..._allBranches.map((branch) => ListTile(
                 leading: CircleAvatar(
@@ -2501,10 +2557,16 @@ class _CartScreenState extends State<CartScreen> {
                 children: [
                   Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
                   const SizedBox(height: 20),
-                  Text('Select Delivery Address', style: AppTextStyles.headline2),
+                  Text(
+                    AppStrings.get('select_delivery_address', context),  // ✅ Changed from hardcoded
+                    style: AppTextStyles.headline2,
+                  ),
                   const SizedBox(height: 16),
                   if (addresses.isEmpty)
-                    Padding(padding: const EdgeInsets.symmetric(vertical: 32), child: Text('No addresses saved yet', style: AppTextStyles.bodyText2))
+                    Padding(padding: const EdgeInsets.symmetric(vertical: 32), child: Text(
+                      AppStrings.get('no_addresses_saved', context),  // ✅ Changed from hardcoded
+                      style: AppTextStyles.bodyText2,
+                    ),)
                   else
                     ...addresses.asMap().entries.map((entry) {
                       final address = entry.value;
@@ -2621,6 +2683,7 @@ class _CartScreenState extends State<CartScreen> {
         return {
           'itemId': item.id,
           'name': item.name,
+          'name_ar': item.nameAr,
           'quantity': item.quantity,
           'price': item.price,
           'discountedPrice': item.discountedPrice,
@@ -2701,7 +2764,7 @@ class _CartScreenState extends State<CartScreen> {
           children: [
             const Icon(Icons.check_circle, color: AppColors.primaryBlue, size: 60),
             const SizedBox(height: 16),
-            Text('Order Confirmed!', style: AppTextStyles.headline2),
+            Text(AppStrings.get('order_confirmed', context), style: AppTextStyles.headline2),
             const SizedBox(height: 8),
             Text('Your order has been placed successfully', textAlign: TextAlign.center, style: AppTextStyles.bodyText1),
             const SizedBox(height: 8),
@@ -2836,7 +2899,7 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
           children: [
             Icon(Icons.inventory_2_outlined, color: Colors.orange, size: 24),
             const SizedBox(width: 8),
-            Text('Item Unavailable', style: AppTextStyles.headline2),
+            Text(AppStrings.get('item_unavailable_title', context), style: AppTextStyles.headline2),
           ],
         ),
         content: Column(
@@ -2902,6 +2965,10 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
     final item = widget.item;
     final bool hasDiscount = item.discountedPrice != null;
     final double displayPrice = hasDiscount ? item.discountedPrice! : item.price;
+    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    final itemName = isArabic && (item.nameAr.isNotEmpty ?? false)
+        ? item.nameAr
+        : item.name;
 
     return Dismissible(
       key: ValueKey(item.id),
@@ -2987,7 +3054,7 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
                     children: [
                       Expanded(
                         child: Text(
-                          item.name,
+                          itemName,
                           style: AppTextStyles.bodyText1.copyWith(
                             fontWeight: FontWeight.bold,
                             color: _isItemAvailable ? AppColors.darkGrey : Colors.grey,
@@ -3216,18 +3283,19 @@ class _DrinkCard extends StatefulWidget {
 }
 
 class _DrinkCardState extends State<_DrinkCard> {
-  void _updateDrinkQuantity(int change) {
+  void updateDrinkQuantity(int change) {
     final cartService = CartService();
     final currentItem = cartService.items.firstWhere(
-            (item) => item.id == widget.drink.id,
-        orElse: () => CartModel(
-          id: widget.drink.id,
-          name: widget.drink.name,
-          imageUrl: widget.drink.imageUrl,
-          price: widget.drink.price,
-          discountedPrice: widget.drink.discountedPrice,
-          quantity: 0,
-        )
+          (item) => item.id == widget.drink.id,
+      orElse: () => CartModel(
+        id: widget.drink.id,
+        name: widget.drink.name,
+        nameAr: widget.drink.nameAr,  // Make sure this is included
+        imageUrl: widget.drink.imageUrl,
+        price: widget.drink.price,
+        discountedPrice: widget.drink.discountedPrice,
+        quantity: 0,
+      ),
     );
 
     // Check if item is available before any quantity change
@@ -3235,7 +3303,7 @@ class _DrinkCardState extends State<_DrinkCard> {
     if (!isAvailable) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${widget.drink.name} is not available in selected branch'),
+          content: Text("${widget.drink.name} is not available in selected branch"),
           backgroundColor: Colors.orange,
         ),
       );
@@ -3243,7 +3311,6 @@ class _DrinkCardState extends State<_DrinkCard> {
     }
 
     int newQuantity = currentItem.quantity + change;
-
     if (newQuantity > 0) {
       if (currentItem.quantity == 0) {
         cartService.addToCart(widget.drink, quantity: 1);
@@ -3253,71 +3320,6 @@ class _DrinkCardState extends State<_DrinkCard> {
     } else {
       cartService.removeFromCart(widget.drink.id);
     }
-  }
-
-  Widget _buildAddButton(MenuItem item, String currentBranchId, Function(int) onUpdateQuantity, int currentQuantity) {
-    final isAvailable = item.isAvailableInBranch(currentBranchId);
-
-    // If item is not available, show OUT OF STOCK regardless of current quantity
-    if (!isAvailable) {
-      return SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: null,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.grey.shade400,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            padding: const EdgeInsets.symmetric(vertical: 12),
-          ),
-          child: const Text(
-            'OUT OF STOCK',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-      );
-    }
-
-    // Item is available, show normal quantity controls
-    return currentQuantity == 0
-        ? SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: () => onUpdateQuantity(1),
-        icon: const Icon(Icons.add_shopping_cart, size: 18),
-        label: Text('Add', style: AppTextStyles.buttonText.copyWith(fontSize: 14)),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primaryBlue,
-          foregroundColor: AppColors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          padding: const EdgeInsets.symmetric(vertical: 8),
-        ),
-      ),
-    )
-        : Container(
-      height: 40,
-      decoration: BoxDecoration(color: AppColors.primaryBlue, borderRadius: BorderRadius.circular(10)),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          IconButton(
-            onPressed: () => onUpdateQuantity(-1),
-            icon: const Icon(Icons.remove, color: AppColors.white, size: 20),
-          ),
-          Text(
-            currentQuantity.toString(),
-            style: AppTextStyles.buttonText.copyWith(color: AppColors.white),
-          ),
-          IconButton(
-            onPressed: () => onUpdateQuantity(1),
-            icon: const Icon(Icons.add, color: AppColors.white, size: 20),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -3341,6 +3343,9 @@ class _DrinkCardState extends State<_DrinkCard> {
         int quantity = cartItem.quantity;
         final isAvailable = widget.drink.isAvailableInBranch(widget.currentBranchIds.first);
 
+        // ✅ ADD THIS LINE - Get localized name
+        final drinkName = widget.drink.getLocalizedName(context);
+
         return Container(
           width: 160,
           margin: const EdgeInsets.only(right: 16),
@@ -3358,6 +3363,7 @@ class _DrinkCardState extends State<_DrinkCard> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Image Section
               Expanded(
                 child: ClipRRect(
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
@@ -3370,7 +3376,11 @@ class _DrinkCardState extends State<_DrinkCard> {
                           fit: BoxFit.cover,
                           width: double.infinity,
                           placeholder: (context, url) => Container(color: AppColors.lightGrey),
-                          errorWidget: (context, url, error) => const Icon(Icons.local_drink_outlined, size: 40, color: Colors.grey),
+                          errorWidget: (context, url, error) => const Icon(
+                            Icons.local_drink_outlined,
+                            size: 40,
+                            color: Colors.grey,
+                          ),
                         ),
                       ),
                       if (!isAvailable)
@@ -3378,7 +3388,7 @@ class _DrinkCardState extends State<_DrinkCard> {
                           color: Colors.black54,
                           child: const Center(
                             child: Text(
-                              'Out of Stock',
+                              "Out of Stock",
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
@@ -3396,8 +3406,8 @@ class _DrinkCardState extends State<_DrinkCard> {
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             color: Colors.red.withOpacity(0.9),
-                            child: Text(
-                              'Remove from cart',
+                            child: const Text(
+                              "Remove from cart",
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 color: Colors.white,
@@ -3418,8 +3428,8 @@ class _DrinkCardState extends State<_DrinkCard> {
                               color: Colors.green,
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: Text(
-                              'OFFER',
+                            child: const Text(
+                              "OFFER",
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 10,
@@ -3432,13 +3442,15 @@ class _DrinkCardState extends State<_DrinkCard> {
                   ),
                 ),
               ),
+
+              // Details Section
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      widget.drink.name,
+                      drinkName,  // ✅ CHANGED FROM widget.drink.name
                       style: AppTextStyles.bodyText1.copyWith(
                         fontWeight: FontWeight.bold,
                         color: isAvailable ? AppColors.darkGrey : Colors.grey,
@@ -3480,8 +3492,8 @@ class _DrinkCardState extends State<_DrinkCard> {
                       Padding(
                         padding: const EdgeInsets.only(top: 4.0),
                         child: Text(
-                          'Item unavailable',
-                          style: TextStyle(
+                          AppStrings.get('item_unavailable', context),
+                          style: const TextStyle(
                             color: Colors.red,
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
@@ -3491,12 +3503,14 @@ class _DrinkCardState extends State<_DrinkCard> {
                   ],
                 ),
               ),
+
+              // Add to Cart Button
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                 child: _buildAddButton(
                   widget.drink,
                   widget.currentBranchIds.first,
-                  _updateDrinkQuantity,
+                  updateDrinkQuantity,
                   quantity,
                 ),
               ),
@@ -3504,6 +3518,86 @@ class _DrinkCardState extends State<_DrinkCard> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildAddButton(
+      MenuItem item,
+      String currentBranchId,
+      Function(int) onUpdateQuantity,
+      int currentQuantity,
+      ) {
+    final isAvailable = item.isAvailableInBranch(currentBranchId);
+
+    // Item is NOT available - show disabled button
+    if (!isAvailable) {
+      return SizedBox(
+        width: double.infinity,
+        child: ElevatedButton(
+          onPressed: null, // Disabled
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.grey.shade300,
+            disabledBackgroundColor: Colors.grey.shade300,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            padding: const EdgeInsets.symmetric(vertical: 8),
+          ),
+          child: Text(
+            'Unavailable',
+            style: AppTextStyles.buttonText.copyWith(
+              fontSize: 14,
+              color: Colors.grey.shade600,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Item is available, show normal quantity controls
+    return currentQuantity == 0
+        ? SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: () => onUpdateQuantity(1),
+        icon: const Icon(Icons.add_shopping_cart, size: 18),
+        label: Text(
+          'Add',
+          style: AppTextStyles.buttonText.copyWith(fontSize: 14),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primaryBlue,
+          foregroundColor: AppColors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+        ),
+      ),
+    )
+        : Container(
+      height: 40,
+      decoration: BoxDecoration(
+        color: AppColors.primaryBlue,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          IconButton(
+            onPressed: () => onUpdateQuantity(-1),
+            icon: const Icon(Icons.remove),
+            color: AppColors.white,
+            iconSize: 20,
+          ),
+          Text(
+            currentQuantity.toString(),
+            style: AppTextStyles.buttonText.copyWith(color: AppColors.white),
+          ),
+          IconButton(
+            onPressed: () => onUpdateQuantity(1),
+            icon: const Icon(Icons.add),
+            color: AppColors.white,
+            iconSize: 20,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -3628,6 +3722,7 @@ class CartService extends ChangeNotifier {
       _items.add(CartModel(
         id: menuItem.id,
         name: menuItem.name,
+        nameAr: menuItem.nameAr,  // ✅ Add this line
         imageUrl: menuItem.imageUrl,
         price: menuItem.price,
         discountedPrice: menuItem.discountedPrice,
@@ -3639,6 +3734,7 @@ class CartService extends ChangeNotifier {
     notifyListeners();
     await _saveCartToPrefs();
   }
+
 
   // New method to check for out-of-stock items
   Future<List<CartModel>> getOutOfStockItems(List<String> branchIds) async {

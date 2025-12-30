@@ -7,19 +7,19 @@ import 'dart:io';
 import '../Widgets/authentication.dart';
 import 'cartScreen.dart';
 import '../Widgets/models.dart';
-import '../main.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter/services.dart';
-import '../Screens/HomeScreen.dart';// For FilteringTextInputFormatter
+import '../Screens/HomeScreen.dart';
+import '../Services/language_provider.dart';
 
 class _MapUI {
-  static const Color fieldFill   = Color(0xFFF5F7FA);
-  static const Color stroke      = Color(0xFFE0E6ED);
-  static const Color mapBorder   = Color(0xFFE0E6ED);
+  static const Color fieldFill = Color(0xFFF5F7FA);
+  static const Color stroke = Color(0xFFE0E6ED);
+  static const Color mapBorder = Color(0xFFE0E6ED);
   static const Color searchFocus = Color(0xFFCCE4FF);
 }
 
@@ -30,11 +30,14 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveClientMixin {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   File? _profileImage;
   bool _isLoggingOut = false;
+
+  @override
+  bool get wantKeepAlive => true;
 
   get pickImage => null;
 
@@ -45,7 +48,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() {
         _profileImage = File(pickedFile.path);
       });
-
     }
   }
 
@@ -74,6 +76,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final user = _auth.currentUser;
     if (user == null || user.email == null) {
       return const Scaffold(
@@ -87,7 +90,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         stream: _firestore.collection('Users').doc(user.email).snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           }
 
           if (!snapshot.hasData || !snapshot.data!.exists) {
@@ -104,7 +107,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildProfileContent(BuildContext context, User user, Map<String, dynamic> userData) {
     return CustomScrollView(
       slivers: [
-        // Modern App Bar with Gradient
         SliverAppBar(
           expandedHeight: 220.0,
           floating: false,
@@ -128,7 +130,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
         ),
-        // Content
         SliverToBoxAdapter(
           child: Transform.translate(
             offset: const Offset(0, -30),
@@ -141,7 +142,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 40, 20, 20),
+                padding: const EdgeInsets.fromLTRB(20, 40, 20, 120),
                 child: Column(
                   children: [
                     _buildModernProfileMenu(context, user),
@@ -163,16 +164,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     String email = user.email ?? 'No email available';
     String? imageUrl = userData['imageUrl'];
 
-    // In buildModernHeader
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(20.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const SizedBox(height: 12), // CHANGED: was 20
-
-            // Profile Image
+            const SizedBox(height: 12),
             Stack(
               children: [
                 Container(
@@ -190,18 +188,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: GestureDetector(
                     onTap: _pickImage,
                     child: CircleAvatar(
-                      radius: 40, // CHANGED: was 55
+                      radius: 40,
                       backgroundColor: Colors.white,
                       backgroundImage: _profileImage != null
                           ? FileImage(_profileImage!)
                           : (imageUrl != null ? NetworkImage(imageUrl) : null) as ImageProvider?,
                       child: (_profileImage == null && imageUrl == null)
-                          ? Icon(Icons.person, size: 36, color: Colors.grey.shade400) // CHANGED: was 60
+                          ? Icon(Icons.person, size: 36, color: Colors.grey.shade400)
                           : null,
                     ),
                   ),
                 ),
-
                 Positioned(
                   bottom: 0,
                   right: 0,
@@ -220,33 +217,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     child: IconButton(
                       icon: const Icon(Icons.camera_alt),
                       color: AppColors.primaryBlue,
-                      iconSize: 18, // slightly smaller for proportional look
+                      iconSize: 18,
                       onPressed: pickImage,
                     ),
                   ),
                 ),
               ],
             ),
-
-            const SizedBox(height: 12), // CHANGED: was 20
-
-            // Name
+            const SizedBox(height: 12),
             Text(
               displayName,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 20, // CHANGED: was 28
-                fontWeight: FontWeight.w600, // CHANGED: was w700
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
                 color: Colors.white,
                 letterSpacing: -0.2,
               ),
             ),
-
-            const SizedBox(height: 6), // CHANGED: was 8
-
-            // Email chip
+            const SizedBox(height: 6),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), // CHANGED: was 12 & 6
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.2),
                 borderRadius: BorderRadius.circular(20),
@@ -254,7 +245,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Text(
                 email,
                 style: const TextStyle(
-                  fontSize: 12, // CHANGED: was 14
+                  fontSize: 12,
                   color: Colors.white,
                   fontWeight: FontWeight.w500,
                 ),
@@ -264,15 +255,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
     );
-
   }
 
   Widget _buildModernProfileMenu(BuildContext context, User user) {
+    final languageProvider = Provider.of<LanguageProvider>(context);
+
     final menuItems = [
       {
         'icon': Icons.person_outline_rounded,
-        'title': 'Edit Profile',
-        'subtitle': 'Update your personal information',
+        'title': AppStrings.get('edit_profile', context),
+        'subtitle': AppStrings.get('edit_profile_sub', context),
         'color': const Color(0xFF3B82F6),
         'onTap': () => Navigator.push(
           context,
@@ -281,8 +273,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       },
       {
         'icon': Icons.location_on_outlined,
-        'title': 'Saved Addresses',
-        'subtitle': 'Manage your delivery locations',
+        'title': AppStrings.get('saved_addresses', context),
+        'subtitle': AppStrings.get('saved_addresses_sub', context),
         'color': const Color(0xFF10B981),
         'onTap': () => Navigator.push(
           context,
@@ -291,8 +283,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       },
       {
         'icon': Icons.favorite_border_rounded,
-        'title': 'My Favorites',
-        'subtitle': 'View your liked items',
+        'title': AppStrings.get('my_favorites', context),
+        'subtitle': AppStrings.get('my_favorites_sub', context),
         'color': const Color(0xFFEC4899),
         'onTap': () => Navigator.push(
           context,
@@ -301,91 +293,174 @@ class _ProfileScreenState extends State<ProfileScreen> {
       },
       {
         'icon': Icons.help_outline_rounded,
-        'title': 'Help & Support',
-        'subtitle': 'Get help and contact us',
+        'title': AppStrings.get('help_support', context),
+        'subtitle': AppStrings.get('help_support_sub', context),
         'color': const Color(0xFF8B5CF6),
         'onTap': () => Navigator.push(
           context,
           MaterialPageRoute(builder: (context) => const HelpSupportScreen()),
         ),
       },
+      {
+        'icon': Icons.language,
+        'title': AppStrings.get('change_language', context),
+        'subtitle': AppStrings.get('change_language_sub', context),
+        'color': Colors.orange,
+        'isLanguageSwitch': true,
+      },
     ];
 
     return Column(
       children: menuItems.asMap().entries.map((entry) {
         final item = entry.value;
-        return Container(
-          margin: const EdgeInsets.only(bottom: 16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.04),
-                blurRadius: 15,
-                offset: const Offset(0, 5),
-              ),
-            ],
+        if (item['isLanguageSwitch'] == true) {
+          return _buildLanguageSwitchItem(item, languageProvider);
+        }
+        return _buildStandardMenuItem(item);
+      }).toList(),
+    );
+  }
+
+  Widget _buildLanguageSwitchItem(Map<String, dynamic> item, LanguageProvider provider) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
           ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: item['onTap'] as VoidCallback,
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 50,
-                      height: 50,
-                      decoration: BoxDecoration(
-                        color: (item['color'] as Color).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      child: Icon(
-                        item['icon'] as IconData,
-                        color: item['color'] as Color,
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item['title'] as String,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF1F2937),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            item['subtitle'] as String,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.grey.shade600,
-                              fontWeight: FontWeight.w400,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(
-                      Icons.arrow_forward_ios_rounded,
-                      size: 16,
-                      color: Colors.grey.shade400,
-                    ),
-                  ],
-                ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: (item['color'] as Color).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Icon(
+                item['icon'] as IconData,
+                color: item['color'] as Color,
+                size: 24,
               ),
             ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item['title'] as String,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1F2937),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    item['subtitle'] as String,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: provider.isArabic,
+              activeColor: AppColors.primaryBlue,
+              onChanged: (value) {
+                provider.changeLanguage(value ? const Locale('ar') : const Locale('en'));
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStandardMenuItem(Map<String, dynamic> item) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
           ),
-        );
-      }).toList(),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: item['onTap'] as VoidCallback,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: (item['color'] as Color).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Icon(
+                    item['icon'] as IconData,
+                    color: item['color'] as Color,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item['title'] as String,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF1F2937),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        item['subtitle'] as String,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 16,
+                  color: Colors.grey.shade400,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -405,7 +480,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              gradient: _isLoggingOut ? null : LinearGradient(
+              gradient: _isLoggingOut
+                  ? null
+                  : LinearGradient(
                 colors: [Colors.red.shade50, Colors.red.shade50],
               ),
             ),
@@ -429,7 +506,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    'LOGOUT',
+                    AppStrings.get('logout', context),
                     style: TextStyle(
                       color: Colors.red.shade600,
                       fontWeight: FontWeight.w600,
@@ -535,6 +612,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
+// ----------------------
+// EDIT PROFILE SCREEN
+// ----------------------
 class EditProfileScreen extends StatefulWidget {
   final User user;
   const EditProfileScreen({Key? key, required this.user}) : super(key: key);
@@ -588,7 +668,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (!_formKey.currentState!.validate() || widget.user.email == null) return;
     setState(() => _isLoading = true);
     try {
-      // TODO: If _profileImage is not null, upload it to Firebase Storage
       await FirebaseFirestore.instance.collection('Users').doc(widget.user.email).set({
         'name': _nameController.text.trim(),
         'phone': _phoneController.text.trim(),
@@ -596,7 +675,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Profile updated successfully')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(AppStrings.get('profile_updated', context)))
+        );
         Navigator.pop(context);
       }
     } catch (e) {
@@ -618,7 +699,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: const Text('Edit Profile', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(AppStrings.get('edit_profile', context), style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.grey[100],
         elevation: 0,
         foregroundColor: Colors.black,
@@ -633,17 +714,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               const SizedBox(height: 32),
               _buildTextField(
                 controller: _nameController,
-                labelText: 'Full Name',
+                labelText: AppStrings.get('full_name', context),
                 icon: Icons.person_outline,
-                validator: (value) => (value == null || value.isEmpty) ? 'Please enter your name' : null,
+                validator: (value) => (value == null || value.isEmpty) ? AppStrings.get('enter_name_error', context) : null,
               ),
               const SizedBox(height: 20),
               _buildTextField(
                 controller: _phoneController,
-                labelText: 'Phone Number',
+                labelText: AppStrings.get('phone_number', context),
                 icon: Icons.phone_outlined,
                 keyboardType: TextInputType.phone,
-                validator: (value) => (value == null || value.isEmpty) ? 'Please enter your phone number' : null,
+                validator: (value) => (value == null || value.isEmpty) ? AppStrings.get('enter_phone_error', context) : null,
               ),
             ],
           ),
@@ -687,7 +768,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  // --- WIDGET WITH CHANGES ---
   Widget _buildTextField({
     required TextEditingController controller,
     required String labelText,
@@ -699,13 +779,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       controller: controller,
       keyboardType: keyboardType,
       validator: validator,
-      cursorColor: AppColors.primaryBlue, // Set cursor color to blue
+      cursorColor: AppColors.primaryBlue,
       decoration: InputDecoration(
         labelText: labelText,
         prefixIcon: Icon(icon, color: Colors.grey[600]),
         filled: true,
         fillColor: Colors.white,
-        // Style for the label when it's floating (field is focused or has text)
         floatingLabelStyle: const TextStyle(color: AppColors.primaryBlue),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -715,7 +794,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: Colors.grey.shade300, width: 1),
         ),
-        // Style for the border when the field is focused
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: AppColors.primaryBlue, width: 2.0),
@@ -740,13 +818,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
           child: _isLoading
               ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
-              : const Text('SAVE CHANGES', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              : Text(AppStrings.get('save_changes', context), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
         ),
       ),
     );
   }
 }
 
+// ----------------------
+// SAVED ADDRESSES SCREEN
+// ----------------------
 class SavedAddressesScreen extends StatefulWidget {
   const SavedAddressesScreen({Key? key}) : super(key: key);
 
@@ -842,14 +923,13 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
   }) async {
     final isEditing = address != null;
 
-    // Set controller texts based on editing or adding
     labelController.text = isEditing ? address!['label'] ?? '' : '';
     streetController.text = isEditing ? address!['street'] ?? '' : '';
     buildingController.text = isEditing ? address!['building'] ?? '' : '';
     floorController.text = isEditing ? address!['floor'] ?? '' : '';
     flatController.text = isEditing ? address!['flat'] ?? '' : '';
     cityController.text = isEditing ? address!['city'] ?? '' : '';
-    searchController.clear(); // Clear search for new modal
+    searchController.clear();
 
     GeoPoint? selectedGeoPoint = isEditing ? address!['geolocation'] : null;
 
@@ -865,8 +945,6 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
     } else if (selectedGeoPoint != null) {
       initialCenter = LatLng(selectedGeoPoint.latitude, selectedGeoPoint.longitude);
     }
-
-    // Use the persistent mapController
 
     await showModalBottomSheet(
       context: context,
@@ -892,7 +970,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                     children: [
 
                       Text(
-                        isEditing ? 'Edit Address' : 'Add New Address',
+                        isEditing ? AppStrings.get('edit_address', context) : AppStrings.get('add_new_address', context),
                         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 20),
@@ -921,7 +999,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                               selectedGeoPoint = GeoPoint(point.latitude, point.longitude);
                               await _reverseGeocode(point.latitude, point.longitude,
                                   streetController, cityController, buildingController, floorController, flatController);
-                              modalSetState(() {}); // Force rebuild to reflect changes
+                              modalSetState(() {});
                             },
                           ),
                           children: [
@@ -947,9 +1025,9 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      const Text(
-                        'Tap on the map to select a location',
-                        style: TextStyle(color: Colors.grey, fontSize: 12),
+                      Text(
+                        AppStrings.get('tap_map_hint', context),
+                        style: const TextStyle(color: Colors.grey, fontSize: 12),
                       ),
                       const SizedBox(height: 12),
 
@@ -957,7 +1035,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                         controller: searchController,
                         textInputAction: TextInputAction.search,
                         decoration: InputDecoration(
-                          hintText: 'Search location…',
+                          hintText: AppStrings.get('search_location_hint', context),
                           filled: true,
                           fillColor: Colors.grey[200],
                           prefixIcon: const Icon(Icons.search, color: AppColors.primaryBlue),
@@ -983,7 +1061,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                             selectedGeoPoint!,
                             mapController,
                           );
-                          modalSetState(() {}); // Force rebuild after search
+                          modalSetState(() {});
                         },
                       ),
                       const SizedBox(height: 20),
@@ -991,7 +1069,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                       TextField(
                         controller: labelController,
                         decoration: InputDecoration(
-                          labelText: 'Label (e.g., Home, Work)',
+                          labelText: AppStrings.get('label_hint', context),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                       ),
@@ -999,37 +1077,37 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                       TextField(
                         controller: streetController,
                         decoration: InputDecoration(
-                          labelText: 'Street Address',
+                          labelText: AppStrings.get('street_label', context),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                       ),
                       const SizedBox(height: 16),
                       TextField(
                         controller: buildingController,
-                        keyboardType: TextInputType.number, // Set keyboard type
+                        keyboardType: TextInputType.number,
                         inputFormatters: <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly],
                         decoration: InputDecoration(
-                          labelText: 'Building',
+                          labelText: AppStrings.get('building_label', context),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                       ),
                       const SizedBox(height: 16),
                       TextField(
                         controller: floorController,
-                        keyboardType: TextInputType.number, // Set keyboard type
+                        keyboardType: TextInputType.number,
                         inputFormatters: <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly],
                         decoration: InputDecoration(
-                          labelText: 'Floor',
+                          labelText: AppStrings.get('floor_label', context),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                       ),
                       const SizedBox(height: 16),
                       TextField(
                         controller: flatController,
-                        keyboardType: TextInputType.number, // Set keyboard type
+                        keyboardType: TextInputType.number,
                         inputFormatters: <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly],
                         decoration: InputDecoration(
-                          labelText: 'Flat',
+                          labelText: AppStrings.get('flat_label', context),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                       ),
@@ -1037,7 +1115,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                       TextField(
                         controller: cityController,
                         decoration: InputDecoration(
-                          labelText: 'City',
+                          labelText: AppStrings.get('city_label', context),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                       ),
@@ -1060,13 +1138,11 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                               'geolocation': selectedGeoPoint ?? const GeoPoint(0, 0),
                             };
 
-                            // ---- FIX: always use a copy, never an empty list (unless really empty) ---
                             final currentAddresses = allAddresses != null
                                 ? List<Map<String, dynamic>>.from(allAddresses!)
                                 : <Map<String, dynamic>>[];
 
                             if (isEditing) {
-                              // Defensive: check index bounds
                               if (index != null && index < currentAddresses.length) {
                                 currentAddresses[index] = newAddress;
                               }
@@ -1083,7 +1159,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape : RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
-                          child: Text(isEditing ? 'SAVE CHANGES' : 'ADD ADDRESS'),
+                          child: Text(isEditing ? AppStrings.get('save_changes', context) : AppStrings.get('add_new_address', context)),
                         ),
                       ),
                     ],
@@ -1107,10 +1183,9 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
       final data = json.decode(response.body);
       final addressDetails = data['address'] ?? {};
 
-      // Parse detailed fields
       streetController.text = addressDetails['road'] ?? addressDetails['street'] ?? '';
       buildingController.text = addressDetails['building'] ?? '';
-      floorController.text = addressDetails['floor'] ?? ''; // Might not be available
+      floorController.text = addressDetails['floor'] ?? '';
       flatController.text = addressDetails['house_number'] ?? addressDetails['flat'] ?? '';
       cityController.text = addressDetails['city'] ?? addressDetails['town'] ?? addressDetails['village'] ?? '';
     } else {
@@ -1159,7 +1234,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: const Text('Saved Addresses', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(AppStrings.get('saved_addresses', context), style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.grey[100],
         elevation: 0,
         foregroundColor: Colors.black,
@@ -1200,13 +1275,11 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                   );
                 },
               ),
-              // Add address FAB handled _outside_ the StreamBuilder
             ],
           );
         },
       ),
       floatingActionButton: Builder(
-        // Needed to get latest addresses from the current StreamBuilder context
         builder: (context) {
           final user = _auth.currentUser;
           if (user == null || user.email == null) return const SizedBox.shrink();
@@ -1216,7 +1289,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
               if (!snapshot.hasData || !snapshot.data!.exists) {
                 return FloatingActionButton.extended(
                   onPressed: () => _showAddEditAddressSheet(allAddresses: <Map<String, dynamic>>[]),
-                  label: const Text('Add New Address'),
+                  label: Text(AppStrings.get('add_new_address', context)),
                   icon: const Icon(Icons.add),
                   backgroundColor: AppColors.primaryBlue,
                   foregroundColor: Colors.white,
@@ -1226,7 +1299,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
               final addresses = (data['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
               return FloatingActionButton.extended(
                 onPressed: () => _showAddEditAddressSheet(allAddresses: addresses),
-                label: const Text('Add New Address'),
+                label: Text(AppStrings.get('add_new_address', context)),
                 icon: const Icon(Icons.add),
                 backgroundColor: AppColors.primaryBlue,
                 foregroundColor: Colors.white,
@@ -1245,9 +1318,9 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
         children: [
           Icon(Icons.location_on_outlined, size: 80, color: Colors.grey[400]),
           const SizedBox(height: 20),
-          const Text('No Addresses Saved', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(AppStrings.get('no_addresses_title', context), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          Text('Add an address to get started with your orders.', style: TextStyle(color: Colors.grey[600])),
+          Text(AppStrings.get('no_addresses_subtitle', context), style: TextStyle(color: Colors.grey[600])),
         ],
       ),
     );
@@ -1297,13 +1370,13 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                       color: Colors.green.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Text('DEFAULT', style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.bold)),
+                    child: Text(AppStrings.get('default_badge', context), style: const TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.bold)),
                   ),
               ],
             ),
             const Divider(height: 24),
             Text(
-              '${address['street'] ?? ''}, Building: ${address['building'] ?? ''}, Floor: ${address['floor'] ?? ''}, Flat: ${address['flat'] ?? ''}, ${address['city'] ?? ''}',
+              '${address['street'] ?? ''}, ${AppStrings.get('building_label', context)}: ${address['building'] ?? ''}, ${AppStrings.get('floor_label', context)}: ${address['floor'] ?? ''}, ${AppStrings.get('flat_label', context)}: ${address['flat'] ?? ''}, ${address['city'] ?? ''}',
               style: TextStyle(color: Colors.grey[700], fontSize: 15, height: 1.4),
             ),
             const SizedBox(height: 12),
@@ -1313,7 +1386,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                 if (!isDefault)
                   TextButton(
                     onPressed: onSetDefault,
-                    child: const Text('Set as Default'),
+                    child: Text(AppStrings.get('set_as_default', context)),
                   ),
                 IconButton(
                   icon: Icon(Icons.edit_outlined, color: Colors.grey[600], size: 20),
@@ -1332,6 +1405,9 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
   }
 }
 
+// ----------------------
+// FAVORITES SCREEN
+// ----------------------
 class FavoritesScreen extends StatefulWidget {
   const FavoritesScreen({Key? key}) : super(key: key);
 
@@ -1344,7 +1420,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   Future<void> _removeFavorite(String itemId) async {
-    // ... (Your existing _removeFavorite logic)
     final user = _auth.currentUser;
     if (user == null || user.email == null) return;
     try {
@@ -1353,7 +1428,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Removed from favorites.'), duration: Duration(seconds: 1)),
+          SnackBar(content: Text(AppStrings.get('removed_from_favorites', context)), duration: const Duration(seconds: 1)),
         );
       }
     } catch (e) {
@@ -1367,9 +1442,17 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
 
   void _addItemToCart(Map<String, dynamic> itemData, String itemId) {
     final cartService = Provider.of<CartService>(context, listen: false);
+
+    // Localization logic for name
+    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    final name = itemData['name'] ?? 'Unknown Dish';
+    final nameAr = itemData['name_ar'] ?? '';
+    final displayName = (isArabic && nameAr.isNotEmpty) ? nameAr : name;
+
     final menuItem = MenuItem(
       id: itemId,
-      name: itemData['name'] ?? 'Unknown Dish',
+      name: name,
+      nameAr: nameAr,
       description: itemData['description'] ?? '',
       price: (itemData['price'] ?? 0.0).toDouble(),
       discountedPrice: itemData['discountedPrice']?.toDouble(),
@@ -1385,7 +1468,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     );
     cartService.addToCart(menuItem);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${menuItem.name} added to cart'), duration: const Duration(seconds: 2), behavior: SnackBarBehavior.floating),
+      SnackBar(content: Text('$displayName ${AppStrings.get('items_added_to_cart', context)}'), duration: const Duration(seconds: 2), behavior: SnackBarBehavior.floating),
     );
   }
 
@@ -1395,7 +1478,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: const Text('My Favorites', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(AppStrings.get('my_favorites', context), style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.grey[100],
         elevation: 0,
         foregroundColor: Colors.black,
@@ -1405,7 +1488,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           : StreamBuilder<DocumentSnapshot>(
         stream: _firestore.collection('Users').doc(user.email).snapshots(),
         builder: (context, snapshot) {
-          // ... (Your existing StreamBuilder logic)
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
@@ -1421,7 +1503,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           }
 
           return ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 120), // Add bottom padding to avoid overlap with cart bar
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
             itemCount: favorites.length,
             itemBuilder: (context, index) {
               final itemId = favorites.keys.elementAt(index);
@@ -1434,11 +1516,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           );
         },
       ),
-      // --- NEW: Add the persistent cart bar here ---
       bottomNavigationBar: ListenableBuilder(
-        listenable: CartService(), // Listens for changes in the cart
+        listenable: CartService(),
         builder: (context, child) {
-          // Rebuilds the bar whenever the cart is updated
           return _buildPersistentCartBar();
         },
       ),
@@ -1446,19 +1526,18 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   }
 
   Widget _buildEmptyState() {
-    // ... (Your existing _buildEmptyState widget)
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.favorite_border, size: 80, color: Colors.grey),
           const SizedBox(height: 20),
-          const Text('No Favorites Yet', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(AppStrings.get('no_favorites_title', context), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 40),
             child: Text(
-              'Tap the bookmark icon on any dish to save it for later.',
+              AppStrings.get('no_favorites_subtitle', context),
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey[600]),
             ),
@@ -1469,8 +1548,12 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   }
 
   Widget _buildFavoriteItem({required String itemId, required Map<String, dynamic> itemData}) {
-    // ... (Your existing _buildFavoriteItem widget)
-    final String name = itemData['name'] ?? 'Unknown Dish';
+    // Localization logic for name
+    final isArabic = Provider.of<LanguageProvider>(context).isArabic;
+    final name = itemData['name'] ?? 'Unknown Dish';
+    final nameAr = itemData['name_ar'] ?? '';
+    final displayName = (isArabic && nameAr.isNotEmpty) ? nameAr : name;
+
     final double price = (itemData['price'] ?? 0.0).toDouble();
     final String imageUrl = itemData['imageUrl'] ?? '';
     final bool isSpicy = itemData['isSpicy'] ?? false;
@@ -1505,7 +1588,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold), maxLines: 2, overflow: TextOverflow.ellipsis),
+                    Text(displayName, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold), maxLines: 2, overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -1528,7 +1611,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.grey.shade300)),
                   child: const Icon(
                     Icons.favorite,
-                    color: Colors.blueAccent,  // ← Use red for heart
+                    color: Colors.blueAccent,
                     size: 20,
                   ),
 
@@ -1541,14 +1624,13 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     );
   }
 
-  // --- NEW: Copied your widget from MainScreen ---
   Widget _buildPersistentCartBar() {
     final cartService = CartService();
     final itemCount = cartService.itemCount;
     final totalAmount = cartService.totalAmount;
     if (itemCount == 0) return const SizedBox.shrink();
     return Container(
-      margin: const EdgeInsets.only(bottom: 16), // Adjusted for safe area
+      margin: const EdgeInsets.only(bottom: 16),
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -1574,7 +1656,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                         child: Text('$itemCount', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                       ),
                       const SizedBox(width: 12),
-                      const Text('View Cart', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                      Text(AppStrings.get('view_cart', context), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                     ],
                   ),
                   Text('QAR ${totalAmount.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
@@ -1588,15 +1670,18 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   }
 }
 
+// ----------------------
+// HELP & SUPPORT SCREEN
+// ----------------------
 class HelpSupportScreen extends StatelessWidget {
   const HelpSupportScreen({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[100], // Background for contrast
+      backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: const Text('Help & Support', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(AppStrings.get('help_support', context), style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.grey[100],
         elevation: 0,
         foregroundColor: Colors.black,
@@ -1606,12 +1691,11 @@ class HelpSupportScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // --- First Group: General Help ---
-            const Padding(
-              padding: EdgeInsets.only(left: 8.0, bottom: 8.0),
+            Padding(
+              padding: const EdgeInsets.only(left: 8.0, bottom: 8.0),
               child: Text(
-                'GET HELP',
-                style: TextStyle(
+                AppStrings.get('get_help', context),
+                style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
                   color: Colors.grey,
@@ -1622,36 +1706,29 @@ class HelpSupportScreen extends StatelessWidget {
               children: [
                 _buildMenuItem(
                   icon: Icons.help_outline,
-                  title: 'FAQs',
-                  onTap: () {
-                    // TODO: Navigate to FAQs screen
-                  },
+                  title: AppStrings.get('faqs', context),
+                  onTap: () {},
                 ),
                 const Divider(height: 1, indent: 16, endIndent: 16),
                 _buildMenuItem(
                   icon: Icons.email_outlined,
-                  title: 'Contact Us',
-                  onTap: () {
-                    // TODO: Navigate to contact form or show contact info
-                  },
+                  title: AppStrings.get('contact_us', context),
+                  onTap: () {},
                 ),
                 const Divider(height: 1, indent: 16, endIndent: 16),
                 _buildMenuItem(
                   icon: Icons.chat_outlined,
-                  title: 'Live Chat',
-                  onTap: () {
-                    // TODO: Implement or navigate to live chat
-                  },
+                  title: AppStrings.get('live_chat', context),
+                  onTap: () {},
                 ),
               ],
             ),
             const SizedBox(height: 24),
-            // --- Second Group: Legal Information ---
-            const Padding(
-              padding: EdgeInsets.only(left: 8.0, bottom: 8.0),
+            Padding(
+              padding: const EdgeInsets.only(left: 8.0, bottom: 8.0),
               child: Text(
-                'LEGAL INFORMATION',
-                style: TextStyle(
+                AppStrings.get('legal_info', context),
+                style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
                   color: Colors.grey,
@@ -1662,18 +1739,14 @@ class HelpSupportScreen extends StatelessWidget {
               children: [
                 _buildMenuItem(
                   icon: Icons.description_outlined,
-                  title: 'Terms of Service',
-                  onTap: () {
-                    // TODO: Show terms of service
-                  },
+                  title: AppStrings.get('terms_of_service', context),
+                  onTap: () {},
                 ),
                 const Divider(height: 1, indent: 16, endIndent: 16),
                 _buildMenuItem(
                   icon: Icons.privacy_tip_outlined,
-                  title: 'Privacy Policy',
-                  onTap: () {
-                    // TODO: Show privacy policy
-                  },
+                  title: AppStrings.get('privacy_policy', context),
+                  onTap: () {},
                 ),
               ],
             ),
@@ -1683,7 +1756,6 @@ class HelpSupportScreen extends StatelessWidget {
     );
   }
 
-  // A helper widget to create the card-like container for menu items
   Widget _buildOptionContainer({required List<Widget> children}) {
     return Container(
       decoration: BoxDecoration(
@@ -1703,7 +1775,6 @@ class HelpSupportScreen extends StatelessWidget {
     );
   }
 
-  // A helper widget for each individual menu item (ListTile)
   Widget _buildMenuItem({
     required IconData icon,
     required String title,

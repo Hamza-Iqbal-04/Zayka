@@ -17,6 +17,7 @@ import 'package:mitra_da_dhaba/Screens/cartScreen.dart';
 import 'package:mitra_da_dhaba/Screens/OrderScreen.dart';
 import 'package:shimmer/shimmer.dart';
 import '../Widgets/bottom_nav.dart';
+import '../Services/language_provider.dart'; // Import LanguageProvider
 
 const Color kChipActive = AppColors.primaryBlue;
 
@@ -101,17 +102,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   MenuCategory _createOffersCategory() {
     return MenuCategory(
       id: 'offers',
-      branchIds: [_currentBranchId], // Changed from branchId
+      branchIds: [_currentBranchId],
       imageUrl: 'https://example.com/offers-icon.png',
       isActive: true,
       name: 'Offers',
+      nameAr: 'العروض', // Default Arabic name for hardcoded category
       sortOrder: -1,
     );
   }
 
   Future<void> _initializeScreen() async {
     try {
-      // Reset all loading states
       if (mounted) {
         setState(() {
           _carouselLoaded = false;
@@ -123,13 +124,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         });
       }
 
-      // Add a small delay to ensure shimmer is shown
       await Future.delayed(const Duration(milliseconds: 50));
-
-      // First select the nearest branch and wait for it
       await _selectNearestBranch();
 
-      // Load everything in parallel and wait for all to complete
       await Future.wait([
         _loadUserAddresses(),
         _loadEstimatedTime(),
@@ -142,7 +139,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       if (mounted) {
         setState(() {
           _errorMessage = 'Failed to initialize. Please try again.';
-          // Even on error, mark everything as loaded to hide shimmer
           _carouselLoaded = true;
           _categoriesLoaded = true;
           _menuItemsLoaded = true;
@@ -156,31 +152,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   Future<void> _selectNearestBranch() async {
     try {
-      debugPrint('Starting branch selection...');
       final nearestBranchId = await _branchService.getNearestBranch();
-
       if (mounted) {
         setState(() {
           _currentBranchId = nearestBranchId;
         });
       }
-      debugPrint('✅ Selected nearest branch: $_currentBranchId');
-
-      // Force reload all branch-specific data
       if (mounted) {
         setState(() {
           _categories = [];
           _popularItems = [];
           _groupedMenuItems = {};
           _carouselImages = [];
-          // Reset loading states for branch-specific data
           _carouselLoaded = false;
           _categoriesLoaded = false;
           _menuItemsLoaded = false;
           _popularItemsLoaded = false;
           _etaLoaded = false;
-
-          // Reset unavailable items tracking for new branch
           _notifiedUnavailableItems.clear();
           _isFirstMenuLoad = true;
           _previousMenuItems = [];
@@ -188,7 +176,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       }
     } catch (e) {
       debugPrint('❌ Failed to select nearest branch: $e');
-      // Keep the default branch ID but show a message
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -229,15 +216,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _popularItems = [];
         _groupedMenuItems = {};
         _carouselImages = [];
-        // Reset loading states
         _carouselLoaded = false;
         _categoriesLoaded = false;
         _menuItemsLoaded = false;
         _popularItemsLoaded = false;
         _addressLoaded = false;
         _etaLoaded = false;
-
-        // Reset unavailable items tracking for new branch
         _notifiedUnavailableItems.clear();
         _isFirstMenuLoad = true;
         _previousMenuItems = [];
@@ -245,7 +229,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
       Navigator.pop(context);
 
-      // Reload all data with new branch
       await Future.wait([
         _loadCarouselImages(),
         _loadMenuData(),
@@ -259,6 +242,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   String _getStatusMessage(String status) {
+    // Note: You can add these to AppStrings for full localization
     final cleanStatus = status.trim().toLowerCase();
     switch (cleanStatus) {
       case 'pending':
@@ -285,7 +269,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       case 'canceled':
         return 'Order cancelled';
       default:
-        debugPrint('WARNING: Unknown status "$status" - using default message');
         return 'Order status: $status';
     }
   }
@@ -293,15 +276,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   double _getProgressValue(String status) {
     final cleanStatus = status.trim().toLowerCase();
     switch (cleanStatus) {
-      case 'pending':
-        return 0.1;
-      case 'preparing':
-        return 0.25;
-      case 'prepared':
-        return 0.5;
+      case 'pending': return 0.1;
+      case 'preparing': return 0.25;
+      case 'prepared': return 0.5;
       case 'rider_assigned':
-      case 'rider assigned':
-        return 0.75;
+      case 'rider assigned': return 0.75;
       case 'picked_up':
       case 'picked up':
       case 'pickedup':
@@ -309,13 +288,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       case 'on the way':
       case 'ontheway':
       case 'out_for_delivery':
-      case 'out for delivery':
-        return 0.9;
-      case 'delivered':
-        return 1.0;
-      default:
-        debugPrint('WARNING: Unknown status "$status" - using 0.0 progress');
-        return 0.0;
+      case 'out for delivery': return 0.9;
+      case 'delivered': return 1.0;
+      default: return 0.0;
     }
   }
 
@@ -323,7 +298,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void initState() {
     super.initState();
     _initializeScreen();
-
     _setupOrdersStream();
 
     _bounceController = AnimationController(
@@ -404,7 +378,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 
-  // Add this to both screens
   void _showErrorSnackBar(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -416,7 +389,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-// Wrap all async operations
   Future<void> _loadData() async {
     try {
       // your code
@@ -457,10 +429,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   Future<void> _openOrderDetails(String orderId) async {
     try {
-      // Optional: light haptic
       HapticFeedback.lightImpact();
-
-      // If desired, guard unauthenticated users by sending them to Orders list
       final user = _auth.currentUser;
       if (user == null || user.email == null) {
         if (!mounted) return;
@@ -468,7 +437,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         return;
       }
 
-      // Fetch the full order document so OrderDetailsScreen has all fields it uses
       final doc = await _firestore.collection('Orders').doc(orderId).get();
       if (!mounted) return;
 
@@ -476,7 +444,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Order not found')),
         );
-        // Fallback: open Orders list
         Navigator.push(context, MaterialPageRoute(builder: (_) => const OrdersScreen()));
         return;
       }
@@ -484,7 +451,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       final data = doc.data() as Map<String, dynamic>;
       final orderMap = {
         ...data,
-        'id': doc.id, // handy to keep
+        'id': doc.id,
       };
 
       Navigator.push(
@@ -585,9 +552,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         final m = byId[id];
         if (m != null) ordered.add(m);
       }
-
-      // REMOVE THE FILTER - Show all popular items
-      return ordered; // REMOVE the .where() filter
+      return ordered;
     } catch (e) {
       debugPrint("Error fetching top items: $e");
       return [];
@@ -644,7 +609,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     try {
       final querySnapshot = await _firestore
           .collection('menu_categories')
-          .where('branchIds', arrayContains: _currentBranchId) // Changed from branchId
+          .where('branchIds', arrayContains: _currentBranchId)
           .where('isActive', isEqualTo: true)
           .orderBy('sortOrder')
           .get();
@@ -660,12 +625,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           for (final c in categories) {
             _sectionKeys.putIfAbsent(c.id, () => GlobalKey());
           }
-          // Add offers section key
           _sectionKeys.putIfAbsent('offers', () => GlobalKey());
           _categoriesLoaded = true;
         });
 
-        // FIX: Recompute offsets after categories are loaded and rendered
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _scheduleRecomputeOffsets();
         });
@@ -680,7 +643,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-  // Updated _listenToMenuItems method with availability tracking
   void _listenToMenuItems() {
     _menuItemsSubscription = _firestore
         .collection('menu_items')
@@ -692,8 +654,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
       final allItems = snapshot.docs.map((doc) => MenuItem.fromFirestore(doc)).toList();
       _updateAndGroupMenuItems(allItems);
-
-      // Check for newly unavailable items
       _checkForNewlyUnavailableItems(allItems);
 
       setState(() {
@@ -710,9 +670,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       return;
     }
 
-    // Find items that were available before but are now unavailable
     final newlyUnavailableItems = _previousMenuItems.where((previousItem) {
-      // Check if this item exists in current items but is now unavailable
       final currentItem = currentItems.firstWhere(
             (item) => item.id == previousItem.id,
         orElse: () => MenuItem(
@@ -733,12 +691,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ),
       );
 
-      // Item is newly unavailable if it was available before but not now
       return previousItem.isAvailableInBranch(_currentBranchId) &&
           !currentItem.isAvailableInBranch(_currentBranchId);
     }).toList();
 
-    // Show notification for newly unavailable items that haven't been notified
     for (final item in newlyUnavailableItems) {
       if (!_notifiedUnavailableItems.contains(item.id)) {
         _showItemUnavailableNotification(item);
@@ -746,7 +702,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       }
     }
 
-    // Clean up notified items that are available again
     _notifiedUnavailableItems.removeWhere((itemId) {
       final currentItem = currentItems.firstWhere(
             (item) => item.id == itemId,
@@ -775,8 +730,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   void _showItemUnavailableNotification(MenuItem item) {
     if (!mounted) return;
-
-    // Show a subtle snackbar instead of intrusive popup
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -785,7 +738,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                '${item.name} is now out of stock',
+                '${item.getLocalizedName(context)} ${AppStrings.get('out_of_stock', context).toLowerCase()}',
                 style: const TextStyle(fontWeight: FontWeight.w500),
               ),
             ),
@@ -811,22 +764,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   void _updateAndGroupMenuItems(List<MenuItem> allItems) {
     final filteredItems = allItems
-        .where((item) => item.name.toLowerCase().contains(_searchQuery.toLowerCase()))
+        .where((item) => item.getLocalizedName(context).toLowerCase().contains(_searchQuery.toLowerCase()))
         .toList();
 
-    // Get discounted items
     final discountedItems = filteredItems
         .where((item) => item.discountedPrice != null && item.discountedPrice! > 0)
         .toList();
 
     final Map<String, List<MenuItem>> newGrouped = {};
 
-    // Add offers category if there are discounted items
     if (discountedItems.isNotEmpty) {
       newGrouped['offers'] = discountedItems;
     }
 
-    // Add regular categories
     for (final c in _categories) {
       newGrouped[c.id] = filteredItems
           .where((item) => item.categoryId == c.id)
@@ -837,7 +787,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       setState(() {
         _groupedMenuItems = newGrouped;
       });
-      // FIX: Recompute offsets after menu items are rendered
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _scheduleRecomputeOffsets();
       });
@@ -927,7 +876,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         return StreamBuilder<DocumentSnapshot>(
           stream: FirebaseFirestore.instance.collection('Users').doc(user.email).snapshots(),
           builder: (context, snapshot) {
-            // Don't show circular indicator during initial load
             if (!snapshot.hasData) {
               return Container(
                 padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
@@ -965,9 +913,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(8)),
                       ),
                       const SizedBox(height: 16),
-                      const Text(
-                        'Select Delivery Address',
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
+                      Text(
+                        AppStrings.get('saved_addresses', context), // Using localized string
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(height: 24),
                       if (addresses.isEmpty)
@@ -1088,37 +1036,29 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void _recomputeSectionOffsets() {
     if (!mounted || !_mainScrollController.hasClients) return;
 
-    // Use the CustomScrollView's render object context
     final RenderObject? scrollRenderObject = context.findRenderObject();
     if (scrollRenderObject == null) return;
 
     final Map<String, double> newOffsets = {};
 
-    // Helper to get offset relative to the scroll view
     void addOffset(String keyId) {
       final key = _sectionKeys[keyId];
       if (key?.currentContext != null) {
         final RenderBox? box = key!.currentContext!.findRenderObject() as RenderBox?;
         if (box != null) {
-          // Calculate Y position relative to the scroll view's render object
           final dy = box.localToGlobal(Offset.zero, ancestor: scrollRenderObject).dy;
-
-          // Absolute scroll offset = Current Scroll Position + Relative Position from Top
           final offset = _mainScrollController.offset + dy;
           newOffsets[keyId] = offset;
         }
       }
     }
 
-    // Include Offers section if it has items
     final offersItems = _groupedMenuItems['offers'] ?? [];
     if (offersItems.isNotEmpty) {
       addOffset('offers');
     }
 
-    // Include regular categories
     for (final c in _categories) {
-      // Only check categories that have items
       if (_groupedMenuItems[c.id]?.isNotEmpty ?? false) {
         addOffset(c.id);
       }
@@ -1132,20 +1072,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void _onMainScroll() {
     if (_isAnimatingToSection) return;
 
-    // FIX: If offsets are empty (data loaded but math didn't run), try to run it now
     if (_sectionOffsets.isEmpty) {
       _recomputeSectionOffsets();
-      // If still empty after trying, we can't calculate highlighting yet
       if (_sectionOffsets.isEmpty) return;
     }
 
-    // Calculate effective offset (accounting for sticky headers)
-    // kToolbarHeight + TabBar height (52) + some buffer
     final double headerHeight = kToolbarHeight + 52 + 10;
     final currentOffset = _mainScrollController.offset + headerHeight;
 
-    // Add a threshold - don't select any category when at the very top
-    final double selectionThreshold = 10.0; // pixels
+    final double selectionThreshold = 10.0;
     if (currentOffset < selectionThreshold) {
       if (_activeCategoryIndexNotifier.value != -1) {
         _activeCategoryIndexNotifier.value = -1;
@@ -1163,7 +1098,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       final sectionOffset = _sectionOffsets[categoryId];
 
       if (sectionOffset != null) {
-        // We look for sections that are above or at the current scroll position
         if (currentOffset >= sectionOffset) {
           final distance = currentOffset - sectionOffset;
           if (distance < smallestDistance) {
@@ -1200,7 +1134,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  // Update _onCategoryTap to get the correct category list
   Future<void> _onCategoryTap(int index) async {
     final allCategories = _getAllCategoriesWithOffers();
     if (allCategories.isEmpty || index >= allCategories.length) return;
@@ -1222,10 +1155,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       key!.currentContext!,
       duration: const Duration(milliseconds: 420),
       curve: Curves.easeInOutCubic,
-      alignment: 0.0, // align to top
+      alignment: 0.0,
     );
 
-    // Add a small delay after animation finishes before re-enabling scroll listener
     Future.delayed(const Duration(milliseconds: 450), () {
       if(mounted) {
         _isAnimatingToSection = false;
@@ -1233,22 +1165,20 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     });
   }
 
-// Helper method to get all categories including offers
   List<Map<String, dynamic>> _getAllCategoriesWithOffers() {
     final List<Map<String, dynamic>> allCategories = [];
+    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
 
-    // Add offers if there are discounted items
     if (_groupedMenuItems['offers']?.isNotEmpty ?? false) {
       allCategories.add({
         'id': 'offers',
-        'name': 'Offers',
+        'name': AppStrings.get('offers', context),
       });
     }
 
-    // Add regular categories
     allCategories.addAll(_categories.map((cat) => {
       'id': cat.id,
-      'name': cat.name,
+      'name': cat.getLocalizedName(context),
     }).toList());
 
     return allCategories;
@@ -1260,7 +1190,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return StreamBuilder<List<Order>>(
       stream: ordersStream,
       builder: (context, orderSnapshot) {
-        // Build zero-or-more order status bars
         List<Widget> orderBars = const [];
         if (orderSnapshot.connectionState == ConnectionState.waiting) {
           orderBars = const [];
@@ -1271,7 +1200,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           orderBars = orders.map((o) => _buildOrderStatusWidget(o)).toList();
         }
 
-        // Build cart bar if items exist
         return Consumer<CartService>(
           builder: (context, cart, _) {
             Widget? cartBar;
@@ -1279,7 +1207,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               cartBar = _buildPersistentCartBar(cart);
             }
 
-            // Merge pages: every active order + optional cart bar
             final pages = <Widget>[
               ...orderBars,
               if (cartBar != null) cartBar,
@@ -1288,12 +1215,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             if (pages.isEmpty) return const SizedBox.shrink();
             if (pages.length == 1) return pages.first;
 
-            // Show PageView + dots when 2+ pages (e.g., 2+ orders, or order + cart)
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 SizedBox(
-                  height: 100, // preserve existing height
+                  height: 100,
                   child: PageView(
                     controller: pageController,
                     children: pages,
@@ -1319,7 +1245,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildOrderStatusWidget(Order order) {
-    // Get status message and progress from the current order
     final statusMessage = _getStatusMessage(order.status);
     final progress = _getProgressValue(order.status);
 
@@ -1371,7 +1296,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    statusMessage, // Use the computed status message from the order
+                    statusMessage,
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
@@ -1391,7 +1316,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 800),
                       curve: Curves.easeInOutCubic,
-                      width: MediaQuery.of(context).size.width * 0.6 * progress, // Use the computed progress from the order
+                      width: MediaQuery.of(context).size.width * 0.6 * progress,
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(10),
@@ -1409,7 +1334,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                '${(progress * 100).toInt()}%', // Use the computed progress from the order
+                '${(progress * 100).toInt()}%',
                 style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w800,
@@ -1766,18 +1691,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   Widget _buildPersistentCartBar(CartService cart) {
     if (cart.itemCount == 0) return const SizedBox.shrink();
 
-    // DEBUG: Print to verify calculations
-    debugPrint('Cart Summary:');
-    debugPrint('  Item Count: ${cart.itemCount}');
-    debugPrint('  Total Amount: ${cart.totalAmount}');
-    debugPrint('  Coupon Discount: ${cart.couponDiscount}');
-    debugPrint('  Total After Discount: ${cart.totalAfterDiscount}');
-
-    // Print individual items for debugging
-    for (var item in cart.items) {
-      debugPrint('  Item: ${item.name} - Price: ${item.price} - Discounted: ${item.discountedPrice} - Final: ${item.finalPrice} - Qty: ${item.quantity}');
-    }
-
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: TweenAnimationBuilder<double>(
@@ -1789,7 +1702,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             child: GestureDetector(
               onTap: () {
                 HapticFeedback.lightImpact();
-                // Navigate to MainApp and set cart screen as active
                 Navigator.of(context).pushReplacement(
                   MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 3)),
                 );
@@ -1829,12 +1741,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Text(
-                              'View Cart',
-                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                            Text(
+                              AppStrings.get('view_cart', context),
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
                             ),
                             Text(
-                              '${cart.itemCount} item${cart.itemCount > 1 ? 's' : ''}',
+                              '${cart.itemCount} ${AppStrings.get(cart.itemCount > 1 ? 'items' : 'item', context)}',
                               style: TextStyle(color: Colors.white.withOpacity(0.8), fontWeight: FontWeight.w500, fontSize: 12),
                             ),
                           ],
@@ -1857,7 +1769,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             'QAR ${cart.totalAfterDiscount.toStringAsFixed(2)}',
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16),
                           ),
-                          // Show discount badge if there's any discount
                           if (cart.totalAfterDiscount < cart.totalAmount) ...[
                             const SizedBox(width: 4),
                             Container(
@@ -1866,9 +1777,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 color: Colors.green,
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: const Text(
-                                'SAVED',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
+                              child: Text(
+                                AppStrings.get('save', context),
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
                               ),
                             ),
                           ],
@@ -1924,7 +1835,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Carousel shimmer
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
             child: Container(
@@ -1938,7 +1848,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ),
           const SizedBox(height: 16),
 
-          // Category chips shimmer
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: SizedBox(
@@ -1960,7 +1869,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ),
           const SizedBox(height: 24),
 
-          // Popular items section shimmer
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
@@ -2026,7 +1934,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ),
           const SizedBox(height: 24),
 
-          // Menu items shimmer
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
@@ -2107,7 +2014,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildPopularItemsSection(List<MenuItem> items, double cardW, double imgH) {
-    // Precache images for popular items
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if(mounted) _precachePopular(items, cardW, imgH);
     });
@@ -2115,9 +2021,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: Text('Popular Items', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Text(
+              AppStrings.get('popular_items', context),
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)
+          ),
         ),
         SizedBox(
           height: 230,
@@ -2144,13 +2053,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   Widget _buildGroupedMenuSections() {
     final List<Widget> children = [];
 
-    // Add Offers section first if there are discounted items
     final offersItems = _groupedMenuItems['offers'] ?? [];
     if (offersItems.isNotEmpty) {
       children.add(
         _CategorySection(
           key: _sectionKeys['offers'],
-          title: 'Offers',
+          title: AppStrings.get('offers', context),
           items: offersItems,
           currentBranchId: _currentBranchId,
           isOffersSection: true,
@@ -2158,7 +2066,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       );
     }
 
-    // Add regular categories
     for (int i = 0; i < _categories.length; i++) {
       final cat = _categories[i];
       final list = _groupedMenuItems[cat.id] ?? const [];
@@ -2168,7 +2075,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       children.add(
         _CategorySection(
           key: _sectionKeys[cat.id],
-          title: cat.name,
+          title: cat.getLocalizedName(context),
           items: list,
           currentBranchId: _currentBranchId,
         ),
@@ -2176,15 +2083,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
 
     if (_searchQuery.isNotEmpty && children.isEmpty) {
-      return const Column(
+      return Column(
         children: [
-          SizedBox(height: 32),
-          Icon(Icons.search_off, size: 60, color: Colors.grey),
-          SizedBox(height: 16),
-          Text('No items found', style: TextStyle(fontSize: 18)),
-          SizedBox(height: 8),
-          Text('Try adjusting your search', style: TextStyle(color: Colors.grey, fontSize: 14)),
-          SizedBox(height: 32),
+          const SizedBox(height: 32),
+          const Icon(Icons.search_off, size: 60, color: Colors.grey),
+          const SizedBox(height: 16),
+          Text(AppStrings.get('no_items', context), style: const TextStyle(fontSize: 18)),
+          const SizedBox(height: 8),
+          const Text('Try adjusting your search', style: TextStyle(color: Colors.grey, fontSize: 14)),
+          const SizedBox(height: 32),
         ],
       );
     }
@@ -2246,8 +2153,8 @@ class _CategorySection extends StatelessWidget {
             child: Row(
               children: [
                 if (isOffersSection)
-                  Icon(Icons.local_offer, color: Colors.blue, size: 20),
-                if (isOffersSection) SizedBox(width: 8),
+                  const Icon(Icons.local_offer, color: Colors.blue, size: 20),
+                if (isOffersSection) const SizedBox(width: 8),
                 Text(
                   title,
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
@@ -2271,7 +2178,7 @@ class _CategorySection extends StatelessWidget {
               itemCount: items.length,
               itemBuilder: (_, index) => MenuItemCard(
                 item: items[index],
-                currentBranchId: currentBranchId, // FIXED: Remove underscore
+                currentBranchId: currentBranchId,
                 showDiscountBadge: isOffersSection,
               ),
             ),
@@ -2302,10 +2209,9 @@ class _PopularItemCard extends StatelessWidget {
     return GestureDetector(
       onTap: () {
         if (!isAvailable) {
-          // Show gentle feedback that item is unavailable
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('${item.name} is currently out of stock'),
+              content: Text('${item.getLocalizedName(context)} is currently out of stock'),
               duration: const Duration(seconds: 2),
               backgroundColor: Colors.orange,
             ),
@@ -2360,23 +2266,22 @@ class _PopularItemCard extends StatelessWidget {
                     ),
                   ),
 
-                  // OUT OF STOCK OVERLAY
                   if (!isAvailable)
                     Positioned.fill(
                       child: Container(
-                        decoration: BoxDecoration(
+                        decoration: const BoxDecoration(
                           color: Colors.black54,
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
                         ),
-                        child: const Center(
+                        child: Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.inventory_2_outlined, color: Colors.white, size: 24),
-                              SizedBox(height: 4),
+                              const Icon(Icons.inventory_2_outlined, color: Colors.white, size: 24),
+                              const SizedBox(height: 4),
                               Text(
-                                'OUT OF STOCK',
-                                style: TextStyle(
+                                AppStrings.get('out_of_stock', context),
+                                style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 12,
@@ -2388,7 +2293,6 @@ class _PopularItemCard extends StatelessWidget {
                       ),
                     ),
 
-                  // ADD BUTTON (ONLY SHOW IF AVAILABLE)
                   if (isAvailable)
                     Positioned(
                       right: 8,
@@ -2404,12 +2308,11 @@ class _PopularItemCard extends StatelessWidget {
                                 final cart = CartService();
                                 cart.addToCart(item);
 
-                                // Add haptic feedback
                                 HapticFeedback.lightImpact();
 
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text('${item.name} added to cart'),
+                                    content: Text('${item.getLocalizedName(context)} added to cart'),
                                     duration: const Duration(seconds: 1),
                                     behavior: SnackBarBehavior.floating,
                                     shape: RoundedRectangleBorder(
@@ -2420,11 +2323,11 @@ class _PopularItemCard extends StatelessWidget {
                               },
                               child: Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                child: const Row(
+                                child: Row(
                                   children: [
-                                    Text('ADD', style: TextStyle(color: AppColors.primaryBlue, fontWeight: FontWeight.w800, fontSize: 13)),
-                                    SizedBox(width: 2),
-                                    Icon(Icons.add_rounded, color: AppColors.primaryBlue, size: 20),
+                                    Text(AppStrings.get('add', context), style: const TextStyle(color: AppColors.primaryBlue, fontWeight: FontWeight.w800, fontSize: 13)),
+                                    const SizedBox(width: 2),
+                                    const Icon(Icons.add_rounded, color: AppColors.primaryBlue, size: 20),
                                   ],
                                 ),
                               ),
@@ -2434,7 +2337,6 @@ class _PopularItemCard extends StatelessWidget {
                       ),
                     ),
 
-                  // OUT OF STOCK BUTTON (SHOW IF NOT AVAILABLE)
                   if (!isAvailable)
                     Positioned(
                       right: 8,
@@ -2447,11 +2349,11 @@ class _PopularItemCard extends StatelessWidget {
                             color: Colors.grey.withOpacity(0.75),
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              child: const Row(
+                              child: Row(
                                 children: [
-                                  Icon(Icons.block, color: Colors.white, size: 16),
-                                  SizedBox(width: 4),
-                                  Text('UNAVAILABLE', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 10)),
+                                  const Icon(Icons.block, color: Colors.white, size: 16),
+                                  const SizedBox(width: 4),
+                                  Text(AppStrings.get('unavailable', context), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 10)),
                                 ],
                               ),
                             ),
@@ -2466,7 +2368,7 @@ class _PopularItemCard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
               child: Text(
-                item.name,
+                item.getLocalizedName(context),
                 textAlign: TextAlign.left,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -2480,7 +2382,7 @@ class _PopularItemCard extends StatelessWidget {
             const SizedBox(height: 2),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: _buildPriceSection(item, isAvailable),
+              child: _buildPriceSection(context, item, isAvailable),
             ),
             const SizedBox(height: 4),
             if (item.tags['isSpicy'] == true)
@@ -2491,7 +2393,7 @@ class _PopularItemCard extends StatelessWidget {
                   children: [
                     Icon(Icons.local_fire_department_rounded, color: isAvailable ? Colors.red : Colors.grey, size: 16),
                     const SizedBox(width: 4),
-                    Text('Spicy', style: TextStyle(color: isAvailable ? Colors.red : Colors.grey, fontWeight: FontWeight.w600, fontSize: 12.5)),
+                    Text(AppStrings.get('spicy', context), style: TextStyle(color: isAvailable ? Colors.red : Colors.grey, fontWeight: FontWeight.w600, fontSize: 12.5)),
                   ],
                 ),
               ),
@@ -2501,7 +2403,7 @@ class _PopularItemCard extends StatelessWidget {
     );
   }
 
-  Widget _buildPriceSection(MenuItem item, bool isAvailable) {
+  Widget _buildPriceSection(BuildContext context, MenuItem item, bool isAvailable) {
     if (item.discountedPrice != null && item.discountedPrice! > 0) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2519,7 +2421,7 @@ class _PopularItemCard extends StatelessWidget {
               const SizedBox(width: 6),
               Text(
                 'QAR ${item.price.toStringAsFixed(2)}',
-                style: TextStyle(
+                style: const TextStyle(
                   color: Colors.grey,
                   fontWeight: FontWeight.w600,
                   fontSize: 12,
@@ -2537,7 +2439,7 @@ class _PopularItemCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
-                'Save QAR ${(item.price - item.discountedPrice!).toStringAsFixed(2)}',
+                '${AppStrings.get('save', context)} QAR ${(item.price - item.discountedPrice!).toStringAsFixed(2)}',
                 style: const TextStyle(
                   color: Colors.green,
                   fontWeight: FontWeight.bold,
@@ -2579,13 +2481,13 @@ class Order {
 class MenuItemCard extends StatefulWidget {
   final MenuItem item;
   final bool showDiscountBadge;
-  final String currentBranchId; // ADD THIS
+  final String currentBranchId;
 
   const MenuItemCard({
     Key? key,
     required this.item,
     this.showDiscountBadge = true,
-    required this.currentBranchId, // ADD THIS
+    required this.currentBranchId,
   }) : super(key: key);
 
   @override
@@ -2648,7 +2550,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
       }, SetOptions(merge: true));
     } catch (e) {
       if (mounted) {
-        setState(() => _isFavorite = !_isFavorite); // Revert on error
+        setState(() => _isFavorite = !_isFavorite);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error updating favorite: ${e.toString()}')),
         );
@@ -2678,7 +2580,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
     cartService.addToCart(item);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('${item.name} added to cart'),
+        content: Text('${item.getLocalizedName(context)} added to cart'),
         duration: const Duration(seconds: 1),
       ),
     );
@@ -2690,7 +2592,6 @@ class _MenuItemCardState extends State<MenuItemCard> {
     return index != -1 ? cartService.items[index].quantity : 0;
   }
 
-  // ADD THIS METHOD FOR OUT OF STOCK BUTTON
   Widget _buildAddButton(bool isAvailable, int itemCount, CartService cartService) {
     if (!isAvailable) {
       return Container(
@@ -2699,12 +2600,12 @@ class _MenuItemCardState extends State<MenuItemCard> {
           color: Colors.grey.shade400,
           borderRadius: BorderRadius.circular(22),
         ),
-        child: const Center(
+        child: Center(
           child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              'OUT OF STOCK',
-              style: TextStyle(
+              AppStrings.get('out_of_stock', context),
+              style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w700,
                 fontSize: 13,
@@ -2779,12 +2680,12 @@ class _MenuItemCardState extends State<MenuItemCard> {
         child: InkWell(
           onTap: () => _addItemToCart(widget.item, cartService),
           borderRadius: BorderRadius.circular(22),
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Center(
               child: Text(
-                'ADD TO CART',
-                style: TextStyle(
+                AppStrings.get('add_to_cart', context),
+                style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w700,
                   fontSize: 13,
@@ -2803,7 +2704,6 @@ class _MenuItemCardState extends State<MenuItemCard> {
     final String displayPrice = (hasDiscount ? widget.item.discountedPrice! : widget.item.price).toStringAsFixed(2);
     final String? originalPriceString = hasDiscount ? widget.item.price.toStringAsFixed(2) : null;
 
-    // ADD THIS AVAILABILITY CHECK
     final isAvailable = widget.item.isAvailableInBranch(widget.currentBranchId);
 
     return Consumer<CartService>(
@@ -2818,7 +2718,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                 padding: const EdgeInsets.only(
                     bottom: _buttonFloat + _extraBottomSpace),
                 child: Opacity(
-                  opacity: isAvailable ? 1.0 : 0.6, // ADD OPACITY WHEN OUT OF STOCK
+                  opacity: isAvailable ? 1.0 : 0.6,
                   child: Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -2852,11 +2752,11 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                   children: [
                                     Expanded(
                                       child: Text(
-                                        widget.item.name,
+                                        widget.item.getLocalizedName(context),
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w700,
-                                          color: isAvailable ? Colors.black87 : Colors.grey, // GREY TEXT WHEN OUT OF STOCK
+                                          color: isAvailable ? Colors.black87 : Colors.grey,
                                         ),
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
@@ -2871,7 +2771,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                         padding: EdgeInsets.zero,
                                         splashRadius: 20,
                                         iconSize: 22,
-                                        onPressed: isAvailable ? _toggleFavorite : null, // DISABLE FAVORITE WHEN OUT OF STOCK
+                                        onPressed: isAvailable ? _toggleFavorite : null,
                                         icon: Icon(
                                           _isFavorite
                                               ? Icons.favorite
@@ -2886,7 +2786,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  widget.item.description,
+                                  widget.item.getLocalizedDescription(context),
                                   style: TextStyle(
                                     fontSize: 12.5,
                                     color: Colors.grey.shade700,
@@ -2911,7 +2811,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                               fontWeight: FontWeight.w700,
                                               color: isAvailable
                                                   ? (hasDiscount ? Colors.blue : Colors.black87)
-                                                  : Colors.grey, // GREY TEXT WHEN OUT OF STOCK
+                                                  : Colors.grey,
                                             ),
                                           ),
                                           if (originalPriceString != null)
@@ -2932,7 +2832,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                                 borderRadius: BorderRadius.circular(6),
                                                 border: Border.all(color: Colors.red, width: 1),
                                               ),
-                                              child: Text(
+                                              child: const Text(
                                                 'OFFER',
                                                 style: TextStyle(
                                                   fontSize: 10,
@@ -2969,7 +2869,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
                           ClipRRect(
                             borderRadius: BorderRadius.circular(8),
                             child: Opacity(
-                              opacity: isAvailable ? 1.0 : 0.6, // ADD OPACITY TO IMAGE WHEN OUT OF STOCK
+                              opacity: isAvailable ? 1.0 : 0.6,
                               child: CachedNetworkImage(
                                 imageUrl: widget.item.imageUrl,
                                 width: 80,
@@ -2993,7 +2893,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
               Positioned(
                 right: 16,
                 bottom: 8,
-                child: _buildAddButton(isAvailable, itemCount, cartService), // USE THE NEW METHOD
+                child: _buildAddButton(isAvailable, itemCount, cartService),
               ),
             ],
           ),
@@ -3023,12 +2923,10 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
   @override
   void initState() {
     super.initState();
-    // Initialize with current cart quantity
     final cart = CartService();
     final index = cart.items.indexWhere((cartItem) => cartItem.id == widget.item.id);
     quantity = index != -1 ? cart.items[index].quantity : 1;
 
-    // Check item availability
     _checkItemAvailability();
     _isInitialized = true;
   }
@@ -3039,11 +2937,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     setState(() => _isCheckingAvailability = true);
 
     try {
-      // Get current branch IDs from CartService
       final cart = CartService();
       final currentBranchIds = cart.currentBranchIds;
-
-      // Check if item is available in the current branch
       final isAvailable = widget.item.isAvailableInBranch(currentBranchIds.first);
 
       if (mounted) {
@@ -3075,7 +2970,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
           ],
         ),
         content: Text(
-            'Are you sure you want to remove ${widget.item.name} from your cart?',
+            'Are you sure you want to remove ${widget.item.getLocalizedName(context)} from your cart?',
             style: AppTextStyles.bodyText1),
         actions: [
           TextButton(
@@ -3088,11 +2983,11 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
             onPressed: () {
               final cart = CartService();
               cart.removeFromCart(widget.item.id);
-              Navigator.pop(context); // Close confirmation dialog
-              Navigator.pop(context); // Close bottom sheet
+              Navigator.pop(context);
+              Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('${widget.item.name} removed from cart.'),
+                  content: Text('${widget.item.getLocalizedName(context)} removed from cart.'),
                   behavior: SnackBarBehavior.floating,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   duration: const Duration(seconds: 2),
@@ -3134,7 +3029,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${widget.item.name} is currently out of stock.',
+              '${widget.item.getLocalizedName(context)} is currently out of stock.',
               style: AppTextStyles.bodyText1,
             ),
             const SizedBox(height: 8),
@@ -3162,7 +3057,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     }
 
     if (newQuantity == 0) {
-      // Show confirmation dialog when quantity reaches 0
       _showRemoveConfirmationDialog();
     } else {
       setState(() {
@@ -3172,14 +3066,12 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
   }
 
   void _handleAddOrUpdateItem(int existingQty) {
-    // Prevent adding/updating if item is out of stock
     if (!_isItemAvailable) {
       _showOutOfStockDialog();
       return;
     }
 
     if (quantity == 0) {
-      // If quantity is 0, show remove confirmation
       _showRemoveConfirmationDialog();
       return;
     }
@@ -3197,7 +3089,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '${quantity}x ${widget.item.name} ${existingQty == 0 ? "added" : "updated"}',
+          '${quantity}x ${widget.item.getLocalizedName(context)} ${existingQty == 0 ? "added" : "updated"}',
           style: const TextStyle(fontSize: 14),
         ),
         behavior: SnackBarBehavior.floating,
@@ -3221,15 +3113,15 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               const Icon(Icons.block, color: Colors.white, size: 40),
               const SizedBox(height: 8),
               Text(
-                'OUT OF STOCK',
-                style: TextStyle(
+                AppStrings.get('out_of_stock', context),
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: 4),
-              Text(
+              const Text(
                 'Not available in selected branch',
                 style: TextStyle(
                   color: Colors.white,
@@ -3250,7 +3142,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: Row(
           children: [
-            SizedBox(
+            const SizedBox(
               width: 16,
               height: 16,
               child: CircularProgressIndicator(
@@ -3276,7 +3168,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: Row(
           children: [
-            Icon(Icons.error_outline, color: Colors.orange, size: 16),
+            const Icon(Icons.error_outline, color: Colors.orange, size: 16),
             const SizedBox(width: 8),
             Text(
               'Out of stock in selected branch',
@@ -3295,7 +3187,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Row(
         children: [
-          Icon(Icons.check_circle, color: Colors.green, size: 16),
+          const Icon(Icons.check_circle, color: Colors.green, size: 16),
           const SizedBox(width: 8),
           Text(
             'Available for order',
@@ -3316,7 +3208,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     final index = cart.items.indexWhere((cartItem) => cartItem.id == widget.item.id);
     final existingQty = index != -1 ? cart.items[index].quantity : 0;
 
-    // Check if item has discount
     final bool hasDiscount = widget.item.discountedPrice != null;
     final double displayPrice = hasDiscount ? widget.item.discountedPrice! : widget.item.price;
 
@@ -3331,7 +3222,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Drag handle
             Center(
               child: Container(
                 width: 40,
@@ -3344,9 +3234,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
             ),
             const SizedBox(height: 16),
 
-            // Image with out-of-stock overlay
             Stack(
-              alignment: Alignment.center, // Add alignment here
+              alignment: Alignment.center,
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(16.0),
@@ -3356,7 +3245,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                       imageUrl: widget.item.imageUrl,
                       fit: BoxFit.cover,
                       height: 250,
-                      width: double.infinity, // Add width: double.infinity
+                      width: double.infinity,
                       placeholder: (c, u) => Container(height: 250, color: Colors.grey.shade200),
                       errorWidget: (c, u, e) => const Icon(Icons.fastfood, color: Colors.grey, size: 40),
                     ),
@@ -3367,15 +3256,13 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
             ),
             const SizedBox(height: 16),
 
-            // Availability indicator
             _buildAvailabilityIndicator(),
             const SizedBox(height: 8),
 
-            // Title
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Text(
-                widget.item.name,
+                widget.item.getLocalizedName(context),
                 style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
@@ -3385,7 +3272,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
             ),
             const SizedBox(height: 8),
 
-            // Price - Show discounted price if available
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
@@ -3420,7 +3306,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                         border: Border.all(color: Colors.green),
                       ),
                       child: Text(
-                        'SAVE ${(widget.item.price - widget.item.discountedPrice!).toStringAsFixed(2)}',
+                        '${AppStrings.get('save', context)} ${(widget.item.price - widget.item.discountedPrice!).toStringAsFixed(2)}',
                         style: const TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.bold,
@@ -3434,12 +3320,11 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
             ),
             const SizedBox(height: 8),
 
-            // Description
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Text(
-                widget.item.description.isNotEmpty
-                    ? widget.item.description
+                widget.item.getLocalizedDescription(context).isNotEmpty
+                    ? widget.item.getLocalizedDescription(context)
                     : 'No description available.',
                 style: TextStyle(
                   fontSize: 14,
@@ -3450,7 +3335,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
             ),
             const SizedBox(height: 24),
 
-            // Current cart quantity indicator
             if (existingQty > 0 && existingQty != quantity && _isItemAvailable)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -3464,7 +3348,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                 ),
               ),
 
-            // Warning message if item is in cart but out of stock
             if (existingQty > 0 && !_isItemAvailable)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -3477,7 +3360,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.warning_amber, color: Colors.orange, size: 20),
+                      const Icon(Icons.warning_amber, color: Colors.orange, size: 20),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
@@ -3494,13 +3377,11 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                 ),
               ),
 
-            // Bottom Action Bar (Quantity and Add/Update button)
             Padding(
               padding: const EdgeInsets.only(bottom: 8.0),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Quantity selector - disabled if out of stock
                   Opacity(
                     opacity: _isItemAvailable ? 1.0 : 0.5,
                     child: Container(
@@ -3557,7 +3438,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                     ),
                   ),
                   const Spacer(),
-                  // Add/Update button - disabled if out of stock
                   SizedBox(
                     height: 52,
                     child: ElevatedButton(
@@ -3576,7 +3456,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                       ),
                       child: Text(
                         !_isItemAvailable
-                            ? 'OUT OF STOCK'
+                            ? AppStrings.get('out_of_stock', context)
                             : (quantity == 0 ? 'REMOVE ITEM' : (existingQty == 0 ? 'ADD ITEM' : 'UPDATE ITEM')),
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
@@ -3585,7 +3465,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                 ],
               ),
             ),
-            // Padding for bottom safe area
             SizedBox(height: MediaQuery.of(context).padding.bottom + 8),
           ],
         ),
@@ -3602,10 +3481,8 @@ class RestaurantService {
     String result = 'Calculating...';
     try {
       if (orderType == 'pickup') {
-        // For pickup orders, only consider preparation time
         return await _calculatePickupTime(branchId);
       } else {
-        // For delivery orders, calculate distance-based ETA
         return await _calculateDeliveryTime(branchId);
       }
     } catch (e) {
@@ -3616,7 +3493,6 @@ class RestaurantService {
 
   Future<String> _calculateDeliveryTime(String branchId) async {
     try {
-      // Branch geolocation
       final branchDoc = await FirebaseFirestore.instance
           .collection('Branch')
           .doc(branchId)
@@ -3634,7 +3510,6 @@ class RestaurantService {
       final double storeLatitude = storeGeolocationField.latitude;
       final double storeLongitude = storeGeolocationField.longitude;
 
-      // User default address geolocation
       final user = FirebaseAuth.instance.currentUser;
       if (user == null || user.email == null)
         throw Exception('User not logged in');
@@ -3669,7 +3544,6 @@ class RestaurantService {
       final double userLatitude = userGeolocationField.latitude;
       final double userLongitude = userGeolocationField.longitude;
 
-      // Distance-based ETA
       final double distanceInMeters = Geolocator.distanceBetween(
         userLatitude,
         userLongitude,
@@ -3693,10 +3567,8 @@ class RestaurantService {
 
   Future<String> _calculatePickupTime(String branchId) async {
     try {
-      // For pickup, only consider preparation time and current kitchen load
       const double basePrepTimeMinutes = 15.0;
 
-      // Get current order count to estimate kitchen load
       final now = DateTime.now();
       final today = DateFormat('yyyy-MM-dd').format(now);
       final ordersSnapshot = await FirebaseFirestore.instance
@@ -3707,7 +3579,6 @@ class RestaurantService {
 
       final activeOrderCount = ordersSnapshot.docs.length;
 
-      // Adjust preparation time based on kitchen load (5 minutes per active order)
       final loadAdjustment = (activeOrderCount * 5).toDouble();
       final totalPrepTime = basePrepTimeMinutes + loadAdjustment;
 
@@ -3722,14 +3593,16 @@ class RestaurantService {
 
 class MenuItem {
   final String id;
-  final List<String> branchIds; // Changed from String branchId
+  final List<String> branchIds;
   final String categoryId;
   final String description;
+  final String descriptionAr; // Added Arabic Description
   final double? discountedPrice;
   final String imageUrl;
   final bool isAvailable;
   final bool isPopular;
   final String name;
+  final String nameAr; // Added Arabic Name
   final double price;
   final int sortOrder;
   final Map<String, dynamic> tags;
@@ -3739,13 +3612,15 @@ class MenuItem {
 
   MenuItem({
     required this.id,
-    required this.branchIds, // Changed from branchId
+    required this.branchIds,
     required this.categoryId,
     required this.description,
+    this.descriptionAr = '', // Default empty
     required this.imageUrl,
     required this.isAvailable,
     required this.isPopular,
     required this.name,
+    this.nameAr = '', // Default empty
     required this.price,
     this.discountedPrice,
     required this.sortOrder,
@@ -3759,25 +3634,25 @@ class MenuItem {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
     return MenuItem(
       id: doc.id,
-      branchIds: List<String>.from(data['branchIds'] ?? []), // Changed from branchId
+      branchIds: List<String>.from(data['branchIds'] ?? []),
       categoryId: data['categoryId'] ?? '',
       description: data['description'] ?? '',
+      descriptionAr: data['description_ar'] ?? '', // Read from Firestore
       imageUrl: data['imageUrl'] ?? '',
       isAvailable: data['isAvailable'] ?? false,
       isPopular: data['isPopular'] ?? false,
       name: data['name'] ?? '',
+      nameAr: data['name_ar'] ?? '', // Read from Firestore
       price: (data['price'] ?? 0).toDouble(),
       discountedPrice: (data['discountedPrice'] as num?)?.toDouble(),
       sortOrder: data['sortOrder'] ?? 0,
       tags: data['tags'] ?? {},
       variants: data['variants'],
       offerText: data['offerText'],
-      outOfStockBranches: List<String>.from(data['outOfStockBranches'] ?? []), // ADD THIS
-
+      outOfStockBranches: List<String>.from(data['outOfStockBranches'] ?? []),
     );
-
-
   }
+
   bool isAvailableInBranch(String branchId) {
     return branchIds.contains(branchId) &&
         !outOfStockBranches.contains(branchId);
@@ -3785,22 +3660,34 @@ class MenuItem {
 
   double get finalPrice => discountedPrice ?? price;
 
+  // Localization Helpers
+  String getLocalizedName(BuildContext context) {
+    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    return (isArabic && nameAr.isNotEmpty) ? nameAr : name;
+  }
+
+  String getLocalizedDescription(BuildContext context) {
+    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    return (isArabic && descriptionAr.isNotEmpty) ? descriptionAr : description;
+  }
 }
 
 class MenuCategory {
   final String id;
-  final List<String> branchIds; // Changed from String branchId
+  final List<String> branchIds;
   final String imageUrl;
   final bool isActive;
   final String name;
+  final String nameAr; // Added Arabic Name
   final int sortOrder;
 
   MenuCategory({
     required this.id,
-    required this.branchIds, // Changed from branchId
+    required this.branchIds,
     required this.imageUrl,
     required this.isActive,
     required this.name,
+    this.nameAr = '', // Default empty
     required this.sortOrder,
   });
 
@@ -3808,15 +3695,22 @@ class MenuCategory {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
     return MenuCategory(
       id: doc.id,
-      branchIds: List<String>.from(data['branchIds'] ?? []), // Changed from branchId
+      branchIds: List<String>.from(data['branchIds'] ?? []),
       imageUrl: data['imageUrl'] ?? '',
       isActive: data['isActive'] ?? false,
       name: data['name'] ?? '',
+      nameAr: data['name_ar'] ?? '', // Read from Firestore
       sortOrder: data['sortOrder'] ?? 0,
     );
   }
+
+  String getLocalizedName(BuildContext context) {
+    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    return (isArabic && nameAr.isNotEmpty) ? nameAr : name;
+  }
 }
 
+// ... BranchService and Branch class remain the same ...
 class BranchService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -3825,7 +3719,6 @@ class BranchService {
     try {
       debugPrint('🔍 Finding nearest branch by default address...');
 
-      // Get user's default address
       final user = _auth.currentUser;
       if (user == null || user.email == null) {
         debugPrint('⚠️ User not logged in, using fallback');
@@ -3846,7 +3739,6 @@ class BranchService {
         return 'Old_Airport';
       }
 
-      // Find default address
       Map<String, dynamic> defaultAddress;
       try {
         defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true);
@@ -3855,7 +3747,6 @@ class BranchService {
         debugPrint('ℹ️ No default address found, using first address');
       }
 
-      // Check if address has geolocation
       if (defaultAddress['geolocation'] == null) {
         debugPrint('⚠️ Default address has no geolocation, using fallback');
         return 'Old_Airport';
@@ -3864,7 +3755,6 @@ class BranchService {
       final userGeoPoint = defaultAddress['geolocation'] as GeoPoint;
       debugPrint('📍 User address location: ${userGeoPoint.latitude}, ${userGeoPoint.longitude}');
 
-      // Get all active branches
       List<Branch> branches = await _getAllBranches();
       debugPrint('🏪 Found ${branches.length} active branches');
 
@@ -3873,7 +3763,6 @@ class BranchService {
         return 'Old_Airport';
       }
 
-      // Calculate distances and find nearest branch
       Branch nearestBranch = branches.first;
       double shortestDistance = double.infinity;
 
@@ -3911,11 +3800,9 @@ class BranchService {
     try {
       debugPrint('🔍 Finding nearest branch by GPS...');
 
-      // Get user's current location
       Position userPosition = await _getCurrentLocation();
       debugPrint('📍 GPS location: ${userPosition.latitude}, ${userPosition.longitude}');
 
-      // Get all active branches
       List<Branch> branches = await _getAllBranches();
       debugPrint('🏪 Found ${branches.length} active branches');
 
@@ -3924,7 +3811,6 @@ class BranchService {
         return 'Old_Airport';
       }
 
-      // Calculate distances and find nearest branch
       Branch nearestBranch = branches.first;
       double shortestDistance = double.infinity;
 
@@ -3960,9 +3846,9 @@ class BranchService {
 
   Future<String> getNearestBranchByOrderType(String orderType) async {
     if (orderType == 'delivery') {
-      return await getNearestBranch(); // Use address for delivery
+      return await getNearestBranch();
     } else {
-      return await getNearestBranchByGPS(); // Use GPS for pickup
+      return await getNearestBranchByGPS();
     }
   }
 
@@ -3970,7 +3856,6 @@ class BranchService {
     bool serviceEnabled;
     LocationPermission permission;
 
-    // Check if location services are enabled
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       throw Exception('Location services are disabled.');
@@ -4022,7 +3907,6 @@ class BranchService {
     }
   }
 
-  // Helper method to get branch display name
   String getBranchDisplayName(String branchId) {
     switch (branchId) {
       case 'Old_Airport':
@@ -4036,10 +3920,9 @@ class BranchService {
     }
   }
 
-  // Method to validate if a branch can deliver to user's address
   Future<bool> canBranchDeliverToAddress(String branchId, String userEmail) async {
     try {
-      if (userEmail.isEmpty) return true; // Allow if no user email
+      if (userEmail.isEmpty) return true;
 
       final branchDoc = await _firestore.collection('Branch').doc(branchId).get();
       if (!branchDoc.exists) return false;
@@ -4047,10 +3930,8 @@ class BranchService {
       final branchData = branchDoc.data() as Map<String, dynamic>;
       final noDeliveryRange = (branchData['noDeliveryRange'] ?? 0).toDouble();
 
-      // If no delivery range is 0, delivery is available everywhere
       if (noDeliveryRange == 0) return true;
 
-      // Get user's default address
       final userDoc = await _firestore.collection('Users').doc(userEmail).get();
       if (!userDoc.exists) return true;
 
@@ -4079,12 +3960,12 @@ class BranchService {
         userGeoPoint.longitude,
         branchGeoPoint.latitude,
         branchGeoPoint.longitude,
-      ) / 1000; // Convert to kilometers
+      ) / 1000;
 
       return distance <= noDeliveryRange;
     } catch (e) {
       debugPrint('Error checking delivery availability: $e');
-      return true; // Allow delivery on error
+      return true;
     }
   }
 }
