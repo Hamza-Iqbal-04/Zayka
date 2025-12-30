@@ -923,13 +923,27 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
   }) async {
     final isEditing = address != null;
 
-    labelController.text = isEditing ? address!['label'] ?? '' : '';
+    // Initialize controllers
     streetController.text = isEditing ? address!['street'] ?? '' : '';
     buildingController.text = isEditing ? address!['building'] ?? '' : '';
     floorController.text = isEditing ? address!['floor'] ?? '' : '';
     flatController.text = isEditing ? address!['flat'] ?? '' : '';
     cityController.text = isEditing ? address!['city'] ?? '' : '';
     searchController.clear();
+
+    // --- LABEL LOGIC ---
+    final List<String> standardLabels = ['Home', 'Work', 'Office', 'Partner'];
+    String currentLabelVal = isEditing ? (address!['label'] ?? '') : 'Home';
+
+    // Determine initial dropdown state
+    String dropdownValue;
+    if (standardLabels.contains(currentLabelVal)) {
+      dropdownValue = currentLabelVal;
+      labelController.text = currentLabelVal;
+    } else {
+      dropdownValue = 'Custom';
+      labelController.text = currentLabelVal;
+    }
 
     GeoPoint? selectedGeoPoint = isEditing ? address!['geolocation'] : null;
 
@@ -946,6 +960,8 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
       initialCenter = LatLng(selectedGeoPoint.latitude, selectedGeoPoint.longitude);
     }
 
+    if (!mounted) return;
+
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -960,7 +976,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                 decoration: const BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.only(
-                    topLeft : Radius.circular(20),
+                    topLeft: Radius.circular(20),
                     topRight: Radius.circular(20),
                   ),
                 ),
@@ -968,13 +984,13 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-
                       Text(
                         isEditing ? AppStrings.get('edit_address', context) : AppStrings.get('add_new_address', context),
                         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 20),
 
+                      // MAP CONTAINER
                       Container(
                         height: 350,
                         decoration: BoxDecoration(
@@ -993,7 +1009,7 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                           mapController: mapController,
                           options: MapOptions(
                             initialCenter: initialCenter,
-                            initialZoom  : 13,
+                            initialZoom: 15,
                             onTap: (tapPos, point) async {
                               if (!mounted) return;
                               selectedGeoPoint = GeoPoint(point.latitude, point.longitude);
@@ -1004,11 +1020,9 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                           ),
                           children: [
                             TileLayer(
-                              urlTemplate: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
-                              subdomains: const ['a', 'b', 'c'],
-                              additionalOptions: const {
-                                'userAgent': 'MitraDaDhabaApp/1.0 (contact: your.email@example.com)'
-                              },
+                              // FIX 1: Removed {s} and subdomains to fix console warning
+                              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                              userAgentPackageName: 'com.example.mitra_da_dhaba',
                             ),
                             if (selectedGeoPoint != null)
                               MarkerLayer(
@@ -1031,14 +1045,33 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                       ),
                       const SizedBox(height: 12),
 
+                      // SEARCH BAR
                       TextField(
                         controller: searchController,
                         textInputAction: TextInputAction.search,
                         decoration: InputDecoration(
                           hintText: AppStrings.get('search_location_hint', context),
                           filled: true,
-                          fillColor: Colors.grey[200],
-                          prefixIcon: const Icon(Icons.search, color: AppColors.primaryBlue),
+                          fillColor: Colors.grey[100], // Slightly different to differentiate from fields
+                          prefixIcon: GestureDetector(
+                            onTap: () async {
+                              if (!mounted) return;
+                              final result = await _forwardGeocode(
+                                searchController.text,
+                                streetController,
+                                cityController,
+                                buildingController,
+                                floorController,
+                                flatController,
+                                mapController,
+                              );
+                              if (result != null) {
+                                selectedGeoPoint = GeoPoint(result.latitude, result.longitude);
+                                modalSetState(() {});
+                              }
+                            },
+                            child: const Icon(Icons.search, color: AppColors.primaryBlue),
+                          ),
                           contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -1051,34 +1084,103 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                         ),
                         onSubmitted: (query) async {
                           if (!mounted) return;
-                          await _forwardGeocode(
+                          final result = await _forwardGeocode(
                             query,
                             streetController,
                             cityController,
                             buildingController,
                             floorController,
                             flatController,
-                            selectedGeoPoint!,
                             mapController,
                           );
-                          modalSetState(() {});
+                          if (result != null) {
+                            selectedGeoPoint = GeoPoint(result.latitude, result.longitude);
+                            modalSetState(() {});
+                          }
                         },
                       ),
                       const SizedBox(height: 20),
 
-                      TextField(
-                        controller: labelController,
+                      // FIX 2: IMPROVED DROPDOWN UI
+                      DropdownButtonFormField<String>(
+                        value: dropdownValue,
+                        dropdownColor: Colors.white,
+                        icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.grey),
                         decoration: InputDecoration(
-                          labelText: AppStrings.get('label_hint', context),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          labelText: 'Label Type',
+                          prefixIcon: Icon(
+                              dropdownValue == 'Home' ? Icons.home_outlined :
+                              dropdownValue == 'Work' ? Icons.work_outline :
+                              Icons.label_outline,
+                              color: Colors.grey[600]
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
+                          floatingLabelStyle: const TextStyle(color: AppColors.primaryBlue),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: Colors.grey.shade300, width: 1),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: AppColors.primaryBlue, width: 2.0),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                         ),
+                        items: [...standardLabels, 'Custom'].map((String value) {
+                          return DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
+                          );
+                        }).toList(),
+                        onChanged: (String? newValue) {
+                          if (newValue != null) {
+                            modalSetState(() {
+                              dropdownValue = newValue;
+                              if (newValue != 'Custom') {
+                                labelController.text = newValue;
+                              } else {
+                                labelController.text = '';
+                              }
+                            });
+                          }
+                        },
                       ),
+
+                      if (dropdownValue == 'Custom') ...[
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: labelController,
+                          decoration: InputDecoration(
+                            labelText: AppStrings.get('label_hint', context),
+                            hintText: "e.g. My Gym, Grandma's House",
+                            prefixIcon: Icon(Icons.edit_outlined, color: Colors.grey[600]),
+                            filled: true,
+                            fillColor: Colors.white,
+                            floatingLabelStyle: const TextStyle(color: AppColors.primaryBlue),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300, width: 1)),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primaryBlue, width: 2.0)),
+                          ),
+                        ),
+                      ],
+
                       const SizedBox(height: 16),
+                      // Standard fields with consistent styling
                       TextField(
                         controller: streetController,
                         decoration: InputDecoration(
                           labelText: AppStrings.get('street_label', context),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          prefixIcon: Icon(Icons.add_road, color: Colors.grey[600]),
+                          filled: true,
+                          fillColor: Colors.white,
+                          floatingLabelStyle: const TextStyle(color: AppColors.primaryBlue),
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300, width: 1)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primaryBlue, width: 2.0)),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -1088,44 +1190,79 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                         inputFormatters: <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly],
                         decoration: InputDecoration(
                           labelText: AppStrings.get('building_label', context),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          prefixIcon: Icon(Icons.apartment, color: Colors.grey[600]),
+                          filled: true,
+                          fillColor: Colors.white,
+                          floatingLabelStyle: const TextStyle(color: AppColors.primaryBlue),
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300, width: 1)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primaryBlue, width: 2.0)),
                         ),
                       ),
                       const SizedBox(height: 16),
-                      TextField(
-                        controller: floorController,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly],
-                        decoration: InputDecoration(
-                          labelText: AppStrings.get('floor_label', context),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      TextField(
-                        controller: flatController,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly],
-                        decoration: InputDecoration(
-                          labelText: AppStrings.get('flat_label', context),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: floorController,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly],
+                              decoration: InputDecoration(
+                                labelText: AppStrings.get('floor_label', context),
+                                prefixIcon: Icon(Icons.layers, color: Colors.grey[600]),
+                                filled: true,
+                                fillColor: Colors.white,
+                                floatingLabelStyle: const TextStyle(color: AppColors.primaryBlue),
+                                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300, width: 1)),
+                                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primaryBlue, width: 2.0)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextField(
+                              controller: flatController,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly],
+                              decoration: InputDecoration(
+                                labelText: AppStrings.get('flat_label', context),
+                                prefixIcon: Icon(Icons.door_front_door, color: Colors.grey[600]),
+                                filled: true,
+                                fillColor: Colors.white,
+                                floatingLabelStyle: const TextStyle(color: AppColors.primaryBlue),
+                                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300, width: 1)),
+                                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primaryBlue, width: 2.0)),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 16),
                       TextField(
                         controller: cityController,
                         decoration: InputDecoration(
                           labelText: AppStrings.get('city_label', context),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          prefixIcon: Icon(Icons.location_city, color: Colors.grey[600]),
+                          filled: true,
+                          fillColor: Colors.white,
+                          floatingLabelStyle: const TextStyle(color: AppColors.primaryBlue),
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300, width: 1)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primaryBlue, width: 2.0)),
                         ),
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 24),
 
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
                           onPressed: () async {
                             if (!mounted) return;
+
+                            if (labelController.text.trim().isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text("Please provide a label for this address"))
+                              );
+                              return;
+                            }
 
                             final newAddress = {
                               'label'      : labelController.text,
@@ -1158,8 +1295,13 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape : RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            elevation: 2,
+                            shadowColor: AppColors.primaryBlue.withOpacity(0.3),
                           ),
-                          child: Text(isEditing ? AppStrings.get('save_changes', context) : AppStrings.get('add_new_address', context)),
+                          child: Text(
+                            isEditing ? AppStrings.get('save_changes', context) : AppStrings.get('add_new_address', context),
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
                         ),
                       ),
                     ],
@@ -1174,58 +1316,78 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
   }
 
 
+  // 1. UPDATE REVERSE GEOCODE (Getting address from map tap)
   Future<void> _reverseGeocode(double lat, double lng, TextEditingController streetController, TextEditingController cityController, TextEditingController buildingController, TextEditingController floorController, TextEditingController flatController) async {
     final url = 'https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lng&addressdetails=1';
-    final response = await http.get(Uri.parse(url), headers: {
-      'User-Agent': 'MitraDaDhabaApp/1.0 (contact: your.email@example.com)', 'accept-language': 'en'
-    });
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      final addressDetails = data['address'] ?? {};
 
-      streetController.text = addressDetails['road'] ?? addressDetails['street'] ?? '';
-      buildingController.text = addressDetails['building'] ?? '';
-      floorController.text = addressDetails['floor'] ?? '';
-      flatController.text = addressDetails['house_number'] ?? addressDetails['flat'] ?? '';
-      cityController.text = addressDetails['city'] ?? addressDetails['town'] ?? addressDetails['village'] ?? '';
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to fetch address'))
-        );
+    try {
+      final response = await http.get(Uri.parse(url), headers: {
+        // CHANGED: Use your real package name here
+        'User-Agent': 'ZaykaApp/1.0 (com.example.mitra_da_dhaba)',
+        'accept-language': 'en'
+      });
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final addressDetails = data['address'] ?? {};
+
+        streetController.text = addressDetails['road'] ?? addressDetails['street'] ?? '';
+        buildingController.text = addressDetails['building'] ?? '';
+        floorController.text = addressDetails['floor'] ?? '';
+        flatController.text = addressDetails['house_number'] ?? addressDetails['flat'] ?? '';
+        cityController.text = addressDetails['city'] ?? addressDetails['town'] ?? addressDetails['village'] ?? '';
       }
+    } catch (e) {
+      debugPrint("Error in reverse geocode: $e");
     }
   }
 
-  Future<void> _forwardGeocode(
+  // 2. UPDATE FORWARD GEOCODE (The Search Function)
+  // CHANGED: Now returns LatLng so we can update the marker
+  Future<LatLng?> _forwardGeocode(
       String query,
       TextEditingController streetController,
       TextEditingController cityController,
       TextEditingController buildingController,
       TextEditingController floorController,
       TextEditingController flatController,
-      GeoPoint selectedGeoPoint,
       MapController mapController) async {
-    if (query.isEmpty) return;
+    if (query.isEmpty) return null;
+
     final url = 'https://nominatim.openstreetmap.org/search?format=json&q=$query&addressdetails=1&limit=1';
-    final response = await http.get(Uri.parse(url), headers: {
-      'User-Agent': 'MitraDaDhabaApp/1.0 (contact: your.email@example.com)', 'accept-language': 'en'
-    });
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data.isNotEmpty) {
-        final result = data[0];
-        final lat = double.parse(result['lat']);
-        final lon = double.parse(result['lon']);
-        selectedGeoPoint = GeoPoint(lat, lon);
-        mapController.move(LatLng(lat, lon), 13.0);
-        await _reverseGeocode(lat, lon, streetController, cityController, buildingController, floorController, flatController);
+
+    try {
+      final response = await http.get(Uri.parse(url), headers: {
+        // CHANGED: Use your real package name here
+        'User-Agent': 'ZaykaApp/1.0 (com.example.mitra_da_dhaba)',
+        'accept-language': 'en'
+      });
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data.isNotEmpty) {
+          final result = data[0];
+          final lat = double.parse(result['lat']);
+          final lon = double.parse(result['lon']);
+          final point = LatLng(lat, lon);
+
+          // Move the map to the found location
+          mapController.move(point, 15.0); // Increased zoom to 15 for better view
+
+          // Auto-fill the address details for this location
+          await _reverseGeocode(lat, lon, streetController, cityController, buildingController, floorController, flatController);
+
+          return point;
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No location found')));
+          }
+        }
       }
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Search failed')));
-      }
+    } catch (e) {
+      debugPrint("Error in forward geocode: $e");
     }
+    return null;
   }
 
   @override

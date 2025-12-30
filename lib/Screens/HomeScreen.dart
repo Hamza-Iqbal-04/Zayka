@@ -801,15 +801,22 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       }
 
       final doc = await _firestore.collection('Users').doc(user.email).get();
-      if (!doc.exists || !doc.data()!.containsKey('address')) {
+
+      // --- NEW CHECK START ---
+      // Check if doc doesn't exist OR address field is missing OR address list is empty
+      if (!doc.exists ||
+          !doc.data()!.containsKey('address') ||
+          (doc.data()!['address'] as List).isEmpty) {
+
+        // Trigger the popup
+        _showMissingAddressDialog();
+
         throw Exception('No address set');
       }
+      // --- NEW CHECK END ---
 
       final data = doc.data()!;
       final addresses = data['address'] as List;
-      if (addresses.isEmpty) {
-        throw Exception('No address set');
-      }
 
       final List<Map<String, dynamic>> addressList = addresses.map((a) {
         final m = Map<String, dynamic>.from(a);
@@ -862,6 +869,74 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         });
       }
     }
+  }
+
+  void _showMissingAddressDialog() {
+    // Ensure the dialog shows after the build phase
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      showDialog(
+        context: context,
+        barrierDismissible: false, // User must interact with the buttons
+        builder: (BuildContext context) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            backgroundColor: Colors.white,
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.location_off_rounded, color: Colors.orange, size: 24),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    "Missing Address",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            content: const Text(
+              "We couldn't find a saved address for you. Please add at least one address to place orders and check availability.",
+              style: TextStyle(fontSize: 14, color: Colors.black87),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(
+                  "Browse Menu",
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryBlue,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                ),
+                onPressed: () {
+                  Navigator.pop(context); // Close dialog
+                  // Go to Address Screen
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const SavedAddressesScreen()),
+                  ).then((_) {
+                    // When they come back, try loading data again
+                    _initializeScreen();
+                  });
+                },
+                child: const Text("Add Address"),
+              ),
+            ],
+          );
+        },
+      );
+    });
   }
 
   void _showAddressBottomSheet(Function(String label, String fullAddress) onAddressSelected) {

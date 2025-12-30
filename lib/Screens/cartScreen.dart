@@ -27,11 +27,20 @@ class CartScreen extends StatefulWidget {
   _CartScreenState createState() => _CartScreenState();
 }
 
+class BranchDistance {
+  final String id;
+  final String name;
+  final double distance;
+  final bool isOpen;
+  final bool isInRange;
+
+  BranchDistance(this.id, this.name, this.distance, this.isOpen, this.isInRange);
+}
+
 class _CartScreenState extends State<CartScreen> {
   final RestaurantService _restaurantService = RestaurantService();
   final Set<String> _notifiedOutOfStockItems = {};
 
-  // Add this getter to allow access from child widgets
   Set<String> get notifiedOutOfStockItems => _notifiedOutOfStockItems;
 
   String _estimatedTime = 'Loading...';
@@ -53,22 +62,23 @@ class _CartScreenState extends State<CartScreen> {
   String _paymentType = 'Cash on Delivery';
   bool _isInitialized = false;
 
-  // Solution 1: Add address caching variables
   Map<String, dynamic>? _cachedAddress;
   bool _isLoadingAddress = false;
 
-  // Delivery range variables
   double _freeDeliveryRange = 0;
   double _noDeliveryRange = 0;
   bool _isOutOfDeliveryRange = false;
   double _distanceToBranch = 0;
 
-  // Out-of-stock monitoring
   List<CartModel> _outOfStockItems = [];
   bool _isCheckingStock = false;
-
-  // Add these for tracking notified out-of-stock items
   bool _isFirstStockCheck = true;
+
+  // --- NEW STATE VARIABLES ---
+  bool _areAllBranchesClosed = false;
+  bool _noDeliveryAvailable = false;
+  bool _isFallbackBranch = false;
+  String _closedNearestBranchName = '';
 
   @override
   void initState() {
@@ -77,13 +87,7 @@ class _CartScreenState extends State<CartScreen> {
     CartService().addListener(_onCartChanged);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      PaymentService.init(); // Initialize SDK
-      CartService().startStockMonitoring(_currentBranchIds);
-      _checkForOutOfStockItems();
-    });
-
-    // Start stock monitoring
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+      PaymentService.init();
       CartService().startStockMonitoring(_currentBranchIds);
       _checkForOutOfStockItems();
     });
@@ -100,14 +104,12 @@ class _CartScreenState extends State<CartScreen> {
   void _onCartChanged() {
     if (mounted) {
       setState(() {});
-      // Check for out-of-stock items when cart changes
       _checkForOutOfStockItems();
     }
   }
 
   Future<void> _checkForOutOfStockItems() async {
     if (_isCheckingStock) return;
-
     setState(() => _isCheckingStock = true);
 
     try {
@@ -119,22 +121,17 @@ class _CartScreenState extends State<CartScreen> {
         });
       }
 
-      // Filter items that haven't been notified yet
       final newOutOfStockItems = outOfStockItems.where(
               (item) => !_notifiedOutOfStockItems.contains(item.id)
       ).toList();
 
-      // Show popup only for new out-of-stock items (and not on first load)
       if (newOutOfStockItems.isNotEmpty && mounted && !_isFirstStockCheck) {
         _showOutOfStockPopup(newOutOfStockItems);
-
-        // Mark these items as notified
         for (final item in newOutOfStockItems) {
           _notifiedOutOfStockItems.add(item.id);
         }
       }
 
-      // Clear notified items that are no longer out of stock
       _notifiedOutOfStockItems.removeWhere(
               (itemId) => !outOfStockItems.any((item) => item.id == itemId)
       );
@@ -202,7 +199,6 @@ class _CartScreenState extends State<CartScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              // Mark items as notified even if kept
               for (final item in outOfStockItems) {
                 _notifiedOutOfStockItems.add(item.id);
               }
@@ -233,7 +229,7 @@ class _CartScreenState extends State<CartScreen> {
     final cartService = CartService();
     for (final item in outOfStockItems) {
       cartService.removeFromCart(item.id);
-      _notifiedOutOfStockItems.remove(item.id); // Remove from notified set
+      _notifiedOutOfStockItems.remove(item.id);
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -260,9 +256,9 @@ class _CartScreenState extends State<CartScreen> {
     try {
       await _loadAvailableBranches();
       await _setNearestBranch();
+
       await Future.wait([
         _loadDrinks(),
-        _loadEstimatedTime(),
       ]);
 
       if (mounted) {
@@ -294,196 +290,255 @@ class _CartScreenState extends State<CartScreen> {
         .toList();
   }
 
-  Future<String> _getNearestBranchByAddress() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null || user.email == null) {
-        return 'Old_Airport';
-      }
-
-      // Get user's default address
-      final userDoc = await FirebaseFirestore.instance
-          .collection('Users')
-          .doc(user.email)
-          .get();
-
-      if (!userDoc.exists) return 'Old_Airport';
-
-      final userData = userDoc.data() as Map<String, dynamic>;
-      final addresses = (userData['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-
-      if (addresses.isEmpty) {
-        return 'Old_Airport';
-      }
-
-      Map<String, dynamic> defaultAddress;
-      try {
-        defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true);
-      } catch (e) {
-        defaultAddress = addresses.first;
-      }
-
-      if (defaultAddress['geolocation'] == null) {
-        return 'Old_Airport';
-      }
-
-      final userGeoPoint = defaultAddress['geolocation'] as GeoPoint;
-
-      // Get all active branches
-      final branchesSnapshot = await FirebaseFirestore.instance
-          .collection('Branch')
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      if (branchesSnapshot.docs.isEmpty) {
-        return 'Old_Airport';
-      }
-
-      String nearestBranchId = 'Old_Airport';
-      double shortestDistance = double.infinity;
-
-      for (final branchDoc in branchesSnapshot.docs) {
-        final branchData = branchDoc.data();
-        final addressData = branchData['address'] as Map<String, dynamic>?;
-
-        if (addressData != null && addressData['geolocation'] != null) {
-          final branchGeoPoint = addressData['geolocation'] as GeoPoint;
-          final distance = _calculateDistance(
-            userGeoPoint.latitude,
-            userGeoPoint.longitude,
-            branchGeoPoint.latitude,
-            branchGeoPoint.longitude,
-          );
-
-          if (distance < shortestDistance) {
-            shortestDistance = distance;
-            nearestBranchId = branchDoc.id;
-          }
-        }
-      }
-
-      return nearestBranchId;
-    } catch (e) {
-      debugPrint('Error finding nearest branch by address: $e');
-      return 'Old_Airport';
-    }
-  }
-
-  Future<String> _getNearestBranchByGPS() async {
-    try {
-      final userPosition = await _getCurrentLocation();
-      if (userPosition == null) {
-        return 'Old_Airport';
-      }
-
-      // Get all active branches
-      final branchesSnapshot = await FirebaseFirestore.instance
-          .collection('Branch')
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      if (branchesSnapshot.docs.isEmpty) {
-        return 'Old_Airport';
-      }
-
-      String nearestBranchId = 'Old_Airport';
-      double shortestDistance = double.infinity;
-
-      for (final branchDoc in branchesSnapshot.docs) {
-        final branchData = branchDoc.data();
-        final addressData = branchData['address'] as Map<String, dynamic>?;
-
-        if (addressData != null && addressData['geolocation'] != null) {
-          final branchGeoPoint = addressData['geolocation'] as GeoPoint;
-          final distance = _calculateDistance(
-            userPosition.latitude,
-            userPosition.longitude,
-            branchGeoPoint.latitude,
-            branchGeoPoint.longitude,
-          );
-
-          if (distance < shortestDistance) {
-            shortestDistance = distance;
-            nearestBranchId = branchDoc.id;
-          }
-        }
-      }
-
-      return nearestBranchId;
-    } catch (e) {
-      debugPrint('Error finding nearest branch by GPS: $e');
-      return 'Old_Airport';
-    }
-  }
-
-
+  // --- SMART BRANCH SELECTION LOGIC ---
   Future<void> _setNearestBranch() async {
     if (!mounted) return;
-
     setState(() => _isFindingNearestBranch = true);
 
     try {
-      List<String> branchIds;
-
+      // 1. Get User Location (Address or GPS)
+      GeoPoint? userLocation;
       if (_orderType == 'delivery') {
-        // For delivery: use default address
-        final nearestBranchId = await _getNearestBranchByAddress();
-        branchIds = [nearestBranchId];
-        debugPrint('🚚 Delivery mode: Using branch by address - $nearestBranchId');
+        userLocation = await _getUserLocationFromAddress();
       } else {
-        // For pickup: use GPS
-        final nearestBranchId = await _getNearestBranchByGPS();
-        branchIds = [nearestBranchId];
-        debugPrint('🏪 Pickup mode: Using branch by GPS - $nearestBranchId');
+        final pos = await _getCurrentLocation();
+        if (pos != null) userLocation = GeoPoint(pos.latitude, pos.longitude);
       }
 
+      if (userLocation == null) throw Exception("Location not found");
+
+      // 2. Fetch ALL Active Branches
+      final branchesSnapshot = await FirebaseFirestore.instance
+          .collection('Branch')
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      if (branchesSnapshot.docs.isEmpty) throw Exception("No active branches");
+
+      // 3. Calculate Stats for Every Branch
+      List<BranchDistance> sortedBranches = [];
+
+      for (final doc in branchesSnapshot.docs) {
+        final data = doc.data();
+        final addressData = data['address'] as Map<String, dynamic>?;
+
+        if (addressData != null && addressData['geolocation'] != null) {
+          final branchGeo = addressData['geolocation'] as GeoPoint;
+          final double distance = _calculateDistance(
+            userLocation.latitude,
+            userLocation.longitude,
+            branchGeo.latitude,
+            branchGeo.longitude,
+          );
+
+          final bool isOpen = data['isOpen'] ?? true;
+          final String name = data['name'] ?? doc.id;
+
+          // Check Delivery Range
+          final double noDeliveryRange = (data['noDeliveryRange'] ?? 0).toDouble();
+
+          // STRICT RULE: If delivery, range matters. If pickup, range doesn't matter.
+          final bool isInRange = _orderType == 'pickup'
+              ? true
+              : (noDeliveryRange > 0 && distance <= noDeliveryRange);
+
+          sortedBranches.add(BranchDistance(doc.id, name, distance, isOpen, isInRange));
+        }
+      }
+
+      if (sortedBranches.isEmpty) throw Exception("No branches with location data");
+
+      // --- FILTERING FOR DELIVERY ---
+      if (_orderType == 'delivery') {
+        // If it's delivery, we STRICTLY remove any branch that is out of range.
+        sortedBranches.removeWhere((b) => !b.isInRange);
+
+        if (sortedBranches.isEmpty) {
+          // NO BRANCHES DELIVER HERE
+          setState(() {
+            _noDeliveryAvailable = true;
+            _isFindingNearestBranch = false;
+          });
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showNoDeliveryDialog();
+          });
+          return;
+        }
+      }
+
+      // 4. SORTING
+      // Order: Open > Closest
+      sortedBranches.sort((a, b) {
+        if (a.isOpen != b.isOpen) {
+          return a.isOpen ? -1 : 1; // Open first
+        }
+        return a.distance.compareTo(b.distance); // Closest first
+      });
+
+      // 5. Select the Best Branch
+      BranchDistance selectedBranch = sortedBranches.first;
+
+      // Determine UI State variables
+      final bool allClosed = sortedBranches.every((b) => !b.isOpen);
+
+      // Check if we skipped a closer branch because it was closed
+      // Note: We only check against other *valid* (in-range) branches
+      final geometricNearest = sortedBranches.reduce((curr, next) => curr.distance < next.distance ? curr : next);
+
+      bool fellBack = false;
+      if (selectedBranch.id != geometricNearest.id && !geometricNearest.isOpen) {
+        fellBack = true;
+        _closedNearestBranchName = geometricNearest.name;
+
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showFallbackBranchDialog(geometricNearest.name, selectedBranch.name);
+        });
+      }
+
+      if (allClosed) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showAllBranchesClosedDialog();
+        });
+      }
+
+      // 6. Apply State
       if (mounted) {
         setState(() {
-          _currentBranchIds = branchIds;
-          _nearestBranchIds = branchIds;
-          _isDefaultNearest = true;
+          _currentBranchIds = [selectedBranch.id];
+          _nearestBranchIds = [selectedBranch.id];
+          _isDefaultNearest = !fellBack;
+          _areAllBranchesClosed = allClosed;
+          _noDeliveryAvailable = false;
           _isFindingNearestBranch = false;
+          _distanceToBranch = selectedBranch.distance;
+          _isOutOfDeliveryRange = false;
         });
 
-        // Update cart service with new branch IDs
-        CartService().updateCurrentBranchIds(branchIds);
+        CartService().updateCurrentBranchIds([selectedBranch.id]);
+        CartService().startStockMonitoring([selectedBranch.id]);
 
-        // Restart stock monitoring with new branches
-        CartService().startStockMonitoring(branchIds);
-
-        // Reset notified items for new branch
-        _notifiedOutOfStockItems.clear();
-        _isFirstStockCheck = true;
-
-        if (_isInitialized) {
-          setState(() {});
-        }
-
-        await loadDeliveryFee(branchIds.first);
-
-        // Calculate distance for pickup orders
-        if (_orderType == 'pickup') {
-          await _calculateDistanceForPickup();
-        }
+        await loadDeliveryFee(selectedBranch.id);
+        await _loadEstimatedTime();
+        _loadDrinks();
       }
+
     } catch (e) {
-      debugPrint('Error setting nearest branch: $e');
-      // Fallback to default branch
-      final fallbackBranch = ['Old_Airport'];
+      debugPrint('Error setting branch: $e');
       if (mounted) {
         setState(() {
-          _currentBranchIds = fallbackBranch;
+          _currentBranchIds = ['Old_Airport']; // Fallback
           _isFindingNearestBranch = false;
         });
-        CartService().updateCurrentBranchIds(fallbackBranch);
-        await loadDeliveryFee(fallbackBranch.first);
-
-        // Calculate distance for pickup orders even with fallback
-        if (_orderType == 'pickup') {
-          await _calculateDistanceForPickup();
-        }
       }
     }
+  }
+
+  void _showNoDeliveryDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.location_off, color: Colors.red, size: 28),
+            SizedBox(width: 12),
+            Expanded(child: Text(AppStrings.get('location_not_serviceable', context), style: AppTextStyles.headline2)),
+          ],
+        ),
+        content: Text(
+          AppStrings.get('no_delivery_available_msg', context),
+          style: AppTextStyles.bodyText1,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text("OK", style: AppTextStyles.buttonText.copyWith(color: AppColors.primaryBlue)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAllBranchesClosedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.access_time_filled, color: Colors.red, size: 28),
+            SizedBox(width: 12),
+            Expanded(child: Text(AppStrings.get('we_are_closed', context), style: AppTextStyles.headline2)),
+          ],
+        ),
+        content: Text(
+          AppStrings.get('all_branches_closed_msg', context),
+          style: AppTextStyles.bodyText1,
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 0)),
+                    (route) => false,
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryBlue,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: Text(AppStrings.get('back_to_home', context), style: AppTextStyles.buttonText.copyWith(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showFallbackBranchDialog(String closedBranch, String openBranch) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.blue, size: 28),
+            SizedBox(width: 12),
+            Expanded(child: Text(AppStrings.get('branch_update', context), style: AppTextStyles.headline2)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "${AppStrings.get('switched_to', context)} $openBranch.",
+              style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 8),
+            Text(
+              "${AppStrings.get('nearest_branch', context)} ($closedBranch) ${AppStrings.get('is_currently', context)} ${AppStrings.get('closed', context)}.",
+              style: AppTextStyles.bodyText2,
+            ),
+            SizedBox(height: 12),
+            Text(
+              AppStrings.get('delivery_updated_msg', context),
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text("OK", style: AppTextStyles.buttonText.copyWith(color: AppColors.primaryBlue)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _refreshBranchSelection() => _setNearestBranch();
@@ -505,17 +560,6 @@ class _CartScreenState extends State<CartScreen> {
     setState(() => _isLoadingDrinks = true);
 
     try {
-      print('🔄 Loading drinks for branches: $_currentBranchIds');
-
-      // First, let's check what branches actually exist
-      final branchesSnap = await FirebaseFirestore.instance
-          .collection('Branch')
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      print('📋 Available branches: ${branchesSnap.docs.map((d) => d.id).toList()}');
-
-      // Try a simpler query first to see if we get any drinks at all
       final snap = await FirebaseFirestore.instance
           .collection('menu_items')
           .where('categoryId', isEqualTo: 'Drinks')
@@ -523,25 +567,20 @@ class _CartScreenState extends State<CartScreen> {
           .limit(10)
           .get();
 
-      print('🍹 Found ${snap.docs.length} drinks total');
-
-      // Now filter by branch availability manually
       final allDrinks = snap.docs.map((d) {
         final data = d.data();
         final branchIds = List<String>.from(data['branchIds'] ?? []);
         final outOfStockBranches = List<String>.from(data['outOfStockBranches'] ?? []);
 
-        print('📝 Drink: ${data['name']}, branches: $branchIds, outOfStock: $outOfStockBranches');
-
         return MenuItem(
           id: d.id,
           name: data['name'] ?? 'Unknown Drink',
-          nameAr: data['name_ar'] ?? '',  // ✅ ADD THIS LINE
+          nameAr: data['name_ar'] ?? '',
           price: (data['price'] ?? 0).toDouble(),
           discountedPrice: data['discountedPrice']?.toDouble(),
           imageUrl: data['imageUrl'] ?? '',
           description: data['description'] ?? '',
-          descriptionAr: data['description_ar'] ?? '',  // ✅ ADD THIS TOO
+          descriptionAr: data['description_ar'] ?? '',
           categoryId: data['categoryId'] ?? '',
           branchIds: branchIds,
           isAvailable: data['isAvailable'] ?? true,
@@ -553,14 +592,9 @@ class _CartScreenState extends State<CartScreen> {
         );
       }).toList();
 
-      // Filter drinks that are available in current branches
       final availableDrinks = allDrinks.where((item) {
-        final isAvailable = item.isAvailableInBranch(_currentBranchIds.first);
-        print('✅ ${item.name} available in ${_currentBranchIds.first}: $isAvailable');
-        return isAvailable;
+        return item.isAvailableInBranch(_currentBranchIds.first);
       }).toList();
-
-      print('🎯 Final available drinks: ${availableDrinks.length}');
 
       if (mounted) {
         setState(() {
@@ -604,10 +638,7 @@ class _CartScreenState extends State<CartScreen> {
 
     try {
       final userGeoPoint = await _getUserLocationFromAddress();
-      if (userGeoPoint == null) {
-        debugPrint('Could not get user location from address');
-        return;
-      }
+      if (userGeoPoint == null) return;
 
       final branchSnap = await FirebaseFirestore.instance
           .collection('Branch')
@@ -615,18 +646,12 @@ class _CartScreenState extends State<CartScreen> {
           .get();
 
       final branchData = branchSnap.data();
-      if (branchData == null || branchData['address'] == null) {
-        debugPrint('Could not get branch location');
-        return;
-      }
+      if (branchData == null || branchData['address'] == null) return;
 
       final branchAddress = branchData['address'] as Map<String, dynamic>;
       final branchGeoPoint = branchAddress['geolocation'] as GeoPoint?;
 
-      if (branchGeoPoint == null) {
-        debugPrint('Branch geolocation not found');
-        return;
-      }
+      if (branchGeoPoint == null) return;
 
       final distance = _calculateDistance(
         userGeoPoint.latitude,
@@ -638,6 +663,8 @@ class _CartScreenState extends State<CartScreen> {
       if (mounted) {
         setState(() {
           _distanceToBranch = distance;
+          // Note: _isOutOfDeliveryRange is mostly handled by _setNearestBranch now,
+          // but we keep this for dynamic updates.
           _isOutOfDeliveryRange = distance > _noDeliveryRange;
 
           if (distance <= _freeDeliveryRange) {
@@ -744,6 +771,7 @@ class _CartScreenState extends State<CartScreen> {
   double _toRadians(double degrees) {
     return degrees * pi / 180;
   }
+
   String _getPaymentTypeDisplay(BuildContext context, String paymentType) {
     switch (paymentType) {
       case 'Cash on Delivery':
@@ -754,7 +782,6 @@ class _CartScreenState extends State<CartScreen> {
         return paymentType;
     }
   }
-
 
   Future<void> _loadUserAddress(String userEmail) async {
     if (_isLoadingAddress) return;
@@ -804,12 +831,59 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  // Enhanced checkout with stock validation
   Future<void> _proceedToCheckout() async {
-    // 1. Basic Validations (Delivery Range)
-    if (_orderType == 'delivery' && _isOutOfDeliveryRange) {
+    // --- 1. NEW: FINAL SAFETY CHECK (Real-Time) ---
+    // Fetch the latest status of the selected branch right now
+    if (_currentBranchIds.isNotEmpty) {
+      final freshBranchSnap = await FirebaseFirestore.instance
+          .collection('Branch')
+          .doc(_currentBranchIds.first)
+          .get();
+
+      final bool isBranchOpen = freshBranchSnap.data()?['isOpen'] ?? true;
+
+      if (!isBranchOpen) {
+        // If it closed while they were looking at the screen:
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: Text(AppStrings.get('restaurant_just_closed', context), style: AppTextStyles.headline2),
+              content: Text(
+                AppStrings.get('branch_closed_msg', context),
+                style: AppTextStyles.bodyText1,
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _setNearestBranch(); // Refresh logic to find next best branch
+                  },
+                  child: Text("OK", style: AppTextStyles.buttonText.copyWith(color: AppColors.primaryBlue)),
+                ),
+              ],
+            ),
+          );
+        }
+        return; // Stop checkout
+      }
+    }
+    // ----------------------------------
+
+    // 2. Basic Validations
+    if (_orderType == 'delivery' && (_isOutOfDeliveryRange || _noDeliveryAvailable)) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('${AppStrings.get('delivery_range_error', context)} $_noDeliveryRange ${AppStrings.get('km', context)}.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
+
+    if (_areAllBranchesClosed) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(AppStrings.get('all_branches_closed_msg', context)),
         backgroundColor: Colors.red,
       ));
       return;
@@ -818,7 +892,6 @@ class _CartScreenState extends State<CartScreen> {
     final String notes = _notesController.text.trim();
     if (!mounted) return;
 
-    // Start Loading State
     setState(() {
       _isCheckingOut = true;
       _isValidatingStock = true;
@@ -827,8 +900,6 @@ class _CartScreenState extends State<CartScreen> {
     try {
       final cartService = CartService();
 
-      // 2. Stock Checks (Pre-Order)
-      // Check for out-of-stock items before validation
       final outOfStockItems = await cartService.getOutOfStockItems(_currentBranchIds);
       if (outOfStockItems.isNotEmpty) {
         setState(() {
@@ -839,13 +910,11 @@ class _CartScreenState extends State<CartScreen> {
         return;
       }
 
-      // Validate stock before proceeding
       await cartService.validateCartStock(_currentBranchIds);
       setState(() => _isValidatingStock = false);
 
       if (cartService.items.isEmpty) throw Exception(AppStrings.get("your_cart_empty", context));
 
-      // 3. User & Address Data Preparation
       final user = FirebaseAuth.instance.currentUser;
       if (user == null || user.email == null) throw Exception(AppStrings.get("user_not_authenticated", context));
 
@@ -866,8 +935,6 @@ class _CartScreenState extends State<CartScreen> {
       final String userName = userData['name'] ?? 'Customer';
       final String userPhone = userData['phone'] ?? '12345678';
 
-      // 4. Create Pending Order in Firestore
-      // We create the order first so we have an ID to link to the payment
       final orderDoc = await _createOrderInFirestore(
         user: user,
         cartService: cartService,
@@ -880,9 +947,7 @@ class _CartScreenState extends State<CartScreen> {
 
       final double totalForPayment = cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0);
 
-      // 5. Payment Execution
       if (_paymentType == 'Cash on Delivery' || _selectedMfPaymentMethod == null) {
-        // --- COD FLOW ---
         final paymentMeta = _composePaymentMeta(totalForPayment);
         await orderDoc.update(paymentMeta);
 
@@ -894,7 +959,6 @@ class _CartScreenState extends State<CartScreen> {
         _showOrderConfirmationDialog();
 
       } else {
-        // --- ONLINE PAYMENT FLOW (MyFatoorah) ---
 
         if (_selectedMfPaymentMethod?.paymentMethodId == null) {
           throw Exception(AppStrings.get("invalid_payment_method", context));
@@ -907,7 +971,6 @@ class _CartScreenState extends State<CartScreen> {
           customerEmail: user.email!,
           customerMobile: userPhone,
           onSuccess: (String invoiceId) async {
-            // PAYMENT SUCCESS: Finalize the order
             debugPrint("Payment Success! Invoice: $invoiceId");
 
             await orderDoc.update({
@@ -931,10 +994,7 @@ class _CartScreenState extends State<CartScreen> {
             if (mounted) _showOrderConfirmationDialog();
           },
           onFailure: (String errorMessage) async {
-            // PAYMENT FAILED/CANCELLED: Delete the pending order
             debugPrint("Payment Failed/Cancelled: $errorMessage");
-
-            // This line fixes the bug: remove the pending order so it doesn't stay in "My Orders"
             await orderDoc.delete();
 
             if (mounted) {
@@ -952,7 +1012,6 @@ class _CartScreenState extends State<CartScreen> {
         ));
       }
     } finally {
-      // Ensure loading spinner stops whether success or failure
       if (mounted) {
         setState(() {
           _isCheckingOut = false;
@@ -963,10 +1022,6 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Widget _buildYouMightAlsoLikeSection() {
-    print('_isLoadingDrinks: $_isLoadingDrinks');
-    print('_drinksItems length: ${_drinksItems.length}');
-    print('_currentBranchIds: $_currentBranchIds');
-
     if (_isLoadingDrinks) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1172,7 +1227,6 @@ class _CartScreenState extends State<CartScreen> {
           value: 'googlemaps',
           child: Row(
             children: [
-              // Google Maps logo using Container with colors
               Container(
                 width: 28,
                 height: 28,
@@ -1196,7 +1250,6 @@ class _CartScreenState extends State<CartScreen> {
           value: 'applemaps',
           child: Row(
             children: [
-              // Apple Maps logo using Container with colors
               Container(
                 width: 28,
                 height: 28,
@@ -1246,8 +1299,6 @@ class _CartScreenState extends State<CartScreen> {
       ),
     );
   }
-
-
 
   Future<void> _openNavigationApp(String app) async {
     try {
@@ -1304,9 +1355,8 @@ class _CartScreenState extends State<CartScreen> {
   void _onOrderTypeChanged(String newType) async {
     if (newType != _orderType) {
       setState(() => _orderType = newType);
-      await _setNearestBranch(); // This will now use the correct method based on order type
+      await _setNearestBranch();
 
-      // Calculate distance specifically for pickup
       if (newType == 'pickup') {
         await _calculateDistanceForPickup();
       } else {
@@ -1542,15 +1592,20 @@ class _CartScreenState extends State<CartScreen> {
     final cartService = CartService();
     final bool isCartEmpty = cartService.items.isEmpty;
 
-    // Check if any items in cart are unavailable
     bool hasUnavailableItems = _outOfStockItems.isNotEmpty;
 
     final bool isDisabled = _isCheckingOut || _isValidatingStock ||
         isCartEmpty || hasUnavailableItems ||
+        _areAllBranchesClosed || _noDeliveryAvailable ||
         (_orderType == 'delivery' && _isOutOfDeliveryRange);
 
     String buttonText = AppStrings.get('checkout', context);
-    if (_isValidatingStock) {
+
+    if (_noDeliveryAvailable) {
+      buttonText = AppStrings.get('location_not_serviceable', context);
+    } else if (_areAllBranchesClosed) {
+      buttonText = AppStrings.get('restaurant_closed', context);
+    } else if (_isValidatingStock) {
       buttonText = AppStrings.get('checking_stock', context);
     } else if (_orderType == 'delivery' && _isOutOfDeliveryRange) {
       buttonText = AppStrings.get('outside_delivery_range', context);
@@ -1711,10 +1766,10 @@ class _CartScreenState extends State<CartScreen> {
       statusText = "${AppStrings.get('delivery_range_error', context)} $_noDeliveryRange ${AppStrings.get('km', context)}";
       statusColor = Colors.red;
     } else if (deliveryFee == 0) {
-      statusText = "${AppStrings.get('free_delivery_within', context)} $_freeDeliveryRange ${AppStrings.get('kms', context)}";  // ✅ Changed
+      statusText = "${AppStrings.get('free_delivery_within', context)} $_freeDeliveryRange ${AppStrings.get('kms', context)}";
       statusColor = Colors.green;
     } else {
-      statusText = "${_distanceToBranch.toStringAsFixed(1)} ${AppStrings.get('km', context)} ${AppStrings.get('from_branch', context)}";
+      statusText = "${_distanceToBranch.toStringAsFixed(1)} ${AppStrings.get('km', context)} ${AppStrings.get('from branch', context)}";
       statusColor = AppColors.darkGrey;
     }
 
@@ -1867,7 +1922,7 @@ class _CartScreenState extends State<CartScreen> {
                       const SizedBox(height: 4),
                       Text(
                         _isFindingNearestBranch
-                            ? AppStrings.get('finding_nearest_branch_loading', context)  // ✅ Changed from hardcoded
+                            ? AppStrings.get('finding_nearest_branch_loading', context)
                             : _getBranchesDisplayName(_currentBranchIds),
                         style: AppTextStyles.bodyText1.copyWith(
                           fontWeight: FontWeight.w600,
@@ -1890,7 +1945,6 @@ class _CartScreenState extends State<CartScreen> {
             ),
           ),
         ),
-        // Add the navigation section here
         _buildNavigationSection(),
       ],
     );
@@ -1937,7 +1991,7 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  AppStrings.get('loading_address', context),  // ✅ Changed from hardcoded
+                  AppStrings.get('loading_address', context),
                   style: AppTextStyles.bodyText1.copyWith(
                     fontWeight: FontWeight.w600,
                     color: AppColors.darkGrey,
@@ -2061,7 +2115,7 @@ class _CartScreenState extends State<CartScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  "${AppStrings.get('est', context)} ${_orderType == 'delivery' ? AppStrings.get('delivery', context) : AppStrings.get('pickup', context)} ${AppStrings.get('time', context)}",  // ✅ Changed
+                  "${AppStrings.get('est', context)} ${_orderType == 'delivery' ? AppStrings.get('delivery', context) : AppStrings.get('pickup', context)} ${AppStrings.get('time', context)}",
                   style: AppTextStyles.bodyText2.copyWith(
                     fontWeight: FontWeight.bold,
                     fontSize: 12,
@@ -2075,7 +2129,7 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 if (_orderType == 'pickup' && !_isFindingNearestBranch)
                   Text(
-                    "${AppStrings.get('from', context)} ${_getBranchesDisplayName(_currentBranchIds)}",  // ✅ Changed "from" text
+                    "${AppStrings.get('from', context)} ${_getBranchesDisplayName(_currentBranchIds)}",
                     style: AppTextStyles.bodyText2.copyWith(
                       color: Colors.green,
                       fontSize: 11,
@@ -2094,7 +2148,7 @@ class _CartScreenState extends State<CartScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          AppStrings.get('special_instructions', context),  // ✅ Changed from hardcoded
+          AppStrings.get('special_instructions', context),
           style: AppTextStyles.headline2.copyWith(
             fontSize: 18,
             color: AppColors.darkGrey,
@@ -2225,7 +2279,6 @@ class _CartScreenState extends State<CartScreen> {
           TextButton(
             onPressed: () {
               cartService.clearCart();
-              // Also clear notified items when cart is cleared
               notifiedOutOfStockItems.clear();
               Navigator.pop(context);
             },
@@ -2245,7 +2298,6 @@ class _CartScreenState extends State<CartScreen> {
 
   void _showPaymentMethodsBottomSheet() {
     final cartService = CartService();
-    // Calculate current total for the API
     final double currentTotal = cartService.totalAfterDiscount +
         (_orderType == 'delivery' ? deliveryFee : 0.0);
 
@@ -2256,7 +2308,6 @@ class _CartScreenState extends State<CartScreen> {
       builder: (bottomSheetContext) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            // Fetch methods if list is empty
             if (_mfPaymentMethods.isEmpty && !_isLoadingPaymentMethods) {
               _isLoadingPaymentMethods = true;
               PaymentService.getPaymentMethods(currentTotal).then((methods) {
@@ -2265,7 +2316,6 @@ class _CartScreenState extends State<CartScreen> {
                     _mfPaymentMethods = methods;
                     _isLoadingPaymentMethods = false;
                   });
-                  // Also update main state
                   setState(() {});
                 }
               }).catchError((e) {
@@ -2302,7 +2352,6 @@ class _CartScreenState extends State<CartScreen> {
                   Text(AppStrings.get('select_payment_method', context), style: AppTextStyles.headline2),
                   const SizedBox(height: 16),
 
-                  // 1. Cash on Delivery Option
                   ListTile(
                     leading: CircleAvatar(
                       backgroundColor: AppColors.lightGrey,
@@ -2322,7 +2371,7 @@ class _CartScreenState extends State<CartScreen> {
                     onTap: () {
                       setState(() {
                         _paymentType = 'Cash on Delivery';
-                        _selectedMfPaymentMethod = null; // Clear online selection
+                        _selectedMfPaymentMethod = null;
                       });
                       Navigator.pop(context);
                     },
@@ -2330,7 +2379,6 @@ class _CartScreenState extends State<CartScreen> {
 
                   const Divider(),
 
-                  // 2. Dynamic MyFatoorah Options
                   if (_isLoadingPaymentMethods)
                     const Padding(
                       padding: EdgeInsets.all(16.0),
@@ -2409,13 +2457,13 @@ class _CartScreenState extends State<CartScreen> {
             Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
             const SizedBox(height: 20),
             Text(
-              AppStrings.get('select_pickup_branch', context),  // ✅ Changed from hardcoded
+              AppStrings.get('select_pickup_branch', context),
               style: AppTextStyles.headline2,
             ),
             const SizedBox(height: 16),
             if (_allBranches.isEmpty)
               Padding(padding: const EdgeInsets.symmetric(vertical: 32), child: Text(
-                AppStrings.get('no_branches_available', context),  // ✅ Changed from hardcoded
+                AppStrings.get('no_branches_available', context),
                 style: AppTextStyles.bodyText2,
               ),)
             else
@@ -2429,20 +2477,32 @@ class _CartScreenState extends State<CartScreen> {
                 )),
                 trailing: _currentBranchIds.contains(branch['id']) ? const Icon(Icons.check_circle, color: Colors.green) : null,
                 onTap: () async {
+
+                  final branchDoc = await FirebaseFirestore.instance.collection('Branch').doc(branch['id']).get();
+                  final bool isOpen = branchDoc.data()?['isOpen'] ?? true;
+
+                  if (!isOpen) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text("${branch['name']} is currently closed for pickup."),
+                      backgroundColor: Colors.red,
+                      duration: Duration(seconds: 3),
+                    ));
+                    return;
+                  }
+
                   setState(() {
                     _currentBranchIds = [branch['id']!];
-                    _isDefaultNearest = (_currentBranchIds == _nearestBranchIds);
-                    // Reset notified items when branch changes
+                    _isDefaultNearest = false;
+                    _areAllBranchesClosed = false;
                     _notifiedOutOfStockItems.clear();
                     _isFirstStockCheck = true;
                   });
 
-                  // Load data for the new branch
                   await _loadDrinks();
                   await _loadEstimatedTime();
                   await loadDeliveryFee(branch['id']!);
 
-                  // Calculate distance for pickup orders
                   if (_orderType == 'pickup') {
                     await _calculateDistanceForPickup();
                   }
@@ -2461,10 +2521,7 @@ class _CartScreenState extends State<CartScreen> {
 
     try {
       final userPosition = await _getCurrentLocation();
-      if (userPosition == null) {
-        debugPrint('Could not get user location for pickup distance calculation');
-        return;
-      }
+      if (userPosition == null) return;
 
       final branchSnap = await FirebaseFirestore.instance
           .collection('Branch')
@@ -2472,18 +2529,12 @@ class _CartScreenState extends State<CartScreen> {
           .get();
 
       final branchData = branchSnap.data();
-      if (branchData == null || branchData['address'] == null) {
-        debugPrint('Could not get branch location');
-        return;
-      }
+      if (branchData == null || branchData['address'] == null) return;
 
       final branchAddress = branchData['address'] as Map<String, dynamic>;
       final branchGeoPoint = branchAddress['geolocation'] as GeoPoint?;
 
-      if (branchGeoPoint == null) {
-        debugPrint('Branch geolocation not found');
-        return;
-      }
+      if (branchGeoPoint == null) return;
 
       final distance = _calculateDistance(
         userPosition.latitude,
@@ -2497,8 +2548,6 @@ class _CartScreenState extends State<CartScreen> {
           _distanceToBranch = distance;
         });
       }
-
-      debugPrint('📍 Pickup distance to ${_currentBranchIds.first}: ${distance.toStringAsFixed(2)} km');
     } catch (e) {
       debugPrint('Error calculating pickup distance: $e');
     }
@@ -2558,13 +2607,13 @@ class _CartScreenState extends State<CartScreen> {
                   Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
                   const SizedBox(height: 20),
                   Text(
-                    AppStrings.get('select_delivery_address', context),  // ✅ Changed from hardcoded
+                    AppStrings.get('select_delivery_address', context),
                     style: AppTextStyles.headline2,
                   ),
                   const SizedBox(height: 16),
                   if (addresses.isEmpty)
                     Padding(padding: const EdgeInsets.symmetric(vertical: 32), child: Text(
-                      AppStrings.get('no_addresses_saved', context),  // ✅ Changed from hardcoded
+                      AppStrings.get('no_addresses_saved', context),
                       style: AppTextStyles.bodyText2,
                     ),)
                   else
@@ -2749,7 +2798,6 @@ class _CartScreenState extends State<CartScreen> {
 
     await cartService.clearCart();
     _notesController.clear();
-    // Clear notified items when order is successful
     _notifiedOutOfStockItems.clear();
   }
 
@@ -2859,7 +2907,6 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
           });
         }
 
-        // Show popup if item becomes unavailable while in cart
         if (!isAvailableInBranch &&
             widget.item.quantity > 0 &&
             mounted &&
@@ -2956,7 +3003,6 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
 
   void _handleOutOfStockTap() {
     if (!mounted) return;
-
     _showOutOfStockDialog();
   }
 
@@ -3002,7 +3048,6 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Image with out-of-stock overlay
             Stack(
               children: [
                 ClipRRect(
@@ -3290,7 +3335,7 @@ class _DrinkCardState extends State<_DrinkCard> {
       orElse: () => CartModel(
         id: widget.drink.id,
         name: widget.drink.name,
-        nameAr: widget.drink.nameAr,  // Make sure this is included
+        nameAr: widget.drink.nameAr,
         imageUrl: widget.drink.imageUrl,
         price: widget.drink.price,
         discountedPrice: widget.drink.discountedPrice,
@@ -3298,7 +3343,6 @@ class _DrinkCardState extends State<_DrinkCard> {
       ),
     );
 
-    // Check if item is available before any quantity change
     final isAvailable = widget.drink.isAvailableInBranch(widget.currentBranchIds.first);
     if (!isAvailable) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3343,7 +3387,6 @@ class _DrinkCardState extends State<_DrinkCard> {
         int quantity = cartItem.quantity;
         final isAvailable = widget.drink.isAvailableInBranch(widget.currentBranchIds.first);
 
-        // ✅ ADD THIS LINE - Get localized name
         final drinkName = widget.drink.getLocalizedName(context);
 
         return Container(
@@ -3363,7 +3406,6 @@ class _DrinkCardState extends State<_DrinkCard> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Image Section
               Expanded(
                 child: ClipRRect(
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
@@ -3397,7 +3439,6 @@ class _DrinkCardState extends State<_DrinkCard> {
                             ),
                           ),
                         ),
-                      // Show out of stock warning even if item is in cart
                       if (!isAvailable && quantity > 0)
                         Positioned(
                           bottom: 8,
@@ -3417,7 +3458,6 @@ class _DrinkCardState extends State<_DrinkCard> {
                             ),
                           ),
                         ),
-                      // Add a subtle indicator for discounted items
                       if (widget.drink.discountedPrice != null && isAvailable)
                         Positioned(
                           top: 8,
@@ -3443,14 +3483,13 @@ class _DrinkCardState extends State<_DrinkCard> {
                 ),
               ),
 
-              // Details Section
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      drinkName,  // ✅ CHANGED FROM widget.drink.name
+                      drinkName,
                       style: AppTextStyles.bodyText1.copyWith(
                         fontWeight: FontWeight.bold,
                         color: isAvailable ? AppColors.darkGrey : Colors.grey,
@@ -3487,7 +3526,6 @@ class _DrinkCardState extends State<_DrinkCard> {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                    // Show warning message if item is in cart but out of stock
                     if (!isAvailable && quantity > 0)
                       Padding(
                         padding: const EdgeInsets.only(top: 4.0),
@@ -3504,7 +3542,6 @@ class _DrinkCardState extends State<_DrinkCard> {
                 ),
               ),
 
-              // Add to Cart Button
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                 child: _buildAddButton(
@@ -3529,12 +3566,11 @@ class _DrinkCardState extends State<_DrinkCard> {
       ) {
     final isAvailable = item.isAvailableInBranch(currentBranchId);
 
-    // Item is NOT available - show disabled button
     if (!isAvailable) {
       return SizedBox(
         width: double.infinity,
         child: ElevatedButton(
-          onPressed: null, // Disabled
+          onPressed: null,
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.grey.shade300,
             disabledBackgroundColor: Colors.grey.shade300,
@@ -3552,7 +3588,6 @@ class _DrinkCardState extends State<_DrinkCard> {
       );
     }
 
-    // Item is available, show normal quantity controls
     return currentQuantity == 0
         ? SizedBox(
       width: double.infinity,
@@ -3688,7 +3723,6 @@ class CartService extends ChangeNotifier {
     }
   }
 
-  // Enhanced add to cart with stock validation
   Future<void> addToCartWithStockCheck(
       MenuItem menuItem, {
         int quantity = 1,
@@ -3696,7 +3730,6 @@ class CartService extends ChangeNotifier {
         Map<String, dynamic>? variants,
         List<String>? addons,
       }) async {
-    // Check if item is available in the selected branch
     if (!menuItem.isAvailableInBranch(branchId)) {
       throw Exception('${menuItem.name} is not available in the selected branch');
     }
@@ -3722,7 +3755,7 @@ class CartService extends ChangeNotifier {
       _items.add(CartModel(
         id: menuItem.id,
         name: menuItem.name,
-        nameAr: menuItem.nameAr,  // ✅ Add this line
+        nameAr: menuItem.nameAr,
         imageUrl: menuItem.imageUrl,
         price: menuItem.price,
         discountedPrice: menuItem.discountedPrice,
@@ -3735,8 +3768,6 @@ class CartService extends ChangeNotifier {
     await _saveCartToPrefs();
   }
 
-
-  // New method to check for out-of-stock items
   Future<List<CartModel>> getOutOfStockItems(List<String> branchIds) async {
     final List<CartModel> outOfStockItems = [];
 
@@ -3756,7 +3787,6 @@ class CartService extends ChangeNotifier {
         final outOfStockBranches = List<String>.from(menuItemData['outOfStockBranches'] ?? []);
         final isAvailable = menuItemData['isAvailable'] as bool? ?? true;
 
-        // Check if item is unavailable in all selected branches
         bool isAvailableInAnyBranch = false;
         for (final branchId in branchIds) {
           if (isAvailable && !outOfStockBranches.contains(branchId)) {
@@ -3777,7 +3807,6 @@ class CartService extends ChangeNotifier {
     return outOfStockItems;
   }
 
-  // Method to remove multiple out-of-stock items
   Future<void> removeOutOfStockItems(List<CartModel> outOfStockItems) async {
     for (final item in outOfStockItems) {
       _items.removeWhere((cartItem) => cartItem.id == item.id);
@@ -3786,11 +3815,9 @@ class CartService extends ChangeNotifier {
     await _saveCartToPrefs();
   }
 
-  // Validate entire cart stock before checkout
   Future<void> validateCartStock(List<String> branchIds) async {
     for (final item in _items) {
       try {
-        // Fetch latest stock info from Firestore
         final menuItemSnap = await FirebaseFirestore.instance
             .collection('menu_items')
             .doc(item.id)
@@ -3804,7 +3831,6 @@ class CartService extends ChangeNotifier {
         final outOfStockBranches = List<String>.from(menuItemData['outOfStockBranches'] ?? []);
         final isAvailable = menuItemData['isAvailable'] as bool? ?? true;
 
-        // Check availability for all selected branches
         bool isAvailableInAnyBranch = false;
         for (final branchId in branchIds) {
           if (isAvailable && !outOfStockBranches.contains(branchId)) {
@@ -3824,21 +3850,17 @@ class CartService extends ChangeNotifier {
     }
   }
 
-  // Real-time stock monitoring
   void startStockMonitoring(List<String> branchIds) {
-    // Stop existing timer if any
     _stockMonitorTimer?.cancel();
 
-    // Start new timer
     _stockMonitorTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
       final outOfStockItems = await getOutOfStockItems(branchIds);
       if (outOfStockItems.isNotEmpty) {
-        notifyListeners(); // This will trigger UI updates
+        notifyListeners();
       }
     });
   }
 
-  // Stop stock monitoring
   void stopStockMonitoring() {
     _stockMonitorTimer?.cancel();
     _stockMonitorTimer = null;
@@ -3885,7 +3907,6 @@ class CartService extends ChangeNotifier {
       final couponDoc = snapshot.docs.first;
       final coupon = CouponModel.fromMap(couponDoc.data(), couponDoc.id);
 
-      // Updated to use first branch for validation
       if (!coupon.isValidForUser(userId, _currentBranchIds.first, 'delivery')) {
         throw Exception('Coupon not valid for this order');
       }
@@ -3950,116 +3971,16 @@ class CartService extends ChangeNotifier {
     await _saveCartToPrefs();
   }
 
-  Future<List<String>> _findNearestBranch() async {
-    try {
-      Position userPosition = await _getUserLocation();
-
-      final branchesSnapshot = await FirebaseFirestore.instance
-          .collection('Branch')
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      if (branchesSnapshot.docs.isEmpty) {
-        return ['Old_Airport'];
-      }
-
-      String nearestBranchId = 'Old_Airport';
-      double shortestDistance = double.infinity;
-
-      for (final branchDoc in branchesSnapshot.docs) {
-        final branchData = branchDoc.data();
-        final addressData = branchData['address'] as Map<String, dynamic>?;
-
-        if (addressData != null && addressData['geolocation'] != null) {
-          final geoPoint = addressData['geolocation'] as GeoPoint;
-          final branchLat = geoPoint.latitude;
-          final branchLng = geoPoint.longitude;
-
-          final distance = _calculateDistance(
-            userPosition.latitude,
-            userPosition.longitude,
-            branchLat,
-            branchLng,
-          );
-
-          if (distance < shortestDistance) {
-            shortestDistance = distance;
-            nearestBranchId = branchDoc.id;
-          }
-        }
-      }
-
-      debugPrint(
-          'Nearest branch: $nearestBranchId, Distance: ${shortestDistance.toStringAsFixed(2)} km');
-      return [nearestBranchId];
-    } catch (e) {
-      debugPrint('Error finding nearest branch: $e');
-      return ['Old_Airport'];
-    }
-  }
-
-  Future<Position> _getUserLocation() async {
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      throw Exception('Location services are disabled.');
-    }
-
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        throw Exception('Location permissions are denied');
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      throw Exception('Location permissions are permanently denied.');
-    }
-
-    return await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.medium,
-      timeLimit: Duration(seconds: 10),
-    );
-  }
-
-  double _calculateDistance(
-      double lat1, double lon1, double lat2, double lon2) {
-    const double earthRadius = 6371;
-
-    double dLat = _toRadians(lat2 - lat1);
-    double dLon = _toRadians(lon2 - lon1);
-
-    double a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(_toRadians(lat1)) *
-            cos(_toRadians(lat2)) *
-            sin(dLon / 2) *
-            sin(dLon / 2);
-
-    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-
-    return earthRadius * c;
-  }
-
-  double _toRadians(double degrees) {
-    return degrees * pi / 180;
-  }
-
-  // Method to update current branch IDs
   void updateCurrentBranchIds(List<String> branchIds) {
     _currentBranchIds = branchIds;
     notifyListeners();
     _saveCartToPrefs();
   }
 
-  // Method to check if an item is in cart
   bool isItemInCart(String itemId) {
     return _items.any((item) => item.id == itemId);
   }
 
-  // Method to get quantity of specific item in cart
   int getItemQuantity(String itemId) {
     final item = _items.firstWhere(
           (item) => item.id == itemId,
@@ -4074,7 +3995,6 @@ class CartService extends ChangeNotifier {
     return item.quantity;
   }
 
-  // Method to get cart item by ID
   CartModel? getCartItem(String itemId) {
     try {
       return _items.firstWhere((item) => item.id == itemId);
