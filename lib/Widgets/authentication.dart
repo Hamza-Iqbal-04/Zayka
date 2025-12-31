@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
 import 'bottom_nav.dart';
-import '../main.dart';
 import 'models.dart';
 
 String _docIdFor(User user) => user.email!.toLowerCase();

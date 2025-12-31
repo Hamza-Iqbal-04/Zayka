@@ -108,7 +108,7 @@ class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveCl
     return CustomScrollView(
       slivers: [
         SliverAppBar(
-          expandedHeight: 220.0,
+          expandedHeight: 160.0, // REDUCED HEIGHT (was 220)
           floating: false,
           pinned: true,
           elevation: 0,
@@ -132,7 +132,7 @@ class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveCl
         ),
         SliverToBoxAdapter(
           child: Transform.translate(
-            offset: const Offset(0, -30),
+            offset: const Offset(0, -20), // REDUCED OFFSET (was -30)
             child: Container(
               decoration: const BoxDecoration(
                 color: Color(0xFFF8FAFC),
@@ -142,11 +142,17 @@ class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveCl
                 ),
               ),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 40, 20, 120),
+                padding: EdgeInsets.fromLTRB(
+                    20,
+                    30,
+                    20,
+                    // INCREASED BOTTOM PADDING to clear navbar
+                    MediaQuery.of(context).padding.bottom + 100
+                ),
                 child: Column(
                   children: [
                     _buildModernProfileMenu(context, user),
-                    const SizedBox(height: 30),
+                    const SizedBox(height: 24),
                     _buildModernLogoutButton(),
                     const SizedBox(height: 20),
                   ],
@@ -166,35 +172,28 @@ class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveCl
 
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            const SizedBox(height: 12),
+            // Profile Image Section
             Stack(
               children: [
                 Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.3), width: 3),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 20,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
+                    border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
                   ),
                   child: GestureDetector(
                     onTap: _pickImage,
                     child: CircleAvatar(
-                      radius: 40,
+                      radius: 35, // REDUCED RADIUS (was 40)
                       backgroundColor: Colors.white,
                       backgroundImage: _profileImage != null
                           ? FileImage(_profileImage!)
                           : (imageUrl != null ? NetworkImage(imageUrl) : null) as ImageProvider?,
                       child: (_profileImage == null && imageUrl == null)
-                          ? Icon(Icons.person, size: 36, color: Colors.grey.shade400)
+                          ? Icon(Icons.person, size: 32, color: Colors.grey.shade400)
                           : null,
                     ),
                   ),
@@ -203,52 +202,60 @@ class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveCl
                   bottom: 0,
                   right: 0,
                   child: Container(
+                    padding: const EdgeInsets.all(4),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
                           color: Colors.black.withOpacity(0.1),
-                          blurRadius: 10,
-                          offset: const Offset(0, 5),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
                         ),
                       ],
                     ),
-                    child: IconButton(
-                      icon: const Icon(Icons.camera_alt),
-                      color: AppColors.primaryBlue,
-                      iconSize: 18,
-                      onPressed: pickImage,
-                    ),
+                    child: const Icon(Icons.camera_alt, color: AppColors.primaryBlue, size: 14),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            Text(
-              displayName,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
-                letterSpacing: -0.2,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                email,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Colors.white,
-                  fontWeight: FontWeight.w500,
-                ),
+            const SizedBox(width: 16),
+            // Text Info Section
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    displayName,
+                    style: const TextStyle(
+                      fontSize: 18, // REDUCED FONT (was 20)
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: -0.2,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      email,
+                      style: const TextStyle(
+                        fontSize: 11, // REDUCED FONT (was 12)
+                        color: Colors.white,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -323,33 +330,34 @@ class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveCl
 
   Widget _buildLanguageSwitchItem(Map<String, dynamic> item, LanguageProvider provider) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 12), // Tighter spacing
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16), // Slightly less rounded
+        border: Border.all(color: Colors.grey.shade100), // Added border
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 15,
-            offset: const Offset(0, 5),
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
             Container(
-              width: 50,
-              height: 50,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
                 color: (item['color'] as Color).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(15),
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
                 item['icon'] as IconData,
                 color: item['color'] as Color,
-                size: 24,
+                size: 20,
               ),
             ),
             const SizedBox(width: 16),
@@ -360,17 +368,17 @@ class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveCl
                   Text(
                     item['title'] as String,
                     style: const TextStyle(
-                      fontSize: 16,
+                      fontSize: 15,
                       fontWeight: FontWeight.w600,
                       color: Color(0xFF1F2937),
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   Text(
                     item['subtitle'] as String,
                     style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey.shade600,
+                      fontSize: 12,
+                      color: Colors.grey.shade500,
                       fontWeight: FontWeight.w400,
                     ),
                   ),
@@ -392,38 +400,39 @@ class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveCl
 
   Widget _buildStandardMenuItem(Map<String, dynamic> item) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade100),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 15,
-            offset: const Offset(0, 5),
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
           onTap: item['onTap'] as VoidCallback,
           child: Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
               children: [
                 Container(
-                  width: 50,
-                  height: 50,
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
                     color: (item['color'] as Color).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(15),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
                     item['icon'] as IconData,
                     color: item['color'] as Color,
-                    size: 24,
+                    size: 20,
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -434,17 +443,17 @@ class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveCl
                       Text(
                         item['title'] as String,
                         style: const TextStyle(
-                          fontSize: 16,
+                          fontSize: 15,
                           fontWeight: FontWeight.w600,
                           color: Color(0xFF1F2937),
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 2),
                       Text(
                         item['subtitle'] as String,
                         style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey.shade600,
+                          fontSize: 12,
+                          color: Colors.grey.shade500,
                           fontWeight: FontWeight.w400,
                         ),
                       ),
@@ -453,8 +462,8 @@ class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveCl
                 ),
                 Icon(
                   Icons.arrow_forward_ios_rounded,
-                  size: 16,
-                  color: Colors.grey.shade400,
+                  size: 14,
+                  color: Colors.grey.shade300,
                 ),
               ],
             ),
@@ -467,55 +476,45 @@ class _ProfileScreenState extends State<ProfileScreen> with AutomaticKeepAliveCl
   Widget _buildModernLogoutButton() {
     return Container(
       width: double.infinity,
-      height: 56,
+      height: 50, // Slightly smaller height
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.red.shade100, width: 1),
+        color: Colors.red.shade50.withOpacity(0.5),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: _isLoggingOut ? null : _logout,
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              gradient: _isLoggingOut
-                  ? null
-                  : LinearGradient(
-                colors: [Colors.red.shade50, Colors.red.shade50],
+          child: Center(
+            child: _isLoggingOut
+                ? SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.red.shade600),
               ),
-            ),
-            child: Center(
-              child: _isLoggingOut
-                  ? SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.red.shade600),
+            )
+                : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.logout_rounded,
+                  color: Colors.red.shade600,
+                  size: 18,
                 ),
-              )
-                  : Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.logout_rounded,
+                const SizedBox(width: 8),
+                Text(
+                  AppStrings.get('logout', context),
+                  style: TextStyle(
                     color: Colors.red.shade600,
-                    size: 20,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    AppStrings.get('logout', context),
-                    style: TextStyle(
-                      color: Colors.red.shade600,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
-import 'package:intl/date_symbol_data_local.dart'; // Import this for date localization
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 import '../Widgets/bottom_nav.dart';
 import 'cartScreen.dart';
@@ -54,7 +54,7 @@ class _OrderScreenState extends State<OrdersScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize date formatting data (essential for Arabic dates)
+    // Initialize date formatting data
     initializeDateFormatting().then((_) {
       if (mounted) setState(() {});
     });
@@ -68,6 +68,24 @@ class _OrderScreenState extends State<OrdersScreen> {
     _searchController.removeListener(_applySearchFilter);
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// Helper to translate the raw reason key into the localized UI string
+  String _getLocalizedReason(String rawReason) {
+    String key = rawReason.toLowerCase().trim();
+    if (key.isEmpty) return '';
+
+    if (key.contains('stock')) return AppStrings.get('items_out_of_stock', context);
+    if (key.contains('busy')) return AppStrings.get('kitchen_busy', context);
+    if (key.contains('clos')) return AppStrings.get('closing_soon', context);
+    if (key.contains('address')) return AppStrings.get('invalid_address', context);
+    if (key.contains('request')) return AppStrings.get('customer_request', context);
+    if (key.contains('other')) return AppStrings.get('other', context);
+
+    // Fallback if the key matches exactly or return raw/unknown
+    return AppStrings.get(key, context) != key
+        ? AppStrings.get(key, context)
+        : (key.isNotEmpty ? key : AppStrings.get('unknown_reason', context));
   }
 
   // Build a base query respecting user and filter
@@ -138,7 +156,6 @@ class _OrderScreenState extends State<OrdersScreen> {
             'id': doc.id,
             'items':
             (data['items'] as List? ?? []).cast<Map<String, dynamic>>(),
-            // We removed 'formattedDate' here to handle it dynamically in the UI
             'timestamp': data['timestamp'],
             'statusDisplay':
             _formatOrderStatus(data['status'] as String?),
@@ -205,13 +222,12 @@ class _OrderScreenState extends State<OrdersScreen> {
         return Colors.purple.shade600;
       case 'delivered':
         return Colors.green.shade600;
+      case 'cancelled':
+      case 'rejected':
+        return Colors.red.shade600;
       default:
         return Colors.grey.shade600;
     }
-  }
-
-  Color _getStatusBackgroundColor(String? status) {
-    return _getStatusColor(status).withOpacity(0.08);
   }
 
   void _navigateToOrderDetails(Map<String, dynamic> order) {
@@ -396,9 +412,11 @@ class _OrderScreenState extends State<OrdersScreen> {
     if (timestamp != null) {
       final isArabic = Provider.of<LanguageProvider>(context).isArabic;
       final locale = isArabic ? 'ar' : 'en';
-      formattedDate = DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
+      // Format the date via intl
+      final dateStr = DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
+      // Ensure digits in the date string are localized (if necessary)
+      formattedDate = AppStrings.formatNumber(dateStr, context);
     }
-    // -------------------------------
 
     // --- Localization Logic for Item Summary ---
     final isArabic = Provider.of<LanguageProvider>(context).isArabic;
@@ -406,9 +424,15 @@ class _OrderScreenState extends State<OrdersScreen> {
       final name = item['name'] as String? ?? '';
       final nameAr = item['name_ar'] as String? ?? '';
       final displayName = (isArabic && nameAr.isNotEmpty) ? nameAr : name;
-      return "${item['quantity']}x $displayName";
+      final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+
+      // Use formatNumber for quantity
+      return "${AppStrings.formatNumber(qty, context)}x $displayName";
     }).join(', ');
-    // -------------------------------------------
+
+    // --- Cancellation Reason Logic ---
+    final isCancelled = status?.toLowerCase() == 'cancelled' || status?.toLowerCase() == 'rejected';
+    final cancellationReason = order['cancellationReason'] as String? ?? '';
 
     final statusColor = _getStatusColor(status);
 
@@ -502,7 +526,8 @@ class _OrderScreenState extends State<OrdersScreen> {
                     ),
                   ),
                   Text(
-                    'QAR ${totalAmount.toStringAsFixed(2)}',
+                    // UPDATED: Use formatPrice for card total
+                    AppStrings.formatPrice(totalAmount, context),
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -531,13 +556,50 @@ class _OrderScreenState extends State<OrdersScreen> {
                     ),
                   ),
                   const Spacer(),
-                  // Now using the dynamically formatted date
                   Text(
                     '${AppStrings.get('placed_on', context)} $formattedDate',
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                   ),
                 ],
               ),
+
+              // --- Display Cancellation Reason in List ---
+              if (isCancelled && cancellationReason.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.shade100),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 16, color: Colors.red.shade700),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: RichText(
+                          text: TextSpan(
+                            style: TextStyle(fontSize: 13, color: Colors.red.shade900),
+                            children: [
+                              TextSpan(
+                                text: '${AppStrings.get('reason', context)}: ',
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              TextSpan(
+                                text: _getLocalizedReason(cancellationReason),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              // ------------------------------------------
+
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
@@ -549,7 +611,7 @@ class _OrderScreenState extends State<OrdersScreen> {
                       final menuItem = MenuItem(
                         id: itemData['itemId'] ?? UniqueKey().toString(),
                         name: itemData['name'] ?? 'Unknown Item',
-                        nameAr: itemData['name_ar'] ?? '', // Added Arabic name to MenuItem
+                        nameAr: itemData['name_ar'] ?? '',
                         price: (itemData['price'] as num?)?.toDouble() ?? 0.0,
                         imageUrl: itemData['imageUrl'] as String? ?? '',
                         branchIds: [order['restaurantId'] ?? ''],
@@ -602,6 +664,24 @@ class OrderDetailsScreen extends StatelessWidget {
   final Map<String, dynamic> order;
 
   const OrderDetailsScreen({Key? key, required this.order}) : super(key: key);
+
+  /// Helper to translate the raw reason key into the localized UI string
+  String _getLocalizedReason(String rawReason, BuildContext context) {
+    String key = rawReason.toLowerCase().trim();
+    if (key.isEmpty) return '';
+
+    if (key.contains('stock')) return AppStrings.get('items_out_of_stock', context);
+    if (key.contains('busy')) return AppStrings.get('kitchen_busy', context);
+    if (key.contains('clos')) return AppStrings.get('closing_soon', context);
+    if (key.contains('address')) return AppStrings.get('invalid_address', context);
+    if (key.contains('request')) return AppStrings.get('customer_request', context);
+    if (key.contains('other')) return AppStrings.get('other', context);
+
+    // Fallback if the key matches exactly or return raw/unknown
+    return AppStrings.get(key, context) != key
+        ? AppStrings.get(key, context)
+        : (key.isNotEmpty ? key : AppStrings.get('unknown_reason', context));
+  }
 
   void _reorderItems(BuildContext context) {
     final cartService = Provider.of<CartService>(context, listen: false);
@@ -824,14 +904,16 @@ class OrderDetailsScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '$quantity x $displayName', // Uses localized display name
+                    // UPDATED: Localized quantity in items list
+                    '${AppStrings.formatNumber(quantity, context)} x $displayName',
                     style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
                   ),
                   if (effectivePrice < price)
                     Padding(
                       padding: const EdgeInsets.only(top: 2.0),
                       child: Text(
-                        '${AppStrings.get('unit_price', context)} QAR ${effectivePrice.toStringAsFixed(2)}',
+                        // UPDATED: Localized unit price
+                        '${AppStrings.get('unit_price', context)} ${AppStrings.formatPrice(effectivePrice, context)}',
                         style: TextStyle(fontSize: 12, color: Colors.green.shade700),
                       ),
                     ),
@@ -842,12 +924,14 @@ class OrderDetailsScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  'QAR ${itemTotal.toStringAsFixed(2)}',
+                  // UPDATED: Localized item total
+                  AppStrings.formatPrice(itemTotal, context),
                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
                 ),
                 if (effectivePrice < price)
                   Text(
-                    'QAR ${(price * quantity).toStringAsFixed(2)}',
+                    // UPDATED: Localized original price strikethrough
+                    AppStrings.formatPrice(price * quantity, context),
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.grey.shade500,
@@ -881,9 +965,17 @@ class OrderDetailsScreen extends StatelessWidget {
     if (timestamp != null) {
       final isArabic = Provider.of<LanguageProvider>(context).isArabic;
       final locale = isArabic ? 'ar' : 'en';
-      formattedDate = DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
+      final dateStr = DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
+      formattedDate = AppStrings.formatNumber(dateStr, context);
     }
-    // --------------------------------------------------------
+
+    // --- Cancellation Logic for Order Details Screen ---
+    final isCancelled = status.toLowerCase() == 'cancelled' || status.toLowerCase() == 'rejected';
+    final cancellationReason = order['cancellationReason'] as String? ?? '';
+
+    // Extract just the number part of the Order ID for display formatting
+    final orderNumber = orderId.split('-').last.padLeft(3, '0');
+    final displayOrderId = AppStrings.formatNumber(orderNumber, context);
 
     Widget liveMapSection = const SizedBox.shrink();
     if (showMap) {
@@ -953,7 +1045,10 @@ class OrderDetailsScreen extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          phone.isEmpty ? AppStrings.get('no_phone_available', context) : phone,
+                          phone.isEmpty
+                              ? AppStrings.get('no_phone_available', context)
+                          // UPDATED: Localize phone number digits
+                              : AppStrings.formatNumber(phone, context),
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey.shade700,
@@ -1002,7 +1097,7 @@ class OrderDetailsScreen extends StatelessWidget {
             flexibleSpace: FlexibleSpaceBar(
               titlePadding: const EdgeInsets.only(left: 16, right: 16, bottom: 60),
               title: Text(
-                'Order #${orderId.split('-').last.padLeft(3, '0')}',
+                'Order #$displayOrderId',
                 style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
@@ -1043,6 +1138,52 @@ class OrderDetailsScreen extends StatelessWidget {
                     ),
                   ),
                 ),
+
+                // --- NEW: Cancellation Banner in Details Screen ---
+                if (isCancelled && cancellationReason.isNotEmpty)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.cancel_outlined, color: Colors.red.shade700),
+                            const SizedBox(width: 8),
+                            Text(
+                              AppStrings.get('order_cancelled', context),
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red.shade900,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        RichText(
+                          text: TextSpan(
+                            style: TextStyle(color: Colors.red.shade900, fontSize: 14),
+                            children: [
+                              TextSpan(
+                                text: '${AppStrings.get('reason', context)}: ',
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              TextSpan(text: _getLocalizedReason(cancellationReason, context)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                // ------------------------------------------------
+
                 liveMapSection,
                 if (showDriverInfo) ...[
                   driverDetailsSection,
@@ -1125,7 +1266,8 @@ class OrderDetailsScreen extends StatelessWidget {
             style: TextStyle(fontSize: 15, color: Colors.grey[700]),
           ),
           Text(
-            'QAR ${amount.toStringAsFixed(2)}',
+            // UPDATED: Localized price row
+            AppStrings.formatPrice(amount, context),
             style: TextStyle(
               fontSize: 15,
               fontWeight: isBold ? FontWeight.bold : FontWeight.normal,

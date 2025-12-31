@@ -17,7 +17,8 @@ import 'package:mitra_da_dhaba/Screens/cartScreen.dart';
 import 'package:mitra_da_dhaba/Screens/OrderScreen.dart';
 import 'package:shimmer/shimmer.dart';
 import '../Widgets/bottom_nav.dart';
-import '../Services/language_provider.dart'; // Import LanguageProvider
+import '../Services/language_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const Color kChipActive = AppColors.primaryBlue;
 
@@ -45,6 +46,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   List<String> _carouselImages = [];
   int _currentPage = 0;
   Timer? _carouselTimer;
+
+  final Set<String> _processedCancelledOrders = {};
+  StreamSubscription? _cancellationSubscription;
 
   // Categories and menu
   List<MenuCategory> _categories = [];
@@ -242,18 +246,32 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   String _getStatusMessage(String status) {
-    // Note: You can add these to AppStrings for full localization
+    // Helper function to capitalize text
+    String capitalize(String s) {
+      if (s.isEmpty) return s;
+      return "${s[0].toUpperCase()}${s.substring(1)}";
+    }
+
+    // 1. Clean the status string
     final cleanStatus = status.trim().toLowerCase();
+
+    // 2. Return localized string based on status
     switch (cleanStatus) {
       case 'pending':
-        return 'Pending Confirmation';
+        return AppStrings.get('status_pending', context);
+
       case 'preparing':
-        return 'Your order is being prepared';
+      case 'accepted':
+        return AppStrings.get('status_preparing', context);
+
       case 'prepared':
-        return 'Order prepared - awaiting rider';
+      case 'ready':
+        return AppStrings.get('status_prepared', context);
+
       case 'rider_assigned':
       case 'rider assigned':
-        return 'Rider assigned - picking up';
+        return AppStrings.get('status_rider_assigned', context);
+
       case 'picked_up':
       case 'picked up':
       case 'pickedup':
@@ -262,14 +280,28 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       case 'ontheway':
       case 'out_for_delivery':
       case 'out for delivery':
-        return 'On the way to you';
+        return AppStrings.get('status_out_for_delivery', context);
+
       case 'delivered':
-        return 'Order delivered';
+      case 'completed':
+        return AppStrings.get('status_delivered', context);
+
       case 'cancelled':
       case 'canceled':
-        return 'Order cancelled';
+      case 'rejected':
+        return AppStrings.get('status_cancelled', context);
+
+    // 3. Handle the "Driver Not Found" specific cases
+      case 'driver_not_found':
+      case 'driver not found':
+      case 'no_driver_found':
+      case 'retry_driver':
+        return AppStrings.get('status_driver_not_found', context);
+
+    // 4. Fallback for unknown statuses
       default:
-        return 'Order status: $status';
+      // Attempt to clean up snake_case (e.g. payment_failed -> Payment Failed)
+        return capitalize(status.replaceAll('_', ' '));
     }
   }
 
@@ -299,6 +331,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     super.initState();
     _initializeScreen();
     _setupOrdersStream();
+    _setupCancellationListener();
 
     _bounceController = AnimationController(
       duration: const Duration(milliseconds: 800),
@@ -375,6 +408,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _categoryBarController.dispose();
     _activeCategoryIndexNotifier.dispose();
     _menuItemsSubscription?.cancel();
+    _cancellationSubscription?.cancel();
     super.dispose();
   }
 
@@ -385,6 +419,169 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         content: Text(message),
         backgroundColor: Colors.red,
         duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  // Update this method in your _HomeScreenState class
+  Future<void> _setupCancellationListener() async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) return;
+
+    // 1. Load the last seen ID from storage BEFORE starting the stream
+    final prefs = await SharedPreferences.getInstance();
+    final lastShownId = prefs.getString('last_cancelled_popup_id');
+
+    // 2. Add it to our "ignore list" in memory
+    if (lastShownId != null) {
+      _processedCancelledOrders.add(lastShownId);
+    }
+
+    // 3. NOW start listening to Firestore
+    _cancellationSubscription = _firestore
+        .collection('Orders')
+        .where('customerId', isEqualTo: user.email)
+        .orderBy('timestamp', descending: true)
+        .limit(1)
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.docs.isNotEmpty) {
+        final doc = snapshot.docs.first;
+        final data = doc.data();
+        final status = data['status'] as String? ?? '';
+        final orderId = doc.id;
+
+        // Check if status is cancelled
+        if (status == 'cancelled' || status == 'rejected') {
+
+          // 4. Simple check: Have we processed this ID before?
+          // (This now includes the ID loaded from SharedPreferences in step 1)
+          if (!_processedCancelledOrders.contains(orderId)) {
+
+            // Mark as processed immediately in memory
+            _processedCancelledOrders.add(orderId);
+
+            // Save to storage immediately for the NEXT restart
+            prefs.setString('last_cancelled_popup_id', orderId);
+
+            // Get reason and show dialog
+            final rawReason = data['cancellationReason'] as String? ?? 'unknown';
+
+            if (mounted) {
+              _showCancellationDialog(rawReason);
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // NEW: Helper to map raw reason text to localized AppStrings
+  String _getLocalizedReason(String rawReason) {
+    // Normalize string: lowercase and trim to match potential keys
+    String key = rawReason.toLowerCase().trim();
+
+    // Map specific phrases to AppStrings keys
+    if (key.contains('stock')) return AppStrings.get('items_out_of_stock', context);
+    if (key.contains('busy')) return AppStrings.get('kitchen_busy', context);
+    if (key.contains('clos')) return AppStrings.get('closing_soon', context); // matches closing/closed
+    if (key.contains('address')) return AppStrings.get('invalid_address', context);
+    if (key.contains('request')) return AppStrings.get('customer_request', context);
+    if (key.contains('other')) return AppStrings.get('other', context);
+
+    // Fallback if the admin sends the exact key
+    return AppStrings.get(key, context) != key
+        ? AppStrings.get(key, context)
+        : AppStrings.get('unknown_reason', context);
+  }
+
+  // NEW: Show the Popup
+  void _showCancellationDialog(String rawReason) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.cancel_outlined, color: Colors.red.shade400, size: 28),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                AppStrings.get('order_cancelled', context),
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.get('order_cancelled_msg', context),
+              style: const TextStyle(fontSize: 16, color: Colors.black87),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    // FIX: Use .toUpperCase() here instead of in TextStyle
+                    AppStrings.get('reason', context).toUpperCase(),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey.shade600,
+                      // uppercase: true,  <-- REMOVED THIS LINE
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _getLocalizedReason(rawReason),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          // TextButton(
+          //   onPressed: () => Navigator.pop(context),
+          //   child: Text(
+          //     AppStrings.get('contact_us', context),
+          //     style: const TextStyle(color: Colors.grey),
+          //   ),
+          // ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryBlue,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () => Navigator.pop(context),
+            child: const Text("OK", style: TextStyle(color: Colors.white)),
+          ),
+        ],
       ),
     );
   }
@@ -1807,7 +2004,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             shape: BoxShape.circle,
                           ),
                           child: Text(
-                            '${cart.itemCount}',
+                            // UPDATED: Localized item count
+                            AppStrings.formatNumber(cart.itemCount, context),
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16),
                           ),
                         ),
@@ -1821,7 +2019,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
                             ),
                             Text(
-                              '${cart.itemCount} ${AppStrings.get(cart.itemCount > 1 ? 'items' : 'item', context)}',
+                              // UPDATED: Localized count in subtitle
+                              '${AppStrings.formatNumber(cart.itemCount, context)} ${AppStrings.get(cart.itemCount > 1 ? 'items' : 'item', context)}',
                               style: TextStyle(color: Colors.white.withOpacity(0.8), fontWeight: FontWeight.w500, fontSize: 12),
                             ),
                           ],
@@ -1841,7 +2040,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           const Icon(Icons.monetization_on_rounded, color: Colors.white, size: 18),
                           const SizedBox(width: 4),
                           Text(
-                            'QAR ${cart.totalAfterDiscount.toStringAsFixed(2)}',
+                            // UPDATED: Localized Price
+                            AppStrings.formatPrice(cart.totalAfterDiscount, context),
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16),
                           ),
                           if (cart.totalAfterDiscount < cart.totalAmount) ...[
@@ -1870,6 +2070,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       ),
     );
   }
+
   Widget _buildMenuContent() {
     if (_errorMessage != null) {
       return Center(
@@ -2298,7 +2499,7 @@ class _PopularItemCard extends StatelessWidget {
           context: context,
           isScrollControlled: true,
           backgroundColor: Colors.transparent,
-          builder: (context) => DishDetailsBottomSheet(item: item, ),
+          builder: (context) => DishDetailsBottomSheet(item: item),
         );
       },
       child: Container(
@@ -2479,6 +2680,7 @@ class _PopularItemCard extends StatelessWidget {
   }
 
   Widget _buildPriceSection(BuildContext context, MenuItem item, bool isAvailable) {
+    // FIX: Using formatPrice correctly with doubles
     if (item.discountedPrice != null && item.discountedPrice! > 0) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2486,7 +2688,7 @@ class _PopularItemCard extends StatelessWidget {
           Row(
             children: [
               Text(
-                'QAR ${item.discountedPrice!.toStringAsFixed(2)}',
+                AppStrings.formatPrice(item.discountedPrice!, context),
                 style: TextStyle(
                   color: isAvailable ? Colors.green : Colors.grey,
                   fontWeight: FontWeight.w800,
@@ -2495,7 +2697,7 @@ class _PopularItemCard extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               Text(
-                'QAR ${item.price.toStringAsFixed(2)}',
+                AppStrings.formatPrice(item.price, context),
                 style: const TextStyle(
                   color: Colors.grey,
                   fontWeight: FontWeight.w600,
@@ -2514,7 +2716,7 @@ class _PopularItemCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
-                '${AppStrings.get('save', context)} QAR ${(item.price - item.discountedPrice!).toStringAsFixed(2)}',
+                '${AppStrings.get('save', context)} ${AppStrings.formatPrice(item.price - item.discountedPrice!, context)}',
                 style: const TextStyle(
                   color: Colors.green,
                   fontWeight: FontWeight.bold,
@@ -2526,7 +2728,7 @@ class _PopularItemCard extends StatelessWidget {
       );
     } else {
       return Text(
-        'QAR ${item.price.toStringAsFixed(2)}',
+        AppStrings.formatPrice(item.price, context),
         textAlign: TextAlign.left,
         style: TextStyle(
           color: isAvailable ? AppColors.primaryBlue : Colors.grey,
@@ -2719,7 +2921,8 @@ class _MenuItemCardState extends State<MenuItemCard> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Text(
-              itemCount.toString(),
+              // FIX: Use localized numbers for quantity
+              AppStrings.formatNumber(itemCount, context),
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
@@ -2776,8 +2979,10 @@ class _MenuItemCardState extends State<MenuItemCard> {
   @override
   Widget build(BuildContext context) {
     final bool hasDiscount = widget.item.discountedPrice != null && widget.item.discountedPrice! > 0;
-    final String displayPrice = (hasDiscount ? widget.item.discountedPrice! : widget.item.price).toStringAsFixed(2);
-    final String? originalPriceString = hasDiscount ? widget.item.price.toStringAsFixed(2) : null;
+
+    // FIX: Using raw double values here, not Strings
+    final double displayPrice = hasDiscount ? widget.item.discountedPrice! : widget.item.price;
+    final double? originalPrice = hasDiscount ? widget.item.price : null;
 
     final isAvailable = widget.item.isAvailableInBranch(widget.currentBranchId);
 
@@ -2880,7 +3085,8 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                         runSpacing: 4,
                                         children: [
                                           Text(
-                                            'QAR $displayPrice',
+                                            // FIX: Use formatPrice with the double variable
+                                            AppStrings.formatPrice(displayPrice, context),
                                             style: TextStyle(
                                               fontSize: 16,
                                               fontWeight: FontWeight.w700,
@@ -2889,9 +3095,10 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                                   : Colors.grey,
                                             ),
                                           ),
-                                          if (originalPriceString != null)
+                                          if (originalPrice != null)
                                             Text(
-                                              'QAR $originalPriceString',
+                                              // FIX: Use formatPrice with original double
+                                              AppStrings.formatPrice(originalPrice, context),
                                               style: const TextStyle(
                                                 fontSize: 14,
                                                 fontWeight: FontWeight.normal,
@@ -3014,7 +3221,10 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     try {
       final cart = CartService();
       final currentBranchIds = cart.currentBranchIds;
-      final isAvailable = widget.item.isAvailableInBranch(currentBranchIds.first);
+      // Default to Old_Airport if cart is empty, similar to main logic
+      final branchToCheck = currentBranchIds.isNotEmpty ? currentBranchIds.first : 'Old_Airport';
+
+      final isAvailable = widget.item.isAvailableInBranch(branchToCheck);
 
       if (mounted) {
         setState(() {
@@ -3034,25 +3244,24 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: AppColors.white,
+        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
-          children: [
-            const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent),
-            const SizedBox(width: 12),
+          children: const [
+            Icon(Icons.delete_sweep_outlined, color: Colors.redAccent),
+            SizedBox(width: 12),
             Text('Remove Item?',
-                style: AppTextStyles.headline2.copyWith(fontSize: 20)),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           ],
         ),
         content: Text(
             'Are you sure you want to remove ${widget.item.getLocalizedName(context)} from your cart?',
-            style: AppTextStyles.bodyText1),
+            style: const TextStyle(fontSize: 16)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('Cancel',
-                style:
-                AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey)),
+            child: const Text('Cancel',
+                style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
             onPressed: () {
@@ -3071,12 +3280,12 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.redAccent,
-              foregroundColor: AppColors.white,
+              foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8)),
             ),
-            child: Text('Remove',
-                style: AppTextStyles.buttonText.copyWith(fontSize: 14)),
+            child: const Text('Remove',
+                style: TextStyle(fontSize: 14)),
           ),
         ],
         actionsPadding:
@@ -3089,14 +3298,14 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: AppColors.white,
+        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
-          children: [
-            const Icon(Icons.inventory_2_outlined, color: Colors.orange, size: 24),
-            const SizedBox(width: 12),
+          children: const [
+            Icon(Icons.inventory_2_outlined, color: Colors.orange, size: 24),
+            SizedBox(width: 12),
             Text('Item Unavailable',
-                style: AppTextStyles.headline2.copyWith(fontSize: 20)),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           ],
         ),
         content: Column(
@@ -3105,20 +3314,20 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
           children: [
             Text(
               '${widget.item.getLocalizedName(context)} is currently out of stock.',
-              style: AppTextStyles.bodyText1,
+              style: const TextStyle(fontSize: 16),
             ),
             const SizedBox(height: 8),
             Text(
               'Please check back later or choose a different item.',
-              style: AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade600),
+              style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('OK',
-                style: AppTextStyles.bodyText1.copyWith(color: AppColors.primaryBlue)),
+            child: const Text('OK',
+                style: TextStyle(color: AppColors.primaryBlue)),
           ),
         ],
       ),
@@ -3164,7 +3373,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '${quantity}x ${widget.item.getLocalizedName(context)} ${existingQty == 0 ? "added" : "updated"}',
+          // UPDATED: Localized quantity in snackbar
+          '${AppStrings.formatNumber(quantity, context)}x ${widget.item.getLocalizedName(context)} ${existingQty == 0 ? "added" : "updated"}',
           style: const TextStyle(fontSize: 14),
         ),
         behavior: SnackBarBehavior.floating,
@@ -3284,6 +3494,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     final existingQty = index != -1 ? cart.items[index].quantity : 0;
 
     final bool hasDiscount = widget.item.discountedPrice != null;
+
+    // FIX: Using raw double values here, not Strings
     final double displayPrice = hasDiscount ? widget.item.discountedPrice! : widget.item.price;
 
     return SingleChildScrollView(
@@ -3352,7 +3564,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               child: Row(
                 children: [
                   Text(
-                    'QAR ${displayPrice.toStringAsFixed(2)}',
+                    // UPDATED: Localized display price
+                    AppStrings.formatPrice(displayPrice, context),
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -3364,7 +3577,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                   if (hasDiscount && _isItemAvailable) ...[
                     const SizedBox(width: 8),
                     Text(
-                      'QAR ${widget.item.price.toStringAsFixed(2)}',
+                      // UPDATED: Localized original price
+                      AppStrings.formatPrice(widget.item.price, context),
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.normal,
@@ -3381,7 +3595,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                         border: Border.all(color: Colors.green),
                       ),
                       child: Text(
-                        '${AppStrings.get('save', context)} ${(widget.item.price - widget.item.discountedPrice!).toStringAsFixed(2)}',
+                        // UPDATED: Localized savings
+                        '${AppStrings.get('save', context)} ${AppStrings.formatPrice(widget.item.price - widget.item.discountedPrice!, context)}',
                         style: const TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.bold,
@@ -3414,7 +3629,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                 child: Text(
-                  'Current in cart: $existingQty',
+                  // UPDATED: Localized quantity in text
+                  'Current in cart: ${AppStrings.formatNumber(existingQty, context)}',
                   style: TextStyle(
                     fontSize: 14,
                     color: Colors.orange.shade700,
@@ -3488,7 +3704,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                             width: 40,
                             child: Center(
                               child: Text(
-                                quantity.toString(),
+                                // UPDATED: Localized quantity selector
+                                AppStrings.formatNumber(quantity, context),
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
@@ -3785,7 +4002,6 @@ class MenuCategory {
   }
 }
 
-// ... BranchService and Branch class remain the same ...
 class BranchService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;

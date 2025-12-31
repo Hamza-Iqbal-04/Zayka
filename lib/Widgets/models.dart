@@ -152,7 +152,7 @@ class CartModel {
 
   String getLocalizedName(BuildContext context) {
     final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
-    return isArabic && (nameAr.isNotEmpty ?? false) ? nameAr : name;
+    return isArabic && (nameAr.isNotEmpty) ? nameAr : name;
   }
 
   // CORRECTED: This getter should use discountedPrice when available

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
 
 class LanguageProvider extends ChangeNotifier {
   Locale _appLocale = const Locale('en');
@@ -139,9 +140,9 @@ class AppStrings {
       'back_to_menu': 'Back to Menu',
       'select_delivery_address': 'Select Delivery Address',
       'no_addresses_saved': 'No addresses saved yet',
-      'special_instructions': 'Special Instructions',  // ADD THIS
-      'notes_placeholder': 'e.g. No onions, Extra spicy...',  // ADD THIS
-      'free_delivery_within': 'Free delivery (within',  // ADD THIS
+      'special_instructions': 'Special Instructions',
+      'notes_placeholder': 'e.g. No onions, Extra spicy...',
+      'free_delivery_within': 'Free delivery (within',
       'kms': 'kms)',
       'please_login_address': 'Please log in to set an address.',
       'select_pickup_branch': 'Select Pickup Branch',
@@ -258,9 +259,60 @@ class AppStrings {
       'location_not_serviceable': 'Location Not Serviceable',
       'no_delivery_available_msg': 'Sorry, none of our branches deliver to your current location. Please try Pickup instead.',
       'restaurant_closed': 'Restaurant Closed',
+
+      'status_pending': 'Pending Confirmation',
+      'status_preparing': 'Your order is being prepared',
+      'status_prepared': 'Order prepared - awaiting rider',
+      'status_rider_assigned': 'Rider assigned - picking up',
+      'status_out_for_delivery': 'On the way to you',
+      'status_delivered': 'Order delivered',
+      'status_cancelled': 'Order cancelled',
+      'status_driver_not_found': 'Busy - Searching for nearby drivers...',
+
+      'order_cancelled': 'Order Cancelled',
+      'order_cancelled_msg': 'Your order was cancelled by the restaurant.',
+      'reason': 'Reason',
+      'items_out_of_stock': 'Items out of stock',
+      'kitchen_busy': 'Kitchen too busy',
+      'closing_soon': 'Closing soon / Closed',
+      'invalid_address': 'Invalid Address',
+      'customer_request': 'Customer Request',
+      'other': 'Other',
+      'unknown_reason': 'No reason provided',
+
+      'order_received_success': 'Your order has been received successfully',
+      'order_prepared_at': 'Order will be prepared at',
+
+      'mins': 'mins',
     },
     'ar': {
+      'mins': 'دقيقة',
+
+      // Cancellation Reasons
+      'order_received_success': 'تم استلام طلبك بنجاح',
+      'order_prepared_at': 'سيتم تحضير الطلب في',
+
+      'order_cancelled': 'تم إلغاء الطلب',
+      'order_cancelled_msg': 'تم إلغاء طلبك من قبل المطعم.',
+      'reason': 'السبب',
+      'items_out_of_stock': 'عناصر غير متوفرة',
+      'kitchen_busy': 'المطبخ مشغول جداً',
+      'closing_soon': 'سنغلق قريباً / مغلق',
+      'invalid_address': 'عنوان غير صالح',
+      'customer_request': 'طلب العميل',
+      'other': 'سبب آخر',
+      'unknown_reason': 'لم يتم تقديم سبب',
+
       // Existing translations
+      'status_pending': 'قيد انتظار التأكيد',
+      'status_preparing': 'جاري تحضير طلبك',
+      'status_prepared': 'الطلب جاهز - بانتظار السائق',
+      'status_rider_assigned': 'تم تعيين سائق - جاري الاستلام',
+      'status_out_for_delivery': 'في الطريق إليك',
+      'status_delivered': 'تم التوصيل',
+      'status_cancelled': 'تم إلغاء الطلب',
+      'status_driver_not_found': 'مشغول - جاري البحث عن سائق قريب...',
+
       'restaurant_just_closed': 'المطعم أغلق للتو',
       'branch_closed_msg': 'الفرع المختار أغلق للتو. سنحاول العثور على فرع آخر مفتوح لك.',
       'we_are_closed': 'نحن مغلقون',
@@ -325,7 +377,6 @@ class AppStrings {
       'clear_cart_message': 'سيؤدي هذا إلى إزالة جميع العناصر من سلتك.',
       'cancel': 'إلغاء',
       'clear': 'مسح',
-
 
       // Status filters
       'all': 'الكل',
@@ -474,9 +525,9 @@ class AppStrings {
       'back_to_menu': 'العودة للقائمة',
       'select_delivery_address': 'اختر عنوان التوصيل',
       'no_addresses_saved': 'لا توجد عناوين محفوظة بعد',
-      'special_instructions': 'تعليمات خاصة',  // ADD THIS
-      'notes_placeholder': 'مثال: بدون بصل، حار جداً...',  // ADD THIS
-      'free_delivery_within': 'توصيل مجاني (ضمن',  // ADD THIS
+      'special_instructions': 'تعليمات خاصة',
+      'notes_placeholder': 'مثال: بدون بصل، حار جداً...',
+      'free_delivery_within': 'توصيل مجاني (ضمن',
       'kms': 'كم)',
     },
   };
@@ -484,5 +535,38 @@ class AppStrings {
   static String get(String key, BuildContext context) {
     final locale = Localizations.localeOf(context).languageCode;
     return _localizedValues[locale]?[key] ?? _localizedValues['en']?[key] ?? key;
+  }
+
+  // --- NEW: NUMBER FORMATTER ---
+  static String formatNumber(dynamic number, BuildContext context) {
+    if (number == null) return '';
+
+    // 1. Convert input to string (handles int, double, etc.)
+    String str = number.toString();
+
+    // 2. Check if Arabic is active
+    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    if (!isArabic) return str;
+
+    // 3. Replace digits
+    const english = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    const arabic = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+
+    for (int i = 0; i < english.length; i++) {
+      str = str.replaceAll(english[i], arabic[i]);
+    }
+    return str;
+  }
+
+  // --- NEW: PRICE FORMATTER (Combines Currency + Number) ---
+  static String formatPrice(double price, BuildContext context) {
+    // Formats to 2 decimal places first: "10.50"
+    String formattedPrice = price.toStringAsFixed(2);
+    // Converts digits to Arabic if needed
+    String localizedNumbers = formatNumber(formattedPrice, context);
+    // Gets "QAR" or "ر.ق"
+    String currency = get('qar', context);
+
+    return '$currency $localizedNumbers';
   }
 }

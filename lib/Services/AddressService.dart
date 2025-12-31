@@ -23,7 +23,6 @@ class AddressService extends ChangeNotifier {
           [];
       Map<String, dynamic>? chosen =
       list.firstWhere((e) => e['isDefault'] == true, orElse: () => {});
-      chosen ??= list.isNotEmpty ? list.first : null;
       if (chosen != null && chosen != _activeAddress) {
         _activeAddress = chosen;
         notifyListeners();
