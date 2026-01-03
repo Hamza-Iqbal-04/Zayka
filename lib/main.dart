@@ -10,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_localizations/flutter_localizations.dart'; // Added for localization
-import 'package:mitra_da_dhaba/Screens/splash_screen.dart';
+
 import 'package:mitra_da_dhaba/Screens/welcome_screen.dart';
 import 'Services/NotificationService.dart';
 import 'Widgets/appbar.dart';
@@ -50,7 +50,8 @@ Future<void> main() async {
         // 3️⃣ Your cart logic
         ChangeNotifierProvider<CartService>(create: (_) => CartService()),
         // 4️⃣ Language Provider (New)
-        ChangeNotifierProvider<LanguageProvider>(create: (_) => LanguageProvider()),
+        ChangeNotifierProvider<LanguageProvider>(
+            create: (_) => LanguageProvider()),
       ],
       // No ConnectivityGate here; overlay is added inside MaterialApp.builder
       child: const MyApp(),
@@ -139,45 +140,51 @@ class _MyAppState extends State<MyApp> {
 
 class AppLoader extends StatefulWidget {
   final Future<bool> initializationFuture;
-  const AppLoader({Key? key, required this.initializationFuture}) : super(key: key);
+  const AppLoader({Key? key, required this.initializationFuture})
+      : super(key: key);
 
   @override
   State<AppLoader> createState() => _AppLoaderState();
 }
 
 class _AppLoaderState extends State<AppLoader> {
+  // Determine initial screen synchronously from cached auth state
+  late final Widget _initialScreen;
+  bool _hasNavigated = false;
+
   @override
   void initState() {
     super.initState();
-    _initializeApp();
+    // Firebase caches auth state, so this is synchronous
+    final User? currentUser = FirebaseAuth.instance.currentUser;
+
+    if (currentUser != null) {
+      // User is logged in - show MainApp (HomeScreen with shimmers)
+      _initialScreen = const MainApp();
+    } else {
+      // Not logged in - show a temporary container while we check first launch
+      _initialScreen = const Scaffold(body: SizedBox.shrink());
+      _initializeForNonAuthenticatedUser();
+    }
   }
 
-  Future<void> _initializeApp() async {
+  Future<void> _initializeForNonAuthenticatedUser() async {
     try {
-      // Wait for both initialization and auth state
       final isFirstLaunch = await widget.initializationFuture;
+      if (!mounted || _hasNavigated) return;
 
-      // Get the initial auth state without waiting for stream changes
-      final User? currentUser = FirebaseAuth.instance.currentUser;
-
-      if (!mounted) return;
-
-      // Navigate instantly without any transition
+      _hasNavigated = true;
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           pageBuilder: (context, animation1, animation2) {
-            if (currentUser != null) {
-              return const MainApp();
-            } else {
-              return isFirstLaunch ? const WelcomeScreen() : const LoginScreen();
-            }
+            return isFirstLaunch ? const WelcomeScreen() : const LoginScreen();
           },
           transitionDuration: Duration.zero,
         ),
       );
     } catch (e) {
-      if (!mounted) return;
-      // Fallback to login screen on error
+      if (!mounted || _hasNavigated) return;
+      _hasNavigated = true;
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           pageBuilder: (context, animation1, animation2) => const LoginScreen(),
@@ -189,7 +196,7 @@ class _AppLoaderState extends State<AppLoader> {
 
   @override
   Widget build(BuildContext context) {
-    return const SplashScreen();
+    return _initialScreen;
   }
 }
 
@@ -199,9 +206,13 @@ class FirestoreService {
   final String _usersCollection = 'Users';
 
   // Save or update user data
-  Future<void> saveUserData(String userId, Map<String, dynamic> userData) async {
+  Future<void> saveUserData(
+      String userId, Map<String, dynamic> userData) async {
     try {
-      await _db.collection(_usersCollection).doc(userId).set(userData, SetOptions(merge: true));
+      await _db
+          .collection(_usersCollection)
+          .doc(userId)
+          .set(userData, SetOptions(merge: true));
       // ignore: avoid_print
       print('User data saved successfully for $userId');
     } catch (e) {
@@ -231,7 +242,11 @@ class FirestoreService {
 
   // Stream user data for real-time updates
   Stream<AppUser?> streamUserData(String userId) {
-    return _db.collection(_usersCollection).doc(userId).snapshots().map((snapshot) {
+    return _db
+        .collection(_usersCollection)
+        .doc(userId)
+        .snapshots()
+        .map((snapshot) {
       if (snapshot.exists) {
         return AppUser.fromFirestore(snapshot);
       } else {
@@ -290,7 +305,8 @@ class _ConnectivityOverlayState extends State<ConnectivityOverlay> {
               absorbing: true,
               child: const ColoredBox(
                 color: Colors.white, // prevents grey/transparent flash
-                child: OfflineScreen(), // UI from Widgets/connectivity_wrapper.dart
+                child:
+                    OfflineScreen(), // UI from Widgets/connectivity_wrapper.dart
               ),
             ),
           ),

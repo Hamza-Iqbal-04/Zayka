@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -14,6 +16,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:ui';
 import '../Services/language_provider.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({Key? key}) : super(key: key);
@@ -54,7 +58,6 @@ class _OrderScreenState extends State<OrdersScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize date formatting data
     initializeDateFormatting().then((_) {
       if (mounted) setState(() {});
     });
@@ -82,7 +85,6 @@ class _OrderScreenState extends State<OrdersScreen> {
     if (key.contains('request')) return AppStrings.get('customer_request', context);
     if (key.contains('other')) return AppStrings.get('other', context);
 
-    // Fallback if the key matches exactly or return raw/unknown
     return AppStrings.get(key, context) != key
         ? AppStrings.get(key, context)
         : (key.isNotEmpty ? key : AppStrings.get('unknown_reason', context));
@@ -192,7 +194,6 @@ class _OrderScreenState extends State<OrdersScreen> {
           : _allOrders.where((order) {
         final items =
         (order['items'] as List).cast<Map<String, dynamic>>();
-        // Check both English and Arabic names for search
         return items.any((item) {
           final name = (item['name'] as String? ?? '').toLowerCase();
           final nameAr = (item['name_ar'] as String? ?? '').toLowerCase();
@@ -286,7 +287,6 @@ class _OrderScreenState extends State<OrdersScreen> {
             return _buildOrderCard(_filteredOrders[index]);
           }
 
-          // Footer
           if (_isFetchingMore) {
             return const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
@@ -406,31 +406,24 @@ class _OrderScreenState extends State<OrdersScreen> {
     final restaurantAddress = order['restaurantAddress'] as String? ?? '';
     final status = order['status'] as String?;
 
-    // --- Dynamic Date Formatting ---
     final timestamp = order['timestamp'] as Timestamp?;
     String formattedDate = '--';
     if (timestamp != null) {
       final isArabic = Provider.of<LanguageProvider>(context).isArabic;
       final locale = isArabic ? 'ar' : 'en';
-      // Format the date via intl
       final dateStr = DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
-      // Ensure digits in the date string are localized (if necessary)
       formattedDate = AppStrings.formatNumber(dateStr, context);
     }
 
-    // --- Localization Logic for Item Summary ---
     final isArabic = Provider.of<LanguageProvider>(context).isArabic;
     final itemSummary = items.map((item) {
       final name = item['name'] as String? ?? '';
       final nameAr = item['name_ar'] as String? ?? '';
       final displayName = (isArabic && nameAr.isNotEmpty) ? nameAr : name;
       final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-
-      // Use formatNumber for quantity
       return "${AppStrings.formatNumber(qty, context)}x $displayName";
     }).join(', ');
 
-    // --- Cancellation Reason Logic ---
     final isCancelled = status?.toLowerCase() == 'cancelled' || status?.toLowerCase() == 'rejected';
     final cancellationReason = order['cancellationReason'] as String? ?? '';
 
@@ -526,7 +519,6 @@ class _OrderScreenState extends State<OrdersScreen> {
                     ),
                   ),
                   Text(
-                    // UPDATED: Use formatPrice for card total
                     AppStrings.formatPrice(totalAmount, context),
                     style: const TextStyle(
                       fontSize: 16,
@@ -563,7 +555,6 @@ class _OrderScreenState extends State<OrdersScreen> {
                 ],
               ),
 
-              // --- Display Cancellation Reason in List ---
               if (isCancelled && cancellationReason.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Container(
@@ -598,7 +589,6 @@ class _OrderScreenState extends State<OrdersScreen> {
                   ),
                 ),
               ],
-              // ------------------------------------------
 
               const SizedBox(height: 16),
               SizedBox(
@@ -660,10 +650,91 @@ class _OrderScreenState extends State<OrdersScreen> {
   }
 }
 
-class OrderDetailsScreen extends StatelessWidget {
+class OrderDetailsScreen extends StatefulWidget {
   final Map<String, dynamic> order;
 
   const OrderDetailsScreen({Key? key, required this.order}) : super(key: key);
+
+  @override
+  State<OrderDetailsScreen> createState() => _OrderDetailsScreenState();
+}
+
+class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
+  late Map<String, dynamic> _currentOrder;
+  Future<GeoPoint?>? _restaurantGeoFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentOrder = widget.order;
+    _listenToOrderUpdates();
+    // Initialize Future once to avoid re-fetching on build
+    _restaurantGeoFuture = _fetchRestaurantGeo(_currentOrder['restaurantId'] as String? ?? 'Old_Airport');
+  }
+
+  void _listenToOrderUpdates() {
+    FirebaseFirestore.instance
+        .collection('Orders')
+        .doc(_currentOrder['id'])
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.exists && mounted) {
+        final data = snapshot.data()!;
+        setState(() {
+          _currentOrder = {...data, 'id': snapshot.id};
+        });
+        _checkRefundStatusAndCleanup(data);
+      }
+    });
+  }
+
+  Future<void> _checkRefundStatusAndCleanup(Map<String, dynamic> orderData) async {
+    final refundRequest = orderData['refundRequest'] as Map<String, dynamic>?;
+    if (refundRequest == null) return;
+
+    final status = refundRequest['status'] as String? ?? 'pending';
+    final imageUrl = refundRequest['imageUrl'] as String?;
+
+    if ((status == 'accepted' || status == 'rejected') &&
+        imageUrl != null &&
+        imageUrl.isNotEmpty) {
+      try {
+        final ref = FirebaseStorage.instance.refFromURL(imageUrl);
+        await ref.delete();
+        debugPrint("Refund image deleted successfully.");
+
+        await FirebaseFirestore.instance
+            .collection('Orders')
+            .doc(_currentOrder['id'])
+            .update({
+          'refundRequest.imageUrl': null,
+        });
+      } catch (e) {
+        debugPrint("Error cleaning up refund image: $e");
+      }
+    }
+  }
+
+  // --- Strict Logic for Tracking Status ---
+  bool _isTrackingActiveStatus(String statusClean) {
+    return statusClean == 'pending' ||
+        statusClean == 'confirmed' ||
+        statusClean == 'preparing' ||
+        statusClean == 'on_the_way' ||
+        statusClean == 'on the way';
+  }
+
+  void _showRefundRequestDialog() {
+    // Using showDialog ("the box") as requested, but logic is in a separate widget
+    // to prevent this screen from rebuilding heavily on typing.
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return RefundRequestDialog(orderId: _currentOrder['id']);
+      },
+    );
+  }
 
   /// Helper to translate the raw reason key into the localized UI string
   String _getLocalizedReason(String rawReason, BuildContext context) {
@@ -677,7 +748,6 @@ class OrderDetailsScreen extends StatelessWidget {
     if (key.contains('request')) return AppStrings.get('customer_request', context);
     if (key.contains('other')) return AppStrings.get('other', context);
 
-    // Fallback if the key matches exactly or return raw/unknown
     return AppStrings.get(key, context) != key
         ? AppStrings.get(key, context)
         : (key.isNotEmpty ? key : AppStrings.get('unknown_reason', context));
@@ -685,7 +755,7 @@ class OrderDetailsScreen extends StatelessWidget {
 
   void _reorderItems(BuildContext context) {
     final cartService = Provider.of<CartService>(context, listen: false);
-    final items = (order['items'] as List? ?? []).cast<Map<String, dynamic>>();
+    final items = (_currentOrder['items'] as List? ?? []).cast<Map<String, dynamic>>();
 
     if (items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -702,11 +772,11 @@ class OrderDetailsScreen extends StatelessWidget {
       final menuItem = MenuItem(
         id: itemData['itemId'] ?? UniqueKey().toString(),
         name: itemData['name'] ?? 'Unknown Item',
-        nameAr: itemData['name_ar'] ?? '', // Added Arabic name to MenuItem
+        nameAr: itemData['name_ar'] ?? '',
         price: (itemData['price'] as num?)?.toDouble() ?? 0.0,
         discountedPrice: (itemData['discountedPrice'] as num?)?.toDouble(),
         imageUrl: itemData['imageUrl'] as String? ?? '',
-        branchIds: [order['restaurantId'] ?? ''],
+        branchIds: [_currentOrder['restaurantId'] ?? ''],
         categoryId: '',
         description: '',
         isAvailable: true,
@@ -753,101 +823,6 @@ class OrderDetailsScreen extends StatelessWidget {
     }
   }
 
-  void _showContactUsSheet(BuildContext context) {
-    final formKey = GlobalKey<FormState>();
-    final messageController = TextEditingController();
-    final user = FirebaseAuth.instance.currentUser;
-    final orderId = order['orderId'] as String? ?? '';
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
-              ),
-            ),
-            child: Wrap(
-              runSpacing: 20,
-              children: [
-                Text(
-                  '${AppStrings.get('contact_support_order', context)}$orderId',
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                Form(
-                  key: formKey,
-                  child: TextFormField(
-                    controller: messageController,
-                    decoration: InputDecoration(
-                      hintText: AppStrings.get('describe_issue', context),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    maxLines: 4,
-                    validator: (value) =>
-                    (value == null || value.isEmpty)
-                        ? AppStrings.get('enter_message', context)
-                        : null,
-                  ),
-                ),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      if (formKey.currentState!.validate()) {
-                        try {
-                          await FirebaseFirestore.instance.collection('support').add({
-                            'userId': user?.uid,
-                            'userEmail': user?.email,
-                            'orderId': orderId,
-                            'message': messageController.text,
-                            'timestamp': FieldValue.serverTimestamp(),
-                            'status': 'pending',
-                          });
-
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(AppStrings.get('message_sent', context))),
-                            );
-                          }
-                        } catch (e) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('${AppStrings.get('error', context)} $e')),
-                            );
-                          }
-                        }
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryBlue,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: Text(AppStrings.get('send_message', context)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   Future<GeoPoint?> _fetchRestaurantGeo(String branchId) async {
     final doc = await FirebaseFirestore.instance.collection('Branch').doc(branchId).get();
     return doc.data()?['address']?['geolocation'] as GeoPoint?;
@@ -888,7 +863,6 @@ class OrderDetailsScreen extends StatelessWidget {
           : price;
       final itemTotal = effectivePrice * quantity;
 
-      // Localization Logic
       final name = item['name'] as String? ?? 'Item';
       final nameAr = item['name_ar'] as String? ?? '';
       final displayName = (isArabic && nameAr.isNotEmpty) ? nameAr : name;
@@ -904,7 +878,6 @@ class OrderDetailsScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    // UPDATED: Localized quantity in items list
                     '${AppStrings.formatNumber(quantity, context)} x $displayName',
                     style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
                   ),
@@ -912,7 +885,6 @@ class OrderDetailsScreen extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.only(top: 2.0),
                       child: Text(
-                        // UPDATED: Localized unit price
                         '${AppStrings.get('unit_price', context)} ${AppStrings.formatPrice(effectivePrice, context)}',
                         style: TextStyle(fontSize: 12, color: Colors.green.shade700),
                       ),
@@ -924,13 +896,11 @@ class OrderDetailsScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  // UPDATED: Localized item total
                   AppStrings.formatPrice(itemTotal, context),
                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
                 ),
                 if (effectivePrice < price)
                   Text(
-                    // UPDATED: Localized original price strikethrough
                     AppStrings.formatPrice(price * quantity, context),
                     style: TextStyle(
                       fontSize: 12,
@@ -948,19 +918,14 @@ class OrderDetailsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = (order['items'] as List? ?? []).cast<Map<String, dynamic>>();
-    final status = order['status'] as String? ?? 'pending';
+    final items = (_currentOrder['items'] as List? ?? []).cast<Map<String, dynamic>>();
+    final status = _currentOrder['status'] as String? ?? 'pending';
     final statusColor = _getStatusColor(status);
-    final orderId = order['orderId'] as String? ?? '';
-    final riderId = order['riderId'] as String? ?? '';
-    final bool showMap = riderId.isNotEmpty && status != 'delivered' && status != 'cancelled';
-    final bool showDriverInfo = riderId.isNotEmpty && status != 'delivered' && status != 'cancelled';
-    final userGeo = order['deliveryAddress']?['geolocation'] as GeoPoint?;
-    final branchId = order['restaurantId'] as String? ?? 'Old_Airport';
-    final restaurantGeoFuture = _fetchRestaurantGeo(branchId);
+    final orderId = _currentOrder['orderId'] as String? ?? '';
+    final riderId = _currentOrder['riderId'] as String? ?? '';
+    final userGeo = _currentOrder['deliveryAddress']?['geolocation'] as GeoPoint?;
 
-    // --- Dynamic Date Formatting for Order Details Screen ---
-    final timestamp = order['timestamp'] as Timestamp?;
+    final timestamp = _currentOrder['timestamp'] as Timestamp?;
     String formattedDate = '--';
     if (timestamp != null) {
       final isArabic = Provider.of<LanguageProvider>(context).isArabic;
@@ -969,18 +934,34 @@ class OrderDetailsScreen extends StatelessWidget {
       formattedDate = AppStrings.formatNumber(dateStr, context);
     }
 
-    // --- Cancellation Logic for Order Details Screen ---
     final isCancelled = status.toLowerCase() == 'cancelled' || status.toLowerCase() == 'rejected';
-    final cancellationReason = order['cancellationReason'] as String? ?? '';
+    final cancellationReason = _currentOrder['cancellationReason'] as String? ?? '';
 
-    // Extract just the number part of the Order ID for display formatting
     final orderNumber = orderId.split('-').last.padLeft(3, '0');
     final displayOrderId = AppStrings.formatNumber(orderNumber, context);
+
+    final statusRaw = _currentOrder['status'] as String? ?? '';
+    final statusClean = statusRaw.toLowerCase().trim();
+
+    // Allow 'delivered' and 'completed' as valid refund states
+    final bool canRefund = statusClean == 'delivered' || statusClean == 'completed';
+
+    // FIX FOR MAP LAG: Strict check. Only show map if order is active.
+    final bool trackingActive = riderId.isNotEmpty && _isTrackingActiveStatus(statusClean);
+    final bool showMap = trackingActive;
+    final bool showDriverInfo = trackingActive;
+
+    final refundRequestData = _currentOrder['refundRequest'];
+    final bool hasActiveRefundRequest = refundRequestData != null &&
+        refundRequestData is Map &&
+        refundRequestData.isNotEmpty;
+
+    final refundRequestMap = hasActiveRefundRequest ? refundRequestData as Map<String, dynamic> : null;
 
     Widget liveMapSection = const SizedBox.shrink();
     if (showMap) {
       liveMapSection = FutureBuilder<GeoPoint?>(
-        future: restaurantGeoFuture,
+        future: _restaurantGeoFuture,
         builder: (context, snap) {
           final restaurantGeo = snap.data;
           return Padding(
@@ -1047,7 +1028,6 @@ class OrderDetailsScreen extends StatelessWidget {
                         Text(
                           phone.isEmpty
                               ? AppStrings.get('no_phone_available', context)
-                          // UPDATED: Localize phone number digits
                               : AppStrings.formatNumber(phone, context),
                           style: TextStyle(
                             fontSize: 14,
@@ -1086,6 +1066,8 @@ class OrderDetailsScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: Colors.grey[100],
+      // OPTIMIZATION: Stop background resize when keyboard is visible
+      resizeToAvoidBottomInset: false,
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
@@ -1139,7 +1121,9 @@ class OrderDetailsScreen extends StatelessWidget {
                   ),
                 ),
 
-                // --- NEW: Cancellation Banner in Details Screen ---
+                if (refundRequestMap != null)
+                  _buildRefundStatusCard(refundRequestMap),
+
                 if (isCancelled && cancellationReason.isNotEmpty)
                   Container(
                     margin: const EdgeInsets.only(bottom: 16),
@@ -1182,7 +1166,6 @@ class OrderDetailsScreen extends StatelessWidget {
                       ],
                     ),
                   ),
-                // ------------------------------------------------
 
                 liveMapSection,
                 if (showDriverInfo) ...[
@@ -1200,13 +1183,81 @@ class OrderDetailsScreen extends StatelessWidget {
                   title: AppStrings.get('payment_summary', context),
                   children: [_buildPaymentSummary(context)],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 100),
               ]),
             ),
           ),
         ],
       ),
-      bottomNavigationBar: _buildActionButtons(context),
+      bottomNavigationBar: _buildActionButtons(context, canRefund, hasActiveRefundRequest),
+    );
+  }
+
+  Widget _buildRefundStatusCard(Map<String, dynamic> refundRequest) {
+    final status = refundRequest['status'] as String? ?? 'pending';
+    Color bgColor;
+    Color iconColor;
+    IconData icon;
+    String statusText;
+    String messageText;
+
+    switch (status.toLowerCase()) {
+      case 'accepted':
+        bgColor = Colors.green.shade50;
+        iconColor = Colors.green;
+        icon = Icons.check_circle_outline;
+        statusText = AppStrings.get('refund_accepted', context);
+        messageText = AppStrings.get('refund_accepted_msg', context);
+        break;
+      case 'rejected':
+        bgColor = Colors.red.shade50;
+        iconColor = Colors.red;
+        icon = Icons.error_outline;
+        statusText = AppStrings.get('refund_rejected', context);
+        messageText = AppStrings.get('refund_rejected_msg', context);
+        break;
+      default:
+        bgColor = Colors.orange.shade50;
+        iconColor = Colors.orange;
+        icon = Icons.hourglass_empty;
+        statusText = AppStrings.get('refund_pending', context);
+        messageText = AppStrings.get('refund_pending_msg', context);
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: iconColor.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: iconColor),
+              const SizedBox(width: 8),
+              Text(
+                statusText,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: iconColor,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(messageText, style: TextStyle(color: Colors.grey.shade800)),
+          const SizedBox(height: 8),
+          Text(
+            '${AppStrings.get('reason', context)}: ${refundRequest['reason']}',
+            style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.black54),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1243,12 +1294,38 @@ class OrderDetailsScreen extends StatelessWidget {
   }
 
   Widget _buildPaymentSummary(BuildContext context) {
-    final subtotal = (order['subtotal'] as num?)?.toDouble() ?? 0.0;
-    final totalAmount = (order['totalAmount'] as num?)?.toDouble() ?? 0.0;
+    final subtotal = (_currentOrder['subtotal'] as num?)?.toDouble() ?? 0.0;
+    final totalAmount = (_currentOrder['totalAmount'] as num?)?.toDouble() ?? 0.0;
+    final transactionId = _currentOrder['transactionId'] as String?;
 
     return Column(
       children: [
         _buildPriceRow(context, AppStrings.get('subtotal', context), subtotal),
+
+        if (transactionId != null && transactionId.isNotEmpty && transactionId != 'no_payment') ...[
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Transaction ID',
+                  style: TextStyle(fontSize: 15, color: Colors.grey[700]),
+                ),
+                SelectableText(
+                  transactionId,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+
         const Divider(height: 24),
         _buildPriceRow(context, AppStrings.get('total', context), totalAmount, isBold: true),
       ],
@@ -1266,7 +1343,6 @@ class OrderDetailsScreen extends StatelessWidget {
             style: TextStyle(fontSize: 15, color: Colors.grey[700]),
           ),
           Text(
-            // UPDATED: Localized price row
             AppStrings.formatPrice(amount, context),
             style: TextStyle(
               fontSize: 15,
@@ -1278,7 +1354,7 @@ class OrderDetailsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildActionButtons(BuildContext context) {
+  Widget _buildActionButtons(BuildContext context, bool canRefund, bool hasActiveRefundRequest) {
     return Container(
       padding: EdgeInsets.fromLTRB(
         16,
@@ -1297,7 +1373,7 @@ class OrderDetailsScreen extends StatelessWidget {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                side: BorderSide(color: Colors.grey.shade300),
+                side: BorderSide(color: Colors.grey.shade300, width: 1.5),
               ),
               child: Text(
                 AppStrings.get('reorder', context),
@@ -1310,9 +1386,30 @@ class OrderDetailsScreen extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: ElevatedButton.icon(
+            child: (canRefund && !hasActiveRefundRequest)
+                ? ElevatedButton.icon(
+              onPressed: _showRefundRequestDialog,
+              icon: const Icon(Icons.undo_rounded, size: 18, color: Colors.white),
+              label: Text(
+                AppStrings.get('request_refund', context),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryBlue,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 0,
+              ),
+            )
+                : ElevatedButton.icon(
               onPressed: () {
-                final dailyOrderNumber = order['dailyOrderNumber']?.toString() ?? '';
+                final dailyOrderNumber = _currentOrder['dailyOrderNumber']?.toString() ?? '';
                 const supportNumber = '919152822169';
                 final msg = 'Hello, I need help with order #$dailyOrderNumber';
                 _contactOnWhatsApp(
@@ -1368,6 +1465,308 @@ class OrderDetailsScreen extends StatelessWidget {
   }
 }
 
+// --- Refund Dialog (Box) with Isolated State ---
+class RefundRequestDialog extends StatefulWidget {
+  final String orderId;
+  const RefundRequestDialog({Key? key, required this.orderId}) : super(key: key);
+
+  @override
+  State<RefundRequestDialog> createState() => _RefundRequestDialogState();
+}
+
+class _RefundRequestDialogState extends State<RefundRequestDialog> {
+  final TextEditingController _refundReasonController = TextEditingController();
+  File? _refundImage;
+  bool _isUploadingRefund = false;
+
+  @override
+  void dispose() {
+    _refundReasonController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickRefundImage() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 70,
+    );
+
+    if (pickedFile != null) {
+      setState(() {
+        _refundImage = File(pickedFile.path);
+      });
+    }
+  }
+
+  Future<void> _submitRefundRequest() async {
+    if (_refundReasonController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppStrings.get('reason_required', context))),
+      );
+      return;
+    }
+    if (_refundImage == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppStrings.get('image_required', context))),
+      );
+      return;
+    }
+
+    setState(() => _isUploadingRefund = true);
+
+    try {
+      final String fileName = 'refund_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child('refund_images')
+          .child(widget.orderId)
+          .child(fileName);
+
+      await ref.putFile(_refundImage!);
+      final String imageUrl = await ref.getDownloadURL();
+
+      final refundData = {
+        'reason': _refundReasonController.text.trim(),
+        'imageUrl': imageUrl,
+        'status': 'pending',
+        'timestamp': FieldValue.serverTimestamp(),
+      };
+
+      await FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(widget.orderId)
+          .update({'refundRequest': refundData});
+
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppStrings.get('refund_submitted_msg', context)),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingRefund = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      elevation: 0,
+      backgroundColor: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.rectangle,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 20.0,
+              offset: const Offset(0.0, 10.0),
+            ),
+          ],
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // --- Header ---
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryBlue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.undo_rounded, color: AppColors.primaryBlue, size: 24),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      AppStrings.get('request_refund', context),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+
+              // --- Reason Input ---
+              Text(
+                AppStrings.get('refund_reason', context),
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: TextField(
+                  controller: _refundReasonController,
+                  maxLines: 3,
+                  style: const TextStyle(fontSize: 16),
+                  decoration: InputDecoration(
+                    hintText: AppStrings.get('refund_reason_hint', context),
+                    hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.all(16),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // --- Image Picker ---
+              Text(
+                AppStrings.get('attach_image', context),
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              GestureDetector(
+                onTap: _pickRefundImage,
+                child: Container(
+                  height: 150,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _refundImage != null ? Colors.transparent : Colors.grey.shade300,
+                      width: 1.5,
+                    ),
+                    image: _refundImage != null
+                        ? DecorationImage(
+                      image: FileImage(_refundImage!),
+                      fit: BoxFit.cover,
+                    )
+                        : null,
+                  ),
+                  child: _refundImage == null
+                      ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.add_a_photo_outlined,
+                          size: 32, color: Colors.grey.shade400),
+                      const SizedBox(height: 8),
+                      Text(
+                        AppStrings.get('attach_image', context),
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  )
+                      : Stack(
+                    children: [
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.6),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.edit, color: Colors.white, size: 16),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              // --- Actions ---
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                      },
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        foregroundColor: Colors.grey.shade700,
+                        side: BorderSide(color: Colors.grey.shade300),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Text(
+                        AppStrings.get('cancel', context),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _isUploadingRefund ? null : _submitRefundRequest,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryBlue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: _isUploadingRefund
+                          ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                          : Text(
+                        AppStrings.get('submit_request', context),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class LiveTrackingMap extends StatefulWidget {
   const LiveTrackingMap({
     super.key,
@@ -1389,6 +1788,7 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
   late final AnimationController _pulseController;
   late final Animation<double> _pulseAnimation;
   LatLng? _driverPos;
+  StreamSubscription? _driverLocationSub;
 
   @override
   void initState() {
@@ -1408,7 +1808,9 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
       curve: Curves.easeInOut,
     ));
 
-    widget.driverRef.snapshots().listen((snap) {
+    _driverLocationSub = widget.driverRef.snapshots().listen((snap) {
+      if (!mounted) return;
+
       final data = snap.data();
       final geo = data?['currentLocation'];
       if (geo is GeoPoint) {
@@ -1432,6 +1834,7 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
 
   @override
   void dispose() {
+    _driverLocationSub?.cancel();
     _pulseController.dispose();
     super.dispose();
   }
@@ -1650,39 +2053,33 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
                 ),
                 child: Row(
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.9),
-                            borderRadius: BorderRadius.circular(20),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.9),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              color: Colors.green,
+                              shape: BoxShape.circle,
+                            ),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 8,
-                                height: 8,
-                                decoration: const BoxDecoration(
-                                  color: Colors.green,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                AppStrings.get('live_tracking', context),
-                                style: TextStyle(
-                                  color: Colors.grey.shade800,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
+                          const SizedBox(width: 6),
+                          Text(
+                            AppStrings.get('live_tracking', context),
+                            style: TextStyle(
+                              color: Colors.grey.shade800,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
+                        ],
                       ),
                     ),
                   ],

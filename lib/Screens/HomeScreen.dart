@@ -29,7 +29,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   // Services and state
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -97,11 +98,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   bool get _isEverythingLoaded =>
       _carouselLoaded &&
-          _categoriesLoaded &&
-          _menuItemsLoaded &&
-          _popularItemsLoaded &&
-          _addressLoaded &&
-          _etaLoaded;
+      _categoriesLoaded &&
+      _menuItemsLoaded &&
+      _popularItemsLoaded &&
+      _addressLoaded &&
+      _etaLoaded;
 
   MenuCategory _createOffersCategory() {
     return MenuCategory(
@@ -137,7 +138,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _loadCarouselImages(),
         _loadMenuData(),
       ], eagerError: true);
-
     } catch (e) {
       debugPrint('Error initializing screen: $e');
       if (mounted) {
@@ -291,16 +291,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       case 'rejected':
         return AppStrings.get('status_cancelled', context);
 
-    // 3. Handle the "Driver Not Found" specific cases
+      // 3. Handle the "Driver Not Found" specific cases
       case 'driver_not_found':
       case 'driver not found':
       case 'no_driver_found':
       case 'retry_driver':
         return AppStrings.get('status_driver_not_found', context);
 
-    // 4. Fallback for unknown statuses
+      // 4. Fallback for unknown statuses
       default:
-      // Attempt to clean up snake_case (e.g. payment_failed -> Payment Failed)
+        // Attempt to clean up snake_case (e.g. payment_failed -> Payment Failed)
         return capitalize(status.replaceAll('_', ' '));
     }
   }
@@ -308,11 +308,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   double _getProgressValue(String status) {
     final cleanStatus = status.trim().toLowerCase();
     switch (cleanStatus) {
-      case 'pending': return 0.1;
-      case 'preparing': return 0.25;
-      case 'prepared': return 0.5;
+      case 'pending':
+        return 0.1;
+      case 'preparing':
+        return 0.25;
+      case 'prepared':
+        return 0.5;
       case 'rider_assigned':
-      case 'rider assigned': return 0.75;
+      case 'rider assigned':
+        return 0.75;
       case 'picked_up':
       case 'picked up':
       case 'pickedup':
@@ -320,9 +324,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       case 'on the way':
       case 'ontheway':
       case 'out_for_delivery':
-      case 'out for delivery': return 0.9;
-      case 'delivered': return 1.0;
-      default: return 0.0;
+      case 'out for delivery':
+        return 0.9;
+      case 'delivered':
+        return 1.0;
+      default:
+        return 0.0;
     }
   }
 
@@ -363,16 +370,24 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ordersStream = _firestore
               .collection('Orders')
               .where('customerId', isEqualTo: user.email)
-              .where('status', whereNotIn: ['delivered', 'cancelled'])
+              .where('status', whereNotIn: [
+                'delivered',
+                'cancelled',
+                'rejected',
+                'refunded'
+              ])
               .orderBy('timestamp', descending: true)
               .limit(5)
               .snapshots()
               .map((snapshot) {
-            return snapshot.docs.map((doc) => Order.fromFirestore(doc)).toList();
-          }).handleError((error) {
-            debugPrint('Error loading orders: $error');
-            return <Order>[];
-          });
+                return snapshot.docs
+                    .map((doc) => Order.fromFirestore(doc))
+                    .toList();
+              })
+              .handleError((error) {
+                debugPrint('Error loading orders: $error');
+                return <Order>[];
+              });
         });
       }
     } catch (e) {
@@ -451,24 +466,29 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         final status = data['status'] as String? ?? '';
         final orderId = doc.id;
 
-        // Check if status is cancelled
-        if (status == 'cancelled' || status == 'rejected') {
-
+        // Check if status is cancelled, rejected, or refunded
+        if (status == 'cancelled' ||
+            status == 'rejected' ||
+            status == 'refunded') {
           // 4. Simple check: Have we processed this ID before?
           // (This now includes the ID loaded from SharedPreferences in step 1)
           if (!_processedCancelledOrders.contains(orderId)) {
-
             // Mark as processed immediately in memory
             _processedCancelledOrders.add(orderId);
 
             // Save to storage immediately for the NEXT restart
             prefs.setString('last_cancelled_popup_id', orderId);
 
-            // Get reason and show dialog
-            final rawReason = data['cancellationReason'] as String? ?? 'unknown';
-
             if (mounted) {
-              _showCancellationDialog(rawReason);
+              if (status == 'refunded') {
+                // Show refund approved popup
+                _showRefundApprovedDialog();
+              } else {
+                // Show cancellation/rejection popup
+                final rawReason =
+                    data['cancellationReason'] as String? ?? 'unknown';
+                _showCancellationDialog(rawReason);
+              }
             }
           }
         }
@@ -482,11 +502,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     String key = rawReason.toLowerCase().trim();
 
     // Map specific phrases to AppStrings keys
-    if (key.contains('stock')) return AppStrings.get('items_out_of_stock', context);
+    if (key.contains('stock'))
+      return AppStrings.get('items_out_of_stock', context);
     if (key.contains('busy')) return AppStrings.get('kitchen_busy', context);
-    if (key.contains('clos')) return AppStrings.get('closing_soon', context); // matches closing/closed
-    if (key.contains('address')) return AppStrings.get('invalid_address', context);
-    if (key.contains('request')) return AppStrings.get('customer_request', context);
+    if (key.contains('clos'))
+      return AppStrings.get('closing_soon', context); // matches closing/closed
+    if (key.contains('address'))
+      return AppStrings.get('invalid_address', context);
+    if (key.contains('request'))
+      return AppStrings.get('customer_request', context);
     if (key.contains('other')) return AppStrings.get('other', context);
 
     // Fallback if the admin sends the exact key
@@ -510,13 +534,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 color: Colors.red.shade50,
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.cancel_outlined, color: Colors.red.shade400, size: 28),
+              child: Icon(Icons.cancel_outlined,
+                  color: Colors.red.shade400, size: 28),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 AppStrings.get('order_cancelled', context),
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -576,7 +602,88 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryBlue,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () => Navigator.pop(context),
+            child: const Text("OK", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Show popup for refund approved
+  void _showRefundApprovedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.check_circle_outlined,
+                  color: Colors.green.shade400, size: 28),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                AppStrings.get('refund_accepted', context),
+                style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.get('refund_accepted_msg', context),
+              style: const TextStyle(fontSize: 16, color: Colors.black87),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.green.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.account_balance_wallet_outlined,
+                      color: Colors.green.shade600, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      AppStrings.get('refund_status', context),
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryBlue,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
             ),
             onPressed: () => Navigator.pop(context),
             child: const Text("OK", style: TextStyle(color: Colors.white)),
@@ -617,7 +724,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     for (final it in items.take(6)) {
       if (it.imageUrl.isNotEmpty) {
         precacheImage(
-          CachedNetworkImageProvider(it.imageUrl, maxWidth: wPx, maxHeight: hPx),
+          CachedNetworkImageProvider(it.imageUrl,
+              maxWidth: wPx, maxHeight: hPx),
           context,
         );
       }
@@ -630,7 +738,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       final user = _auth.currentUser;
       if (user == null || user.email == null) {
         if (!mounted) return;
-        Navigator.push(context, MaterialPageRoute(builder: (_) => const OrdersScreen()));
+        Navigator.push(
+            context, MaterialPageRoute(builder: (_) => const OrdersScreen()));
         return;
       }
 
@@ -641,7 +750,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Order not found')),
         );
-        Navigator.push(context, MaterialPageRoute(builder: (_) => const OrdersScreen()));
+        Navigator.push(
+            context, MaterialPageRoute(builder: (_) => const OrdersScreen()));
         return;
       }
 
@@ -674,7 +784,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       if (doc.exists) {
         final data = doc.data() as Map<String, dynamic>?;
         final images = List<String>.from(data?['offer_carousel'] ?? []);
-        if(mounted) {
+        if (mounted) {
           setState(() {
             _carouselImages = images;
             _carouselLoaded = true;
@@ -718,18 +828,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       final Map<String, int> totals = {};
       for (final doc in snap.docs) {
         final data = doc.data() as Map<String, dynamic>;
-        final items = (data['items'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ?? const [];
+        final items =
+            (data['items'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ??
+                const [];
         for (final it in items) {
           final String itemId = (it['itemId'] ?? '') as String;
           if (itemId.isEmpty) continue;
-          final int qty = (it['quantity'] as num?)?.toInt() ?? (it['qty'] as num?)?.toInt() ?? 0;
+          final int qty = (it['quantity'] as num?)?.toInt() ??
+              (it['qty'] as num?)?.toInt() ??
+              0;
           if (qty <= 0) continue;
           totals[itemId] = (totals[itemId] ?? 0) + qty;
         }
       }
 
       if (totals.isEmpty) return [];
-      final ranked = totals.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+      final ranked = totals.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
       final topIds = ranked.take(5).map((e) => e.key).toList();
 
       if (topIds.isEmpty) return [];
@@ -741,7 +856,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           .where('isAvailable', isEqualTo: true)
           .get();
 
-      final fetched = itemsSnap.docs.map((d) => MenuItem.fromFirestore(d)).toList();
+      final fetched =
+          itemsSnap.docs.map((d) => MenuItem.fromFirestore(d)).toList();
       final Map<String, MenuItem> byId = {for (var m in fetched) m.id: m};
 
       final List<MenuItem> ordered = [];
@@ -780,9 +896,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     if (!mounted || _carouselImages.isEmpty) return;
 
     _carouselTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-      if (!mounted || !_pageController.hasClients || _pageController.page == null) return;
+      if (!mounted ||
+          !_pageController.hasClients ||
+          _pageController.page == null) return;
 
-      _currentPage = (_pageController.page!.round() + 1) % _carouselImages.length;
+      _currentPage =
+          (_pageController.page!.round() + 1) % _carouselImages.length;
       _pageController.animateToPage(
         _currentPage,
         duration: const Duration(milliseconds: 400),
@@ -849,7 +968,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         .listen((snapshot) {
       if (!mounted) return;
 
-      final allItems = snapshot.docs.map((doc) => MenuItem.fromFirestore(doc)).toList();
+      final allItems =
+          snapshot.docs.map((doc) => MenuItem.fromFirestore(doc)).toList();
       _updateAndGroupMenuItems(allItems);
       _checkForNewlyUnavailableItems(allItems);
 
@@ -869,7 +989,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
     final newlyUnavailableItems = _previousMenuItems.where((previousItem) {
       final currentItem = currentItems.firstWhere(
-            (item) => item.id == previousItem.id,
+        (item) => item.id == previousItem.id,
         orElse: () => MenuItem(
           id: '',
           name: '',
@@ -901,7 +1021,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
     _notifiedUnavailableItems.removeWhere((itemId) {
       final currentItem = currentItems.firstWhere(
-            (item) => item.id == itemId,
+        (item) => item.id == itemId,
         orElse: () => MenuItem(
           id: '',
           name: '',
@@ -961,11 +1081,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   void _updateAndGroupMenuItems(List<MenuItem> allItems) {
     final filteredItems = allItems
-        .where((item) => item.getLocalizedName(context).toLowerCase().contains(_searchQuery.toLowerCase()))
+        .where((item) => item
+            .getLocalizedName(context)
+            .toLowerCase()
+            .contains(_searchQuery.toLowerCase()))
         .toList();
 
     final discountedItems = filteredItems
-        .where((item) => item.discountedPrice != null && item.discountedPrice! > 0)
+        .where(
+            (item) => item.discountedPrice != null && item.discountedPrice! > 0)
         .toList();
 
     final Map<String, List<MenuItem>> newGrouped = {};
@@ -975,9 +1099,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
 
     for (final c in _categories) {
-      newGrouped[c.id] = filteredItems
-          .where((item) => item.categoryId == c.id)
-          .toList();
+      newGrouped[c.id] =
+          filteredItems.where((item) => item.categoryId == c.id).toList();
     }
 
     if (mounted) {
@@ -1004,7 +1127,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       if (!doc.exists ||
           !doc.data()!.containsKey('address') ||
           (doc.data()!['address'] as List).isEmpty) {
-
         // Trigger the popup
         _showMissingAddressDialog();
 
@@ -1029,22 +1151,29 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       }).toList();
 
       final Map<String, dynamic> defaultAddress = addressList.firstWhere(
-            (a) => a['isDefault'] == true,
+        (a) => a['isDefault'] == true,
         orElse: () => addressList.first,
       );
 
       final detailedAddress = [
-        if ((defaultAddress['flat'] ?? '').toString().isNotEmpty) 'Flat ${defaultAddress['flat']}',
-        if ((defaultAddress['floor'] ?? '').toString().isNotEmpty) 'Floor ${defaultAddress['floor']}',
-        if ((defaultAddress['building'] ?? '').toString().isNotEmpty) 'Building ${defaultAddress['building']}',
-        if ((defaultAddress['street'] ?? '').toString().isNotEmpty) 'Street ${defaultAddress['street']}',
-        if ((defaultAddress['city'] ?? '').toString().isNotEmpty) defaultAddress['city'],
+        if ((defaultAddress['flat'] ?? '').toString().isNotEmpty)
+          'Flat ${defaultAddress['flat']}',
+        if ((defaultAddress['floor'] ?? '').toString().isNotEmpty)
+          'Floor ${defaultAddress['floor']}',
+        if ((defaultAddress['building'] ?? '').toString().isNotEmpty)
+          'Building ${defaultAddress['building']}',
+        if ((defaultAddress['street'] ?? '').toString().isNotEmpty)
+          'Street ${defaultAddress['street']}',
+        if ((defaultAddress['city'] ?? '').toString().isNotEmpty)
+          defaultAddress['city'],
       ].join(', ');
 
       if (mounted) {
         setState(() {
           _allAddresses = addressList;
-          _userAddress = detailedAddress.isNotEmpty ? detailedAddress : 'No address details';
+          _userAddress = detailedAddress.isNotEmpty
+              ? detailedAddress
+              : 'No address details';
           _userAddressLabel = (defaultAddress['label'] ?? '').toString();
           _addressLoaded = true;
         });
@@ -1053,7 +1182,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       if (mounted) {
         setState(() {
           if (e.toString().contains('No address set')) {
-            _userAddress = 'No address added. Please add an address to continue.';
+            _userAddress =
+                'No address added. Please add an address to continue.';
             _userAddressLabel = 'Add Address';
           } else if (e.toString().contains('Not logged in')) {
             _userAddress = 'Please log in to manage addresses';
@@ -1076,7 +1206,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         barrierDismissible: false, // User must interact with the buttons
         builder: (BuildContext context) {
           return AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             backgroundColor: Colors.white,
             title: Row(
               children: [
@@ -1086,7 +1217,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     color: Colors.orange.withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.location_off_rounded, color: Colors.orange, size: 24),
+                  child: const Icon(Icons.location_off_rounded,
+                      color: Colors.orange, size: 24),
                 ),
                 const SizedBox(width: 12),
                 const Expanded(
@@ -1113,15 +1245,18 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryBlue,
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                 ),
                 onPressed: () {
                   Navigator.pop(context); // Close dialog
                   // Go to Address Screen
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => const SavedAddressesScreen()),
+                    MaterialPageRoute(
+                        builder: (context) => const SavedAddressesScreen()),
                   ).then((_) {
                     // When they come back, try loading data again
                     _initializeScreen();
@@ -1136,7 +1271,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     });
   }
 
-  void _showAddressBottomSheet(Function(String label, String fullAddress) onAddressSelected) {
+  void _showAddressBottomSheet(
+      Function(String label, String fullAddress) onAddressSelected) {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.email == null) return;
 
@@ -1146,11 +1282,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       backgroundColor: Colors.transparent,
       builder: (context) {
         return StreamBuilder<DocumentSnapshot>(
-          stream: FirebaseFirestore.instance.collection('Users').doc(user.email).snapshots(),
+          stream: FirebaseFirestore.instance
+              .collection('Users')
+              .doc(user.email)
+              .snapshots(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) {
               return Container(
-                padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+                padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).viewInsets.bottom),
                 decoration: const BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -1165,35 +1305,44 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             }
 
             final userData = snapshot.data!.data() as Map<String, dynamic>?;
-            final addresses = (userData?['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+            final addresses =
+                (userData?['address'] as List?)?.cast<Map<String, dynamic>>() ??
+                    [];
 
             return SingleChildScrollView(
               child: Container(
-                padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+                padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).viewInsets.bottom),
                 decoration: const BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
                         width: 40,
                         height: 4,
-                        decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(8)),
+                        decoration: BoxDecoration(
+                            color: Colors.grey[300],
+                            borderRadius: BorderRadius.circular(8)),
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        AppStrings.get('saved_addresses', context), // Using localized string
-                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
+                        AppStrings.get('saved_addresses',
+                            context), // Using localized string
+                        style: const TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(height: 24),
                       if (addresses.isEmpty)
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 32),
-                          child: Text('No addresses saved yet', style: TextStyle(color: Colors.grey[600])),
+                          child: Text('No addresses saved yet',
+                              style: TextStyle(color: Colors.grey[600])),
                         )
                       else
                         ListView.builder(
@@ -1203,11 +1352,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           itemBuilder: (context, index) {
                             final address = addresses[index];
                             final detailedAddress = [
-                              if (address['flat'] != null && address['flat'] != '') 'Flat ${address['flat']}',
-                              if (address['floor'] != null && address['floor'] != '') 'Floor ${address['floor']}',
-                              if (address['building'] != null && address['building'] != '') 'Building ${address['building']}',
-                              if (address['street'] != null && address['street'] != '') 'Street ${address['street']}',
-                              if (address['city'] != null && address['city'] != '') address['city'],
+                              if (address['flat'] != null &&
+                                  address['flat'] != '')
+                                'Flat ${address['flat']}',
+                              if (address['floor'] != null &&
+                                  address['floor'] != '')
+                                'Floor ${address['floor']}',
+                              if (address['building'] != null &&
+                                  address['building'] != '')
+                                'Building ${address['building']}',
+                              if (address['street'] != null &&
+                                  address['street'] != '')
+                                'Street ${address['street']}',
+                              if (address['city'] != null &&
+                                  address['city'] != '')
+                                address['city'],
                             ].join(', ');
                             return Container(
                               margin: const EdgeInsets.only(bottom: 12),
@@ -1224,41 +1383,71 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 ],
                               ),
                               child: ListTile(
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 12),
                                 leading: CircleAvatar(
                                   backgroundColor: Colors.blue[50],
                                   child: Icon(
-                                    address['label'] == 'Home' ? Icons.home : Icons.work,
+                                    address['label'] == 'Home'
+                                        ? Icons.home
+                                        : Icons.work,
                                     color: AppColors.primaryBlue,
                                   ),
                                 ),
-                                title: Text(address['label'] ?? 'Unnamed', style: const TextStyle(fontWeight: FontWeight.w600)),
-                                subtitle: Text(detailedAddress, style: const TextStyle(color: Colors.black54)),
-                                trailing: address['isDefault'] == true ? const Icon(Icons.check_circle, color: Colors.green) : null,
+                                title: Text(address['label'] ?? 'Unnamed',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w600)),
+                                subtitle: Text(detailedAddress,
+                                    style:
+                                        const TextStyle(color: Colors.black54)),
+                                trailing: address['isDefault'] == true
+                                    ? const Icon(Icons.check_circle,
+                                        color: Colors.green)
+                                    : null,
                                 onTap: () async {
-                                  final currentUser = FirebaseAuth.instance.currentUser;
-                                  if (currentUser == null || currentUser.email == null) return;
+                                  final currentUser =
+                                      FirebaseAuth.instance.currentUser;
+                                  if (currentUser == null ||
+                                      currentUser.email == null) return;
 
                                   final updated = addresses.map((a) {
-                                    final isThis = const MapEquality().equals(a, address);
+                                    final isThis =
+                                        const MapEquality().equals(a, address);
                                     return {...a, 'isDefault': isThis};
                                   }).toList();
 
-                                  await FirebaseFirestore.instance.collection('Users').doc(currentUser.email).update({'address': updated});
+                                  await FirebaseFirestore.instance
+                                      .collection('Users')
+                                      .doc(currentUser.email)
+                                      .update({'address': updated});
 
                                   final newDetailedAddress = [
-                                    if (address['flat'] != null && address['flat'] != '') 'Flat ${address['flat']}',
-                                    if (address['floor'] != null && address['floor'] != '') 'Floor ${address['floor']}',
-                                    if (address['building'] != null && address['building'] != '') 'Building ${address['building']}',
-                                    if (address['street'] != null && address['street'] != '') 'Street ${address['street']}',
-                                    if (address['city'] != null && address['city'] != '') address['city'],
+                                    if (address['flat'] != null &&
+                                        address['flat'] != '')
+                                      'Flat ${address['flat']}',
+                                    if (address['floor'] != null &&
+                                        address['floor'] != '')
+                                      'Floor ${address['floor']}',
+                                    if (address['building'] != null &&
+                                        address['building'] != '')
+                                      'Building ${address['building']}',
+                                    if (address['street'] != null &&
+                                        address['street'] != '')
+                                      'Street ${address['street']}',
+                                    if (address['city'] != null &&
+                                        address['city'] != '')
+                                      address['city'],
                                   ].join(', ');
 
                                   Navigator.pop(context);
-                                  onAddressSelected(address['label'] ?? 'Unnamed', newDetailedAddress);
+                                  onAddressSelected(
+                                      address['label'] ?? 'Unnamed',
+                                      newDetailedAddress);
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text('${address['label']} selected for delivery')),
+                                      SnackBar(
+                                          content: Text(
+                                              '${address['label']} selected for delivery')),
                                     );
                                   }
                                   _loadEstimatedTime();
@@ -1274,16 +1463,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primaryBlue,
                             padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
                           ),
                           onPressed: () {
                             Navigator.pop(context);
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (context) => const SavedAddressesScreen()),
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const SavedAddressesScreen()),
                             );
                           },
-                          child: const Text('Manage Addresses', style: TextStyle(fontSize: 16, color: Colors.white)),
+                          child: const Text('Manage Addresses',
+                              style:
+                                  TextStyle(fontSize: 16, color: Colors.white)),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -1316,9 +1510,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     void addOffset(String keyId) {
       final key = _sectionKeys[keyId];
       if (key?.currentContext != null) {
-        final RenderBox? box = key!.currentContext!.findRenderObject() as RenderBox?;
+        final RenderBox? box =
+            key!.currentContext!.findRenderObject() as RenderBox?;
         if (box != null) {
-          final dy = box.localToGlobal(Offset.zero, ancestor: scrollRenderObject).dy;
+          final dy =
+              box.localToGlobal(Offset.zero, ancestor: scrollRenderObject).dy;
           final offset = _mainScrollController.offset + dy;
           newOffsets[keyId] = offset;
         }
@@ -1392,7 +1588,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     if (!_categoryBarController.hasClients || !mounted) return;
     const double estChipWidth = 112.0;
     final screenWidth = MediaQuery.of(context).size.width;
-    final targetOffset = (index * (estChipWidth + 8.0)) - (screenWidth / 2) + (estChipWidth / 2);
+    final targetOffset =
+        (index * (estChipWidth + 8.0)) - (screenWidth / 2) + (estChipWidth / 2);
 
     final clampedOffset = targetOffset.clamp(
       0.0,
@@ -1431,7 +1628,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
 
     Future.delayed(const Duration(milliseconds: 450), () {
-      if(mounted) {
+      if (mounted) {
         _isAnimatingToSection = false;
       }
     });
@@ -1439,7 +1636,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   List<Map<String, dynamic>> _getAllCategoriesWithOffers() {
     final List<Map<String, dynamic>> allCategories = [];
-    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    final isArabic =
+        Provider.of<LanguageProvider>(context, listen: false).isArabic;
 
     if (_groupedMenuItems['offers']?.isNotEmpty ?? false) {
       allCategories.add({
@@ -1448,10 +1646,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       });
     }
 
-    allCategories.addAll(_categories.map((cat) => {
-      'id': cat.id,
-      'name': cat.getLocalizedName(context),
-    }).toList());
+    allCategories.addAll(_categories
+        .map((cat) => {
+              'id': cat.id,
+              'name': cat.getLocalizedName(context),
+            })
+        .toList());
 
     return allCategories;
   }
@@ -1625,7 +1825,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [Colors.red.shade400, Colors.red.shade600]),
+        gradient:
+            LinearGradient(colors: [Colors.red.shade400, Colors.red.shade600]),
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
@@ -1642,7 +1843,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           Expanded(
             child: Text(
               'Error loading order status',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
+              style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14),
             ),
           ),
         ],
@@ -1652,7 +1856,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    final double mainNavBarHeight = 64.0 + MediaQuery.of(context).padding.bottom;
+    final double mainNavBarHeight =
+        64.0 + MediaQuery.of(context).padding.bottom;
     const double buffer = 15.0;
 
     return Scaffold(
@@ -1685,7 +1890,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     child: GestureDetector(
                       onTap: () {
                         _showAddressBottomSheet((selectedLabel, selectedAddr) {
-                          if(mounted) {
+                          if (mounted) {
                             setState(() {
                               _userAddressLabel = selectedLabel;
                               _userAddress = selectedAddr;
@@ -1694,15 +1899,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         });
                       },
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.75),
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: const Color(0xFF1E88E5).withOpacity(0.12), width: 1.5),
+                          border: Border.all(
+                              color: const Color(0xFF1E88E5).withOpacity(0.12),
+                              width: 1.5),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.location_on, color: Colors.blue, size: 18),
+                            const Icon(Icons.location_on,
+                                color: Colors.blue, size: 18),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Column(
@@ -1713,31 +1922,40 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                     _userAddressLabel,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.black),
+                                    style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.black),
                                   ),
                                   Text(
                                     _userAddress,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                                    style: const TextStyle(
+                                        fontSize: 12, color: Colors.black54),
                                   ),
                                 ],
                               ),
                             ),
                             const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 6),
                               decoration: BoxDecoration(
                                 color: Colors.blue.withOpacity(0.12),
                                 borderRadius: BorderRadius.circular(14),
                               ),
                               child: Row(
                                 children: [
-                                  const Icon(Icons.timer_outlined, size: 16, color: Colors.blue),
+                                  const Icon(Icons.timer_outlined,
+                                      size: 16, color: Colors.blue),
                                   const SizedBox(width: 4),
                                   Text(
                                     _estimatedTime,
-                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.blue),
+                                    style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.blue),
                                   ),
                                 ],
                               ),
@@ -1753,52 +1971,57 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               SliverToBoxAdapter(
                 child: !_isEverythingLoaded
                     ? Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                  child: Shimmer.fromColors(
-                    baseColor: Colors.grey[300]!,
-                    highlightColor: Colors.grey[100]!,
-                    child: Container(
-                      height: MediaQuery.of(context).size.width * 0.55,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  ),
-                )
-                    : Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                  child: SizedBox(
-                    height: MediaQuery.of(context).size.width * 0.55,
-                    width: double.infinity,
-                    child: RepaintBoundary(
-                      child: PageView.builder(
-                        physics: const PageScrollPhysics(),
-                        controller: _pageController,
-                        itemCount: _carouselImages.length,
-                        onPageChanged: (i) => _currentPage = i,
-                        itemBuilder: (context, index) {
-                          return Container(
-                            margin: const EdgeInsets.symmetric(horizontal: 2.0),
-                            child: ClipRRect(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                        child: Shimmer.fromColors(
+                          baseColor: Colors.grey[300]!,
+                          highlightColor: Colors.grey[100]!,
+                          child: Container(
+                            height: MediaQuery.of(context).size.width * 0.55,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
                               borderRadius: BorderRadius.circular(12),
-                              child: CachedNetworkImage(
-                                imageUrl: _carouselImages[index],
-                                fit: BoxFit.cover,
-                                fadeInDuration: const Duration(milliseconds: 150),
-                                fadeOutDuration: const Duration(milliseconds: 150),
-                                filterQuality: FilterQuality.low,
-                                placeholder: (_, __) => Container(color: Colors.grey.shade300),
-                                errorWidget: (_, __, ___) => const Icon(Icons.broken_image),
-                              ),
                             ),
-                          );
-                        },
+                          ),
+                        ),
+                      )
+                    : Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                        child: SizedBox(
+                          height: MediaQuery.of(context).size.width * 0.55,
+                          width: double.infinity,
+                          child: RepaintBoundary(
+                            child: PageView.builder(
+                              physics: const PageScrollPhysics(),
+                              controller: _pageController,
+                              itemCount: _carouselImages.length,
+                              onPageChanged: (i) => _currentPage = i,
+                              itemBuilder: (context, index) {
+                                return Container(
+                                  margin: const EdgeInsets.symmetric(
+                                      horizontal: 2.0),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: CachedNetworkImage(
+                                      imageUrl: _carouselImages[index],
+                                      fit: BoxFit.cover,
+                                      fadeInDuration:
+                                          const Duration(milliseconds: 150),
+                                      fadeOutDuration:
+                                          const Duration(milliseconds: 150),
+                                      filterQuality: FilterQuality.low,
+                                      placeholder: (_, __) => Container(
+                                          color: Colors.grey.shade300),
+                                      errorWidget: (_, __, ___) =>
+                                          const Icon(Icons.broken_image),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                ),
               ),
 
               // Sticky Category Navigation Bar
@@ -1808,131 +2031,184 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   height: 52,
                   child: !_isEverythingLoaded
                       ? Shimmer.fromColors(
-                    baseColor: Colors.grey[300]!,
-                    highlightColor: Colors.grey[100]!,
-                    child: Container(
-                      color: Colors.white,
-                      height: 52,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: ListView.builder(
-                          scrollDirection: Axis.horizontal,
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                          itemCount: 6,
-                          itemBuilder: (context, index) {
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
-                              child: Container(
-                                width: 80,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  )
-                      : ClipRect(
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: Container(
-                        color: Colors.white.withOpacity(0.1),
-                        alignment: Alignment.center,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Container(
-                              height: 40,
-                              color: Colors.white.withOpacity(0.55),
+                          baseColor: Colors.grey[300]!,
+                          highlightColor: Colors.grey[100]!,
+                          child: Container(
+                            color: Colors.white,
+                            height: 52,
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
                               child: ListView.builder(
-                                controller: _categoryBarController,
                                 scrollDirection: Axis.horizontal,
-                                padding: const EdgeInsets.symmetric(horizontal: 6),
-                                itemCount: _getAllCategoriesWithOffers().length, // Use the combined list
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 6),
+                                itemCount: 6,
                                 itemBuilder: (context, index) {
-                                  final allCategories = _getAllCategoriesWithOffers();
-                                  final category = allCategories[index];
-                                  final isOffersCategory = category['id'] == 'offers';
-
-                                  return ValueListenableBuilder<int>(
-                                    valueListenable: _activeCategoryIndexNotifier,
-                                    builder: (context, activeIndex, _) {
-                                      final isActive = activeIndex == index;
-                                      return Padding(
-                                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                                        child: GestureDetector(
-                                          onTap: () => _onCategoryTap(index),
-                                          child: AnimatedContainer(
-                                            duration: const Duration(milliseconds: 200),
-                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                            decoration: BoxDecoration(
-                                              color: isActive ? kChipActive.withOpacity(0.85) : Colors.white.withOpacity(0.55),
-                                              borderRadius: BorderRadius.circular(10),
-                                              border: Border.all(
-                                                color: isActive ? kChipActive : Colors.white.withOpacity(0.7),
-                                                width: 1,
-                                              ),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                if (isOffersCategory)
-                                                  Padding(
-                                                    padding: const EdgeInsets.only(right: 6),
-                                                    child: Icon(
-                                                      Icons.local_offer,
-                                                      size: 16,
-                                                      color: isActive ? Colors.white : Colors.blue,
-                                                    ),
-                                                  )
-                                                else if (category['imageUrl'] != null && category['imageUrl'].isNotEmpty)
-                                                  Padding(
-                                                    padding: const EdgeInsets.only(right: 6),
-                                                    child: ClipOval(
-                                                      child: CachedNetworkImage(
-                                                        imageUrl: category['imageUrl'],
-                                                        width: 16,
-                                                        height: 16,
-                                                        fit: BoxFit.cover,
-                                                        errorWidget: (_, __, ___) => Icon(
-                                                          Icons.fastfood_rounded,
-                                                          size: 16,
-                                                          color: isActive ? Colors.white : Colors.black54,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                Text(
-                                                  category['name'],
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                  style: TextStyle(
-                                                    fontSize: 13,
-                                                    height: 1.2,
-                                                    fontWeight: FontWeight.w700,
-                                                    color: isActive ? Colors.white : Colors.black87,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      );
-                                    },
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4),
+                                    child: Container(
+                                      width: 80,
+                                      height: 32,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
                                   );
                                 },
                               ),
                             ),
                           ),
+                        )
+                      : ClipRect(
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                            child: Container(
+                              color: Colors.white.withOpacity(0.1),
+                              alignment: Alignment.center,
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 12),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Container(
+                                    height: 40,
+                                    color: Colors.white.withOpacity(0.55),
+                                    child: ListView.builder(
+                                      controller: _categoryBarController,
+                                      scrollDirection: Axis.horizontal,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6),
+                                      itemCount: _getAllCategoriesWithOffers()
+                                          .length, // Use the combined list
+                                      itemBuilder: (context, index) {
+                                        final allCategories =
+                                            _getAllCategoriesWithOffers();
+                                        final category = allCategories[index];
+                                        final isOffersCategory =
+                                            category['id'] == 'offers';
+
+                                        return ValueListenableBuilder<int>(
+                                          valueListenable:
+                                              _activeCategoryIndexNotifier,
+                                          builder: (context, activeIndex, _) {
+                                            final isActive =
+                                                activeIndex == index;
+                                            return Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 4),
+                                              child: GestureDetector(
+                                                onTap: () =>
+                                                    _onCategoryTap(index),
+                                                child: AnimatedContainer(
+                                                  duration: const Duration(
+                                                      milliseconds: 200),
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 8),
+                                                  decoration: BoxDecoration(
+                                                    color: isActive
+                                                        ? kChipActive
+                                                            .withOpacity(0.85)
+                                                        : Colors.white
+                                                            .withOpacity(0.55),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            10),
+                                                    border: Border.all(
+                                                      color: isActive
+                                                          ? kChipActive
+                                                          : Colors.white
+                                                              .withOpacity(0.7),
+                                                      width: 1,
+                                                    ),
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      if (isOffersCategory)
+                                                        Padding(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .only(
+                                                                  right: 6),
+                                                          child: Icon(
+                                                            Icons.local_offer,
+                                                            size: 16,
+                                                            color: isActive
+                                                                ? Colors.white
+                                                                : Colors.blue,
+                                                          ),
+                                                        )
+                                                      else if (category[
+                                                                  'imageUrl'] !=
+                                                              null &&
+                                                          category['imageUrl']
+                                                              .isNotEmpty)
+                                                        Padding(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .only(
+                                                                  right: 6),
+                                                          child: ClipOval(
+                                                            child:
+                                                                CachedNetworkImage(
+                                                              imageUrl: category[
+                                                                  'imageUrl'],
+                                                              width: 16,
+                                                              height: 16,
+                                                              fit: BoxFit.cover,
+                                                              errorWidget: (_,
+                                                                      __,
+                                                                      ___) =>
+                                                                  Icon(
+                                                                Icons
+                                                                    .fastfood_rounded,
+                                                                size: 16,
+                                                                color: isActive
+                                                                    ? Colors
+                                                                        .white
+                                                                    : Colors
+                                                                        .black54,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      Text(
+                                                        category['name'],
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: TextStyle(
+                                                          fontSize: 13,
+                                                          height: 1.2,
+                                                          fontWeight:
+                                                              FontWeight.w700,
+                                                          color: isActive
+                                                              ? Colors.white
+                                                              : Colors.black87,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                  ),
                 ),
               ),
               // Main Content
@@ -1975,11 +2251,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               onTap: () {
                 HapticFeedback.lightImpact();
                 Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 3)),
+                  MaterialPageRoute(
+                      builder: (_) => const MainApp(initialIndex: 3)),
                 );
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.centerLeft,
@@ -1990,7 +2268,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ],
                   ),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white.withOpacity(0.2), width: 1),
+                  border: Border.all(
+                      color: Colors.white.withOpacity(0.2), width: 1),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2006,7 +2285,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           child: Text(
                             // UPDATED: Localized item count
                             AppStrings.formatNumber(cart.itemCount, context),
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16),
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 16),
                           ),
                         ),
                         const SizedBox(width: 16),
@@ -2016,45 +2298,62 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           children: [
                             Text(
                               AppStrings.get('view_cart', context),
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 16),
                             ),
                             Text(
                               // UPDATED: Localized count in subtitle
                               '${AppStrings.formatNumber(cart.itemCount, context)} ${AppStrings.get(cart.itemCount > 1 ? 'items' : 'item', context)}',
-                              style: TextStyle(color: Colors.white.withOpacity(0.8), fontWeight: FontWeight.w500, fontSize: 12),
+                              style: TextStyle(
+                                  color: Colors.white.withOpacity(0.8),
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 12),
                             ),
                           ],
                         ),
                       ],
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.15),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.white.withOpacity(0.3), width: 1),
+                        border: Border.all(
+                            color: Colors.white.withOpacity(0.3), width: 1),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.monetization_on_rounded, color: Colors.white, size: 18),
+                          const Icon(Icons.monetization_on_rounded,
+                              color: Colors.white, size: 18),
                           const SizedBox(width: 4),
                           Text(
                             // UPDATED: Localized Price
-                            AppStrings.formatPrice(cart.totalAfterDiscount, context),
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16),
+                            AppStrings.formatPrice(
+                                cart.totalAfterDiscount, context),
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 16),
                           ),
                           if (cart.totalAfterDiscount < cart.totalAmount) ...[
                             const SizedBox(width: 4),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
                                 color: Colors.green,
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Text(
                                 AppStrings.get('save', context),
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10),
                               ),
                             ),
                           ],
@@ -2104,6 +2403,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       ),
     );
   }
+
   Widget _buildHomeShimmer() {
     return Shimmer.fromColors(
       baseColor: Colors.grey[300]!,
@@ -2123,7 +2423,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
           ),
           const SizedBox(height: 16),
-
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: SizedBox(
@@ -2144,7 +2443,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
           ),
           const SizedBox(height: 24),
-
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
@@ -2166,7 +2464,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     itemCount: 4,
                     itemBuilder: (context, index) => Container(
                       width: 160,
-                      margin: EdgeInsets.only(right: 16, left: index == 0 ? 0 : 0),
+                      margin:
+                          EdgeInsets.only(right: 16, left: index == 0 ? 0 : 0),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(16),
@@ -2177,7 +2476,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             child: Container(
                               decoration: BoxDecoration(
                                 color: Colors.white,
-                                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                                borderRadius: const BorderRadius.vertical(
+                                    top: Radius.circular(16)),
                               ),
                             ),
                           ),
@@ -2209,14 +2509,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
           ),
           const SizedBox(height: 24),
-
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
-              children: List.generate(4, (index) => Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: _buildMenuItemShimmer(),
-              )),
+              children: List.generate(
+                  4,
+                  (index) => Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: _buildMenuItemShimmer(),
+                      )),
             ),
           ),
         ],
@@ -2289,9 +2590,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  Widget _buildPopularItemsSection(List<MenuItem> items, double cardW, double imgH) {
+  Widget _buildPopularItemsSection(
+      List<MenuItem> items, double cardW, double imgH) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if(mounted) _precachePopular(items, cardW, imgH);
+      if (mounted) _precachePopular(items, cardW, imgH);
     });
 
     return Column(
@@ -2299,10 +2601,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: Text(
-              AppStrings.get('popular_items', context),
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)
-          ),
+          child: Text(AppStrings.get('popular_items', context),
+              style:
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         ),
         SizedBox(
           height: 230,
@@ -2326,6 +2627,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       ],
     );
   }
+
   Widget _buildGroupedMenuSections() {
     final List<Widget> children = [];
 
@@ -2364,9 +2666,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           const SizedBox(height: 32),
           const Icon(Icons.search_off, size: 60, color: Colors.grey),
           const SizedBox(height: 16),
-          Text(AppStrings.get('no_items', context), style: const TextStyle(fontSize: 18)),
+          Text(AppStrings.get('no_items', context),
+              style: const TextStyle(fontSize: 18)),
           const SizedBox(height: 8),
-          const Text('Try adjusting your search', style: TextStyle(color: Colors.grey, fontSize: 14)),
+          const Text('Try adjusting your search',
+              style: TextStyle(color: Colors.grey, fontSize: 14)),
           const SizedBox(height: 32),
         ],
       );
@@ -2392,7 +2696,8 @@ class _GlassTabBarDelegate extends SliverPersistentHeaderDelegate {
   double get maxExtent => height;
 
   @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
     return SizedBox.expand(child: child);
   }
 
@@ -2433,7 +2738,8 @@ class _CategorySection extends StatelessWidget {
                 if (isOffersSection) const SizedBox(width: 8),
                 Text(
                   title,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w800),
                 ),
               ],
             ),
@@ -2487,7 +2793,8 @@ class _PopularItemCard extends StatelessWidget {
         if (!isAvailable) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('${item.getLocalizedName(context)} is currently out of stock'),
+              content: Text(
+                  '${item.getLocalizedName(context)} is currently out of stock'),
               duration: const Duration(seconds: 2),
               backgroundColor: Colors.orange,
             ),
@@ -2525,7 +2832,8 @@ class _PopularItemCard extends StatelessWidget {
               child: Stack(
                 children: [
                   ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(16)),
                     child: Opacity(
                       opacity: isAvailable ? 1.0 : 0.6,
                       child: CachedNetworkImage(
@@ -2536,24 +2844,27 @@ class _PopularItemCard extends StatelessWidget {
                         fadeInDuration: const Duration(milliseconds: 150),
                         fadeOutDuration: const Duration(milliseconds: 150),
                         filterQuality: FilterQuality.low,
-                        placeholder: (_, __) => Container(color: Colors.grey.shade200),
-                        errorWidget: (_, __, ___) => const Icon(Icons.fastfood, color: Colors.grey),
+                        placeholder: (_, __) =>
+                            Container(color: Colors.grey.shade200),
+                        errorWidget: (_, __, ___) =>
+                            const Icon(Icons.fastfood, color: Colors.grey),
                       ),
                     ),
                   ),
-
                   if (!isAvailable)
                     Positioned.fill(
                       child: Container(
                         decoration: const BoxDecoration(
                           color: Colors.black54,
-                          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                          borderRadius:
+                              BorderRadius.vertical(top: Radius.circular(16)),
                         ),
                         child: Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(Icons.inventory_2_outlined, color: Colors.white, size: 24),
+                              const Icon(Icons.inventory_2_outlined,
+                                  color: Colors.white, size: 24),
                               const SizedBox(height: 4),
                               Text(
                                 AppStrings.get('out_of_stock', context),
@@ -2568,7 +2879,6 @@ class _PopularItemCard extends StatelessWidget {
                         ),
                       ),
                     ),
-
                   if (isAvailable)
                     Positioned(
                       right: 8,
@@ -2588,7 +2898,8 @@ class _PopularItemCard extends StatelessWidget {
 
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text('${item.getLocalizedName(context)} added to cart'),
+                                    content: Text(
+                                        '${item.getLocalizedName(context)} added to cart'),
                                     duration: const Duration(seconds: 1),
                                     behavior: SnackBarBehavior.floating,
                                     shape: RoundedRectangleBorder(
@@ -2598,12 +2909,18 @@ class _PopularItemCard extends StatelessWidget {
                                 );
                               },
                               child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 6),
                                 child: Row(
                                   children: [
-                                    Text(AppStrings.get('add', context), style: const TextStyle(color: AppColors.primaryBlue, fontWeight: FontWeight.w800, fontSize: 13)),
+                                    Text(AppStrings.get('add', context),
+                                        style: const TextStyle(
+                                            color: AppColors.primaryBlue,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 13)),
                                     const SizedBox(width: 2),
-                                    const Icon(Icons.add_rounded, color: AppColors.primaryBlue, size: 20),
+                                    const Icon(Icons.add_rounded,
+                                        color: AppColors.primaryBlue, size: 20),
                                   ],
                                 ),
                               ),
@@ -2612,7 +2929,6 @@ class _PopularItemCard extends StatelessWidget {
                         ),
                       ),
                     ),
-
                   if (!isAvailable)
                     Positioned(
                       right: 8,
@@ -2624,12 +2940,18 @@ class _PopularItemCard extends StatelessWidget {
                           child: Material(
                             color: Colors.grey.withOpacity(0.75),
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 6),
                               child: Row(
                                 children: [
-                                  const Icon(Icons.block, color: Colors.white, size: 16),
+                                  const Icon(Icons.block,
+                                      color: Colors.white, size: 16),
                                   const SizedBox(width: 4),
-                                  Text(AppStrings.get('unavailable', context), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 10)),
+                                  Text(AppStrings.get('unavailable', context),
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 10)),
                                 ],
                               ),
                             ),
@@ -2667,9 +2989,15 @@ class _PopularItemCard extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.start,
                   children: [
-                    Icon(Icons.local_fire_department_rounded, color: isAvailable ? Colors.red : Colors.grey, size: 16),
+                    Icon(Icons.local_fire_department_rounded,
+                        color: isAvailable ? Colors.red : Colors.grey,
+                        size: 16),
                     const SizedBox(width: 4),
-                    Text(AppStrings.get('spicy', context), style: TextStyle(color: isAvailable ? Colors.red : Colors.grey, fontWeight: FontWeight.w600, fontSize: 12.5)),
+                    Text(AppStrings.get('spicy', context),
+                        style: TextStyle(
+                            color: isAvailable ? Colors.red : Colors.grey,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12.5)),
                   ],
                 ),
               ),
@@ -2679,7 +3007,8 @@ class _PopularItemCard extends StatelessWidget {
     );
   }
 
-  Widget _buildPriceSection(BuildContext context, MenuItem item, bool isAvailable) {
+  Widget _buildPriceSection(
+      BuildContext context, MenuItem item, bool isAvailable) {
     // FIX: Using formatPrice correctly with doubles
     if (item.discountedPrice != null && item.discountedPrice! > 0) {
       return Column(
@@ -2822,7 +3151,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
       await _firestore.collection('Users').doc(user.email).set({
         'favorites': {
           widget.item.id:
-          _isFavorite ? _createFavoriteItemMap() : FieldValue.delete()
+              _isFavorite ? _createFavoriteItemMap() : FieldValue.delete()
         },
       }, SetOptions(merge: true));
     } catch (e) {
@@ -2836,14 +3165,14 @@ class _MenuItemCardState extends State<MenuItemCard> {
   }
 
   Map<String, dynamic> _createFavoriteItemMap() => {
-    'id': widget.item.id,
-    'name': widget.item.name,
-    'imageUrl': widget.item.imageUrl,
-    'price': widget.item.price,
-    'description': widget.item.description,
-    'isSpicy': widget.item.tags['isSpicy'] ?? false,
-    'addedAt': FieldValue.serverTimestamp(),
-  };
+        'id': widget.item.id,
+        'name': widget.item.name,
+        'imageUrl': widget.item.imageUrl,
+        'price': widget.item.price,
+        'description': widget.item.description,
+        'isSpicy': widget.item.tags['isSpicy'] ?? false,
+        'addedAt': FieldValue.serverTimestamp(),
+      };
 
   void _updateQuantity(int newQuantity, CartService cartService) {
     if (newQuantity > 0) {
@@ -2864,12 +3193,13 @@ class _MenuItemCardState extends State<MenuItemCard> {
   }
 
   int _getItemCount(CartService cartService) {
-    final index =
-    cartService.items.indexWhere((cartItem) => cartItem.id == widget.item.id);
+    final index = cartService.items
+        .indexWhere((cartItem) => cartItem.id == widget.item.id);
     return index != -1 ? cartService.items[index].quantity : 0;
   }
 
-  Widget _buildAddButton(bool isAvailable, int itemCount, CartService cartService) {
+  Widget _buildAddButton(
+      bool isAvailable, int itemCount, CartService cartService) {
     if (!isAvailable) {
       return Container(
         constraints: const BoxConstraints(minWidth: 132, minHeight: 44),
@@ -2895,93 +3225,95 @@ class _MenuItemCardState extends State<MenuItemCard> {
 
     return itemCount > 0
         ? Container(
-      height: 40,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: AppColors.primaryBlue,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primaryBlue.withOpacity(0.3),
-            blurRadius: 6,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          GestureDetector(
-            onTap: () => _updateQuantity(itemCount - 1, cartService),
-            child: const Padding(
-              padding: EdgeInsets.all(6),
-              child: Icon(Icons.remove, color: Colors.white, size: 18),
+            height: 40,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppColors.primaryBlue,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primaryBlue.withOpacity(0.3),
+                  blurRadius: 6,
+                  offset: const Offset(0, 3),
+                ),
+              ],
             ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Text(
-              // FIX: Use localized numbers for quantity
-              AppStrings.formatNumber(itemCount, context),
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  onTap: () => _updateQuantity(itemCount - 1, cartService),
+                  child: const Padding(
+                    padding: EdgeInsets.all(6),
+                    child: Icon(Icons.remove, color: Colors.white, size: 18),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Text(
+                    // FIX: Use localized numbers for quantity
+                    AppStrings.formatNumber(itemCount, context),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => _updateQuantity(itemCount + 1, cartService),
+                  child: const Padding(
+                    padding: EdgeInsets.all(6),
+                    child: Icon(Icons.add, color: Colors.white, size: 18),
+                  ),
+                ),
+              ],
             ),
-          ),
-          GestureDetector(
-            onTap: () => _updateQuantity(itemCount + 1, cartService),
-            child: const Padding(
-              padding: EdgeInsets.all(6),
-              child: Icon(Icons.add, color: Colors.white, size: 18),
-            ),
-          ),
-        ],
-      ),
-    )
+          )
         : Container(
-      constraints: const BoxConstraints(minWidth: 132, minHeight: 44),
-      decoration: BoxDecoration(
-        color: AppColors.primaryBlue,
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primaryBlue.withOpacity(0.3),
-            blurRadius: 6,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () => _addItemToCart(widget.item, cartService),
-          borderRadius: BorderRadius.circular(22),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Center(
-              child: Text(
-                AppStrings.get('add_to_cart', context),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
+            constraints: const BoxConstraints(minWidth: 132, minHeight: 44),
+            decoration: BoxDecoration(
+              color: AppColors.primaryBlue,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primaryBlue.withOpacity(0.3),
+                  blurRadius: 6,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => _addItemToCart(widget.item, cartService),
+                borderRadius: BorderRadius.circular(22),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Center(
+                    child: Text(
+                      AppStrings.get('add_to_cart', context),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
-      ),
-    );
+          );
   }
 
   @override
   Widget build(BuildContext context) {
-    final bool hasDiscount = widget.item.discountedPrice != null && widget.item.discountedPrice! > 0;
+    final bool hasDiscount =
+        widget.item.discountedPrice != null && widget.item.discountedPrice! > 0;
 
     // FIX: Using raw double values here, not Strings
-    final double displayPrice = hasDiscount ? widget.item.discountedPrice! : widget.item.price;
+    final double displayPrice =
+        hasDiscount ? widget.item.discountedPrice! : widget.item.price;
     final double? originalPrice = hasDiscount ? widget.item.price : null;
 
     final isAvailable = widget.item.isAvailableInBranch(widget.currentBranchId);
@@ -3036,7 +3368,9 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w700,
-                                          color: isAvailable ? Colors.black87 : Colors.grey,
+                                          color: isAvailable
+                                              ? Colors.black87
+                                              : Colors.grey,
                                         ),
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
@@ -3051,7 +3385,9 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                         padding: EdgeInsets.zero,
                                         splashRadius: 20,
                                         iconSize: 22,
-                                        onPressed: isAvailable ? _toggleFavorite : null,
+                                        onPressed: isAvailable
+                                            ? _toggleFavorite
+                                            : null,
                                         icon: Icon(
                                           _isFavorite
                                               ? Icons.favorite
@@ -3080,39 +3416,54 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                   children: [
                                     Expanded(
                                       child: Wrap(
-                                        crossAxisAlignment: WrapCrossAlignment.center,
+                                        crossAxisAlignment:
+                                            WrapCrossAlignment.center,
                                         spacing: 8,
                                         runSpacing: 4,
                                         children: [
                                           Text(
                                             // FIX: Use formatPrice with the double variable
-                                            AppStrings.formatPrice(displayPrice, context),
+                                            AppStrings.formatPrice(
+                                                displayPrice, context),
                                             style: TextStyle(
                                               fontSize: 16,
                                               fontWeight: FontWeight.w700,
                                               color: isAvailable
-                                                  ? (hasDiscount ? Colors.blue : Colors.black87)
+                                                  ? (hasDiscount
+                                                      ? Colors.blue
+                                                      : Colors.black87)
                                                   : Colors.grey,
                                             ),
                                           ),
                                           if (originalPrice != null)
                                             Text(
                                               // FIX: Use formatPrice with original double
-                                              AppStrings.formatPrice(originalPrice, context),
+                                              AppStrings.formatPrice(
+                                                  originalPrice, context),
                                               style: const TextStyle(
                                                 fontSize: 14,
                                                 fontWeight: FontWeight.normal,
                                                 color: Colors.grey,
-                                                decoration: TextDecoration.lineThrough,
+                                                decoration:
+                                                    TextDecoration.lineThrough,
                                               ),
                                             ),
-                                          if (widget.showDiscountBadge && widget.item.discountedPrice != null)
+                                          if (widget.showDiscountBadge &&
+                                              widget.item.discountedPrice !=
+                                                  null)
                                             Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 3),
                                               decoration: BoxDecoration(
-                                                color: Colors.red.withOpacity(0.1),
-                                                borderRadius: BorderRadius.circular(6),
-                                                border: Border.all(color: Colors.red, width: 1),
+                                                color:
+                                                    Colors.red.withOpacity(0.1),
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                                border: Border.all(
+                                                    color: Colors.red,
+                                                    width: 1),
                                               ),
                                               child: const Text(
                                                 'OFFER',
@@ -3123,12 +3474,18 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                                 ),
                                               ),
                                             ),
-                                          if (widget.item.offerText != null && widget.item.offerText!.isNotEmpty)
+                                          if (widget.item.offerText != null &&
+                                              widget.item.offerText!.isNotEmpty)
                                             Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 4),
                                               decoration: BoxDecoration(
-                                                color: AppColors.primaryBlue.withOpacity(0.1),
-                                                borderRadius: BorderRadius.circular(4),
+                                                color: AppColors.primaryBlue
+                                                    .withOpacity(0.1),
+                                                borderRadius:
+                                                    BorderRadius.circular(4),
                                               ),
                                               child: Text(
                                                 widget.item.offerText!,
@@ -3159,10 +3516,9 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                 fit: BoxFit.cover,
                                 placeholder: (context, url) =>
                                     Container(color: Colors.grey.shade200),
-                                errorWidget: (context, url, error) => const Icon(
-                                    Icons.fastfood,
-                                    color: Colors.grey,
-                                    size: 30),
+                                errorWidget: (context, url, error) =>
+                                    const Icon(Icons.fastfood,
+                                        color: Colors.grey, size: 30),
                               ),
                             ),
                           ),
@@ -3206,7 +3562,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
   void initState() {
     super.initState();
     final cart = CartService();
-    final index = cart.items.indexWhere((cartItem) => cartItem.id == widget.item.id);
+    final index =
+        cart.items.indexWhere((cartItem) => cartItem.id == widget.item.id);
     quantity = index != -1 ? cart.items[index].quantity : 1;
 
     _checkItemAvailability();
@@ -3222,7 +3579,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
       final cart = CartService();
       final currentBranchIds = cart.currentBranchIds;
       // Default to Old_Airport if cart is empty, similar to main logic
-      final branchToCheck = currentBranchIds.isNotEmpty ? currentBranchIds.first : 'Old_Airport';
+      final branchToCheck =
+          currentBranchIds.isNotEmpty ? currentBranchIds.first : 'Old_Airport';
 
       final isAvailable = widget.item.isAvailableInBranch(branchToCheck);
 
@@ -3260,8 +3618,7 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel',
-                style: TextStyle(color: Colors.grey)),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
             onPressed: () {
@@ -3271,9 +3628,11 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('${widget.item.getLocalizedName(context)} removed from cart.'),
+                  content: Text(
+                      '${widget.item.getLocalizedName(context)} removed from cart.'),
                   behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
                   duration: const Duration(seconds: 2),
                 ),
               );
@@ -3284,12 +3643,11 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8)),
             ),
-            child: const Text('Remove',
-                style: TextStyle(fontSize: 14)),
+            child: const Text('Remove', style: TextStyle(fontSize: 14)),
           ),
         ],
         actionsPadding:
-        const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       ),
     );
   }
@@ -3432,7 +3790,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               height: 16,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(AppColors.primaryBlue),
+                valueColor:
+                    AlwaysStoppedAnimation<Color>(AppColors.primaryBlue),
               ),
             ),
             const SizedBox(width: 8),
@@ -3490,13 +3849,15 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
   @override
   Widget build(BuildContext context) {
     final cart = CartService();
-    final index = cart.items.indexWhere((cartItem) => cartItem.id == widget.item.id);
+    final index =
+        cart.items.indexWhere((cartItem) => cartItem.id == widget.item.id);
     final existingQty = index != -1 ? cart.items[index].quantity : 0;
 
     final bool hasDiscount = widget.item.discountedPrice != null;
 
     // FIX: Using raw double values here, not Strings
-    final double displayPrice = hasDiscount ? widget.item.discountedPrice! : widget.item.price;
+    final double displayPrice =
+        hasDiscount ? widget.item.discountedPrice! : widget.item.price;
 
     return SingleChildScrollView(
       child: Container(
@@ -3520,7 +3881,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               ),
             ),
             const SizedBox(height: 16),
-
             Stack(
               alignment: Alignment.center,
               children: [
@@ -3533,8 +3893,10 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                       fit: BoxFit.cover,
                       height: 250,
                       width: double.infinity,
-                      placeholder: (c, u) => Container(height: 250, color: Colors.grey.shade200),
-                      errorWidget: (c, u, e) => const Icon(Icons.fastfood, color: Colors.grey, size: 40),
+                      placeholder: (c, u) =>
+                          Container(height: 250, color: Colors.grey.shade200),
+                      errorWidget: (c, u, e) => const Icon(Icons.fastfood,
+                          color: Colors.grey, size: 40),
                     ),
                   ),
                 ),
@@ -3542,10 +3904,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               ],
             ),
             const SizedBox(height: 16),
-
             _buildAvailabilityIndicator(),
             const SizedBox(height: 8),
-
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Text(
@@ -3558,7 +3918,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               ),
             ),
             const SizedBox(height: 8),
-
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
@@ -3588,7 +3947,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                     ),
                     const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
                         color: Colors.green.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(4),
@@ -3609,7 +3969,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               ),
             ),
             const SizedBox(height: 8),
-
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Text(
@@ -3624,7 +3983,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
               ),
             ),
             const SizedBox(height: 24),
-
             if (existingQty > 0 && existingQty != quantity && _isItemAvailable)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -3638,7 +3996,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                   ),
                 ),
               ),
-
             if (existingQty > 0 && !_isItemAvailable)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -3651,7 +4008,8 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.warning_amber, color: Colors.orange, size: 20),
+                      const Icon(Icons.warning_amber,
+                          color: Colors.orange, size: 20),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
@@ -3667,7 +4025,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                   ),
                 ),
               ),
-
             Padding(
               padding: const EdgeInsets.only(bottom: 8.0),
               child: Row(
@@ -3686,19 +4043,22 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                           IconButton(
                             icon: Icon(Icons.remove,
                                 color: _isItemAvailable
-                                    ? (quantity > 1 ? Colors.black87 : Colors.grey)
+                                    ? (quantity > 1
+                                        ? Colors.black87
+                                        : Colors.grey)
                                     : Colors.grey),
                             onPressed: _isItemAvailable
                                 ? () {
-                              if (quantity > 1) {
-                                _handleQuantityChange(quantity - 1);
-                              } else if (quantity == 1) {
-                                _handleQuantityChange(0);
-                              }
-                            }
+                                    if (quantity > 1) {
+                                      _handleQuantityChange(quantity - 1);
+                                    } else if (quantity == 1) {
+                                      _handleQuantityChange(0);
+                                    }
+                                  }
                                 : null,
                             padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                            constraints: const BoxConstraints(
+                                minWidth: 48, minHeight: 48),
                           ),
                           SizedBox(
                             width: 40,
@@ -3709,21 +4069,26 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
-                                  color: _isItemAvailable ? Colors.black : Colors.grey,
+                                  color: _isItemAvailable
+                                      ? Colors.black
+                                      : Colors.grey,
                                 ),
                               ),
                             ),
                           ),
                           IconButton(
                             icon: Icon(Icons.add,
-                                color: _isItemAvailable ? Colors.black87 : Colors.grey),
+                                color: _isItemAvailable
+                                    ? Colors.black87
+                                    : Colors.grey),
                             onPressed: _isItemAvailable
                                 ? () {
-                              _handleQuantityChange(quantity + 1);
-                            }
+                                    _handleQuantityChange(quantity + 1);
+                                  }
                                 : null,
                             padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                            constraints: const BoxConstraints(
+                                minWidth: 48, minHeight: 48),
                           ),
                         ],
                       ),
@@ -3735,22 +4100,30 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                     child: ElevatedButton(
                       onPressed: _isItemAvailable
                           ? () {
-                        _handleAddOrUpdateItem(existingQty);
-                      }
+                              _handleAddOrUpdateItem(existingQty);
+                            }
                           : null,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: _isItemAvailable
-                            ? (quantity == 0 ? Colors.redAccent : AppColors.primaryBlue)
+                            ? (quantity == 0
+                                ? Colors.redAccent
+                                : AppColors.primaryBlue)
                             : Colors.grey,
                         foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
                         elevation: 0,
                       ),
                       child: Text(
                         !_isItemAvailable
                             ? AppStrings.get('out_of_stock', context)
-                            : (quantity == 0 ? 'REMOVE ITEM' : (existingQty == 0 ? 'ADD ITEM' : 'UPDATE ITEM')),
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            : (quantity == 0
+                                ? 'REMOVE ITEM'
+                                : (existingQty == 0
+                                    ? 'ADD ITEM'
+                                    : 'UPDATE ITEM')),
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
@@ -3823,9 +4196,9 @@ class RestaurantService {
             .cast<String, dynamic>();
       } catch (_) {
         defaultAddressMap =
-        userAddressesList.isNotEmpty && userAddressesList.first is Map
-            ? Map<String, dynamic>.from(userAddressesList.first as Map)
-            : null;
+            userAddressesList.isNotEmpty && userAddressesList.first is Map
+                ? Map<String, dynamic>.from(userAddressesList.first as Map)
+                : null;
       }
       if (defaultAddressMap == null) throw Exception('No default address');
 
@@ -3849,7 +4222,7 @@ class RestaurantService {
           distanceInMeters / averageSpeedMetersPerMinute;
 
       int totalEstimatedTimeMinutes =
-      (basePrepTimeMinutes + travelTimeMinutes).round().clamp(15, 120);
+          (basePrepTimeMinutes + travelTimeMinutes).round().clamp(15, 120);
       return '$totalEstimatedTimeMinutes mins';
     } catch (e) {
       debugPrint('Error calculating delivery ETA: $e');
@@ -3954,12 +4327,14 @@ class MenuItem {
 
   // Localization Helpers
   String getLocalizedName(BuildContext context) {
-    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    final isArabic =
+        Provider.of<LanguageProvider>(context, listen: false).isArabic;
     return (isArabic && nameAr.isNotEmpty) ? nameAr : name;
   }
 
   String getLocalizedDescription(BuildContext context) {
-    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    final isArabic =
+        Provider.of<LanguageProvider>(context, listen: false).isArabic;
     return (isArabic && descriptionAr.isNotEmpty) ? descriptionAr : description;
   }
 }
@@ -3997,7 +4372,8 @@ class MenuCategory {
   }
 
   String getLocalizedName(BuildContext context) {
-    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    final isArabic =
+        Provider.of<LanguageProvider>(context, listen: false).isArabic;
     return (isArabic && nameAr.isNotEmpty) ? nameAr : name;
   }
 }
@@ -4016,14 +4392,16 @@ class BranchService {
         return 'Old_Airport';
       }
 
-      final userDoc = await _firestore.collection('Users').doc(user.email).get();
+      final userDoc =
+          await _firestore.collection('Users').doc(user.email).get();
       if (!userDoc.exists) {
         debugPrint('⚠️ User document not found, using fallback');
         return 'Old_Airport';
       }
 
       final userData = userDoc.data() as Map<String, dynamic>;
-      final addresses = (userData['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      final addresses =
+          (userData['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
 
       if (addresses.isEmpty) {
         debugPrint('⚠️ No addresses found, using fallback');
@@ -4044,7 +4422,8 @@ class BranchService {
       }
 
       final userGeoPoint = defaultAddress['geolocation'] as GeoPoint;
-      debugPrint('📍 User address location: ${userGeoPoint.latitude}, ${userGeoPoint.longitude}');
+      debugPrint(
+          '📍 User address location: ${userGeoPoint.latitude}, ${userGeoPoint.longitude}');
 
       List<Branch> branches = await _getAllBranches();
       debugPrint('🏪 Found ${branches.length} active branches');
@@ -4066,7 +4445,8 @@ class BranchService {
             branch.geolocation!.longitude,
           );
 
-          debugPrint('📏 Distance from address to ${branch.name}: ${(distance / 1000).toStringAsFixed(2)} km');
+          debugPrint(
+              '📏 Distance from address to ${branch.name}: ${(distance / 1000).toStringAsFixed(2)} km');
 
           if (distance < shortestDistance) {
             shortestDistance = distance;
@@ -4077,8 +4457,10 @@ class BranchService {
         }
       }
 
-      debugPrint('🎯 Selected branch by address: ${nearestBranch.name} (${nearestBranch.id})');
-      debugPrint('📐 Shortest distance: ${(shortestDistance / 1000).toStringAsFixed(2)} km');
+      debugPrint(
+          '🎯 Selected branch by address: ${nearestBranch.name} (${nearestBranch.id})');
+      debugPrint(
+          '📐 Shortest distance: ${(shortestDistance / 1000).toStringAsFixed(2)} km');
 
       return nearestBranch.id;
     } catch (e) {
@@ -4092,7 +4474,8 @@ class BranchService {
       debugPrint('🔍 Finding nearest branch by GPS...');
 
       Position userPosition = await _getCurrentLocation();
-      debugPrint('📍 GPS location: ${userPosition.latitude}, ${userPosition.longitude}');
+      debugPrint(
+          '📍 GPS location: ${userPosition.latitude}, ${userPosition.longitude}');
 
       List<Branch> branches = await _getAllBranches();
       debugPrint('🏪 Found ${branches.length} active branches');
@@ -4114,7 +4497,8 @@ class BranchService {
             branch.geolocation!.longitude,
           );
 
-          debugPrint('📏 Distance from GPS to ${branch.name}: ${(distance / 1000).toStringAsFixed(2)} km');
+          debugPrint(
+              '📏 Distance from GPS to ${branch.name}: ${(distance / 1000).toStringAsFixed(2)} km');
 
           if (distance < shortestDistance) {
             shortestDistance = distance;
@@ -4125,8 +4509,10 @@ class BranchService {
         }
       }
 
-      debugPrint('🎯 Selected branch by GPS: ${nearestBranch.name} (${nearestBranch.id})');
-      debugPrint('📐 Shortest distance: ${(shortestDistance / 1000).toStringAsFixed(2)} km');
+      debugPrint(
+          '🎯 Selected branch by GPS: ${nearestBranch.name} (${nearestBranch.id})');
+      debugPrint(
+          '📐 Shortest distance: ${(shortestDistance / 1000).toStringAsFixed(2)} km');
 
       return nearestBranch.id;
     } catch (e) {
@@ -4211,11 +4597,13 @@ class BranchService {
     }
   }
 
-  Future<bool> canBranchDeliverToAddress(String branchId, String userEmail) async {
+  Future<bool> canBranchDeliverToAddress(
+      String branchId, String userEmail) async {
     try {
       if (userEmail.isEmpty) return true;
 
-      final branchDoc = await _firestore.collection('Branch').doc(branchId).get();
+      final branchDoc =
+          await _firestore.collection('Branch').doc(branchId).get();
       if (!branchDoc.exists) return false;
 
       final branchData = branchDoc.data() as Map<String, dynamic>;
@@ -4227,7 +4615,8 @@ class BranchService {
       if (!userDoc.exists) return true;
 
       final userData = userDoc.data() as Map<String, dynamic>;
-      final addresses = (userData['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      final addresses =
+          (userData['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
       if (addresses.isEmpty) return true;
 
       Map<String, dynamic> defaultAddress;
@@ -4242,16 +4631,18 @@ class BranchService {
       final userGeoPoint = defaultAddress['geolocation'] as GeoPoint;
       final branchAddress = branchData['address'] as Map<String, dynamic>?;
 
-      if (branchAddress == null || branchAddress['geolocation'] == null) return true;
+      if (branchAddress == null || branchAddress['geolocation'] == null)
+        return true;
 
       final branchGeoPoint = branchAddress['geolocation'] as GeoPoint;
 
       final distance = Geolocator.distanceBetween(
-        userGeoPoint.latitude,
-        userGeoPoint.longitude,
-        branchGeoPoint.latitude,
-        branchGeoPoint.longitude,
-      ) / 1000;
+            userGeoPoint.latitude,
+            userGeoPoint.longitude,
+            branchGeoPoint.latitude,
+            branchGeoPoint.longitude,
+          ) /
+          1000;
 
       return distance <= noDeliveryRange;
     } catch (e) {
