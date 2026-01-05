@@ -21,6 +21,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../Services/PaymentService.dart';
 import '../Services/language_provider.dart';
 import '../Services/BranchService.dart';
+import '../Services/WorkingHoursService.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({Key? key}) : super(key: key);
@@ -71,6 +72,12 @@ class _CartScreenState extends State<CartScreen> {
   bool _isFallbackBranch = false;
   String _closedNearestBranchName = '';
 
+  // --- CLOSING COUNTDOWN STATE ---
+  Timer? _closingCountdownTimer;
+  Duration? _timeUntilClose;
+  bool _isClosingSoon = false;
+  Map<String, dynamic>? _branchWorkingHours;
+
   @override
   void initState() {
     super.initState();
@@ -89,6 +96,7 @@ class _CartScreenState extends State<CartScreen> {
     CartService().removeListener(_onCartChanged);
     CartService().stopStockMonitoring();
     _notesController.dispose();
+    _closingCountdownTimer?.cancel();
     super.dispose();
   }
 
@@ -379,6 +387,7 @@ class _CartScreenState extends State<CartScreen> {
           await loadDeliveryFee(selected.id);
           await _loadEstimatedTime();
           _loadDrinks();
+          await _loadWorkingHours(selected.id);
         }
       }
     } catch (e) {
@@ -519,6 +528,45 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   void _refreshBranchSelection() => _setNearestBranch();
+
+  /// Load working hours for the selected branch and start countdown timer
+  Future<void> _loadWorkingHours(String branchId) async {
+    try {
+      final branchDoc = await FirebaseFirestore.instance
+          .collection('Branch')
+          .doc(branchId)
+          .get();
+
+      if (!branchDoc.exists || !mounted) return;
+
+      final data = branchDoc.data();
+      _branchWorkingHours = data?['workingHours'] as Map<String, dynamic>?;
+
+      // Calculate initial closing info
+      _updateClosingCountdown();
+
+      // Start periodic timer to update countdown every minute
+      _closingCountdownTimer?.cancel();
+      _closingCountdownTimer = Timer.periodic(
+        const Duration(minutes: 1),
+        (_) => _updateClosingCountdown(),
+      );
+    } catch (e) {
+      debugPrint('Error loading working hours: $e');
+    }
+  }
+
+  /// Update the closing countdown state
+  void _updateClosingCountdown() {
+    if (!mounted) return;
+
+    final result = WorkingHoursService.getClosingInfo(_branchWorkingHours);
+
+    setState(() {
+      _timeUntilClose = result.timeUntilClose;
+      _isClosingSoon = result.isClosingSoon;
+    });
+  }
 
   Future<void> _loadEstimatedTime() async {
     final time = await _restaurantService.getDynamicEtaForUser(
@@ -1389,10 +1437,7 @@ class _CartScreenState extends State<CartScreen> {
       setState(() => _orderType = newType);
       await _setNearestBranch();
 
-      // Force check for popup after switching type
-      if (mounted && _areAllBranchesClosed && _orderType == 'pickup') {
-        _showPickupClosedDialog();
-      }
+      // Note: Popup is now handled inside _setNearestBranch, no need to trigger again here
 
       if (newType == 'pickup') {
         await _calculateDistanceForPickup();
@@ -1487,6 +1532,14 @@ class _CartScreenState extends State<CartScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _buildDeliveryInfoCard(),
               ),
+              // --- CLOSING COUNTDOWN BANNER ---
+              if (_timeUntilClose != null) ...[
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: _buildClosingCountdownBanner(),
+                ),
+              ],
               const SizedBox(height: 24),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1517,6 +1570,74 @@ class _CartScreenState extends State<CartScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Build closing countdown banner showing time until restaurant closes
+  Widget _buildClosingCountdownBanner() {
+    if (_timeUntilClose == null) return const SizedBox.shrink();
+
+    final isArabic =
+        Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    final formattedTime = WorkingHoursService.formatDuration(
+      _timeUntilClose!,
+      useArabicNumerals: isArabic,
+    );
+
+    // Use red color when closing soon, orange otherwise
+    final Color bannerColor =
+        _isClosingSoon ? Colors.red.shade600 : Colors.orange.shade600;
+    final Color bgColor =
+        _isClosingSoon ? Colors.red.shade50 : Colors.orange.shade50;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: bannerColor.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _isClosingSoon ? Icons.warning_amber_rounded : Icons.access_time,
+            color: bannerColor,
+            size: 24,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_isClosingSoon) ...[
+                  Text(
+                    AppStrings.get('restaurant_closing_soon', context),
+                    style: AppTextStyles.bodyText1.copyWith(
+                      color: bannerColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${AppStrings.get('closing_in', context)} $formattedTime',
+                    style: AppTextStyles.bodyText2.copyWith(
+                      color: bannerColor,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ] else
+                  Text(
+                    '${AppStrings.get('closing_in', context)} $formattedTime',
+                    style: AppTextStyles.bodyText1.copyWith(
+                      color: bannerColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

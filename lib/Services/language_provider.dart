@@ -307,6 +307,10 @@ class AppStrings {
       'privacy_policy': 'Privacy Policy',
       'user_not_authenticated': 'User not authenticated',
       'user_doc_not_found': 'User document not found',
+
+      // --- Working Hours / Closing Countdown ---
+      'closing_in': 'Closing in',
+      'restaurant_closing_soon': 'Restaurant closing soon - order now!',
     },
 
     // ========================================================================
@@ -573,6 +577,10 @@ class AppStrings {
       'privacy_policy': 'سياسة الخصوصية',
       'user_not_authenticated': 'المستخدم غير مصادق عليه',
       'user_doc_not_found': 'بيانات المستخدم غير موجودة',
+
+      // --- Working Hours / Closing Countdown ---
+      'closing_in': 'يغلق خلال',
+      'restaurant_closing_soon': 'المطعم سيغلق قريباً - اطلب الآن!',
     },
   };
 
