@@ -61,7 +61,7 @@ class AppStrings {
       'qar': 'QAR',
       'mins': 'mins',
       'km': 'km',
-      'kms': 'kms',
+      'kms': 'kms)',
       'free': 'Free',
       'error': 'Error:',
 
@@ -105,8 +105,10 @@ class AppStrings {
       'removed_out_of_stock': 'removed (out of stock)',
       'items_removed_out_of_stock': 'items removed (out of stock)',
       'item_unavailable_title': 'Item Unavailable',
-      'items_no_longer_available': 'The following items are no longer available:',
-      'remove_items_question': 'Would you like to remove these items from your cart?',
+      'items_no_longer_available':
+          'The following items are no longer available:',
+      'remove_items_question':
+          'Would you like to remove these items from your cart?',
       'keep_items': 'Keep Items',
       'remove_all': 'Remove All',
       'unavailable_items_in_cart': 'UNAVAILABLE ITEMS IN CART',
@@ -132,9 +134,11 @@ class AppStrings {
       'branch_info_not_found': 'Branch information not found',
       'branch_location_unavailable': 'Branch location not available',
       'restaurant_just_closed': 'Restaurant Just Closed',
-      'branch_closed_msg': 'The selected branch has just closed. We will try to find another open branch for you.',
+      'branch_closed_msg':
+          'The selected branch has just closed. We will try to find another open branch for you.',
       'we_are_closed': 'We are Closed',
-      'all_branches_closed_msg': 'All our restaurants are currently closed. Please check back later!',
+      'all_branches_closed_msg':
+          'All our restaurants are currently closed. Please check back later!',
       'restaurant_closed': 'Restaurant Closed',
       'branch_update': 'Branch Update',
       'switched_to': 'We switched you to',
@@ -143,9 +147,11 @@ class AppStrings {
       'closed': 'closed',
       'outside_range': 'outside delivery range',
       'outside_delivery_range': 'OUTSIDE DELIVERY RANGE',
-      'delivery_range_error': 'Sorry, we do not deliver to your location. Maximum delivery range is',
+      'delivery_range_error':
+          'Sorry, we do not deliver to your location. Maximum delivery range is',
       'location_not_serviceable': 'Location Not Serviceable',
-      'no_delivery_available_msg': 'Sorry, none of our branches deliver to your current location. Please try Pickup instead.',
+      'no_delivery_available_msg':
+          'Sorry, none of our branches deliver to your current location. Please try Pickup instead.',
       'delivery_updated_msg': 'Delivery fee and time have been updated.',
       'km_away': 'km away',
       'distance_to_branch': 'DISTANCE TO BRANCH',
@@ -219,6 +225,7 @@ class AppStrings {
       'preparing': 'Preparing',
       'on_the_way': 'On the Way',
       'delivered': 'Delivered',
+      'refunded': 'Refunded',
       'load_more': 'Load more',
       'search_by_dish': 'Search by dish name...',
 
@@ -265,7 +272,8 @@ class AppStrings {
       'add_new_address': 'Add New Address',
       'no_addresses_saved': 'No addresses saved yet',
       'no_addresses_title': 'No Addresses Saved',
-      'no_addresses_subtitle': 'Add an address to get started with your orders.',
+      'no_addresses_subtitle':
+          'Add an address to get started with your orders.',
       'edit_address': 'Edit Address',
       'tap_map_hint': 'Tap on the map to select a location',
       'search_location_hint': 'Search location...',
@@ -280,7 +288,8 @@ class AppStrings {
       'my_favorites': 'My Favorites',
       'my_favorites_sub': 'View your liked items',
       'no_favorites_title': 'No Favorites Yet',
-      'no_favorites_subtitle': 'Tap the bookmark icon on any dish to save it for later.',
+      'no_favorites_subtitle':
+          'Tap the bookmark icon on any dish to save it for later.',
       'removed_from_favorites': 'Removed from favorites.',
 
       // --- Support ---
@@ -322,7 +331,7 @@ class AppStrings {
       'qar': 'ر.ق',
       'mins': 'دقيقة',
       'km': 'كم',
-      'kms': 'كم',
+      'kms': 'كم)',
       'free': 'مجاني',
       'error': 'خطأ:',
 
@@ -393,9 +402,11 @@ class AppStrings {
       'branch_info_not_found': 'معلومات الفرع غير موجودة',
       'branch_location_unavailable': 'موقع الفرع غير متاح',
       'restaurant_just_closed': 'المطعم أغلق للتو',
-      'branch_closed_msg': 'الفرع المختار أغلق للتو. سنحاول العثور على فرع آخر مفتوح لك.',
+      'branch_closed_msg':
+          'الفرع المختار أغلق للتو. سنحاول العثور على فرع آخر مفتوح لك.',
       'we_are_closed': 'نحن مغلقون',
-      'all_branches_closed_msg': 'جميع مطاعمنا مغلقة حالياً. يرجى التحقق لاحقاً!',
+      'all_branches_closed_msg':
+          'جميع مطاعمنا مغلقة حالياً. يرجى التحقق لاحقاً!',
       'restaurant_closed': 'المطعم مغلق',
       'branch_update': 'تحديث الفرع',
       'switched_to': 'قمنا بتحويلك إلى',
@@ -404,9 +415,11 @@ class AppStrings {
       'closed': 'مغلق',
       'outside_range': 'خارج نطاق التوصيل',
       'outside_delivery_range': 'خارج نطاق التوصيل',
-      'delivery_range_error': 'عذراً، لا نوصل إلى موقعك. نطاق التوصيل الأقصى هو',
+      'delivery_range_error':
+          'عذراً، لا نوصل إلى موقعك. نطاق التوصيل الأقصى هو',
       'location_not_serviceable': 'الموقع غير مدعوم',
-      'no_delivery_available_msg': 'عذراً، لا تقوم أي من فروعنا بالتوصيل إلى موقعك الحالي. يرجى تجربة الاستلام بدلاً من ذلك.',
+      'no_delivery_available_msg':
+          'عذراً، لا تقوم أي من فروعنا بالتوصيل إلى موقعك الحالي. يرجى تجربة الاستلام بدلاً من ذلك.',
       'delivery_updated_msg': 'تم تحديث رسوم ووقت التوصيل.',
       'km_away': 'كم بعيداً',
       'distance_to_branch': 'المسافة إلى الفرع',
@@ -480,6 +493,7 @@ class AppStrings {
       'preparing': 'قيد التحضير',
       'on_the_way': 'في الطريق',
       'delivered': 'تم التوصيل',
+      'refunded': 'تم الاسترجاع',
       'load_more': 'تحميل المزيد',
       'search_by_dish': 'ابحث باسم الطبق...',
 
@@ -564,7 +578,9 @@ class AppStrings {
 
   static String get(String key, BuildContext context) {
     final locale = Localizations.localeOf(context).languageCode;
-    return _localizedValues[locale]?[key] ?? _localizedValues['en']?[key] ?? key;
+    return _localizedValues[locale]?[key] ??
+        _localizedValues['en']?[key] ??
+        key;
   }
 
   // --- NEW: NUMBER FORMATTER ---
@@ -575,7 +591,8 @@ class AppStrings {
     String str = number.toString();
 
     // 2. Check if Arabic is active
-    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    final isArabic =
+        Provider.of<LanguageProvider>(context, listen: false).isArabic;
     if (!isArabic) return str;
 
     // 3. Replace digits

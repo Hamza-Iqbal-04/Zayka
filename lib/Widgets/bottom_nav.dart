@@ -9,6 +9,8 @@ import 'package:mitra_da_dhaba/Screens/CouponsScreen.dart';
 import 'package:mitra_da_dhaba/Screens/HomeScreen.dart';
 import 'package:mitra_da_dhaba/Screens/OrderScreen.dart';
 import 'package:mitra_da_dhaba/Screens/cartScreen.dart';
+import 'package:mitra_da_dhaba/Services/BranchService.dart';
+import 'package:geolocator/geolocator.dart';
 import 'models.dart';
 
 class BottomNavController {
@@ -28,7 +30,7 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
   late int _currentIndex;
   // 2. Add TabController
   late TabController _tabController;
-  final String _currentBranchId = 'Old_Airport';
+  // Removed hardcoded _currentBranchId
   bool _isRestaurantOpen = true;
   bool _isLoading = true;
   int _cartItemCount = 0;
@@ -39,7 +41,8 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
     _currentIndex = widget.initialIndex ?? 0;
 
     // 3. Initialize TabController
-    _tabController = TabController(length: 5, vsync: this, initialIndex: _currentIndex);
+    _tabController =
+        TabController(length: 5, vsync: this, initialIndex: _currentIndex);
 
     _checkRestaurantStatus();
     _setupCartListener();
@@ -62,20 +65,56 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
 
   void _checkRestaurantStatus() async {
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('Branch')
-          .doc(_currentBranchId)
-          .get();
+      // 1. Get User Location (Fastest possible way)
+      GeoPoint? userLocation;
+      try {
+        // Try getting last known position first for speed
+        Position? position = await Geolocator.getLastKnownPosition();
+        if (position == null) {
+          // If null, try getting current position with timeout
+          position = await Geolocator.getCurrentPosition(
+            timeLimit: const Duration(seconds: 5),
+          );
+        }
+        if (position != null) {
+          userLocation = GeoPoint(position.latitude, position.longitude);
+        }
+      } catch (e) {
+        debugPrint('Error getting location for status check: $e');
+      }
+
+      // Fallback location if permission denied or error (e.g. Doha center)
+      // This ensures we at least check if *any* branch is open relative to *somewhere*
+      // or we can allow the app to open if location fails, assuming user will select address later.
+      userLocation ??= const GeoPoint(25.2854, 51.5310);
+
+      // 2. Use BranchService to check availability
+      final branchService = BranchService();
+      // We check for 'pickup' or 'delivery'. Let's check 'pickup' as it's the most permissive
+      // (doesn't require being in range). If they are closed for pickup, they are closed for everything.
+      // Wait, user said "delivery range etc". But for the MAIN APP OPEN check,
+      // if I strictly check delivery range, I might block users who want to do pickup.
+      // The user wants "if nearest branch is closed...".
+      // Let's stick to checking if a valid branch exists for *pickup* (open status check basically).
+      // Logic: If NO branch is open for pickup, then the restaurant is truly closed.
+      final result = await branchService.findBestBranch(
+          userLocation: userLocation,
+          orderType:
+              'pickup' // Check mainly for Open/Closed status regardless of range first
+          );
 
       if (mounted) {
         setState(() {
-          _isRestaurantOpen = snapshot.data()?['isOpen'] ?? true;
+          // valid branch found AND it's not "allClosed"
+          _isRestaurantOpen = !result.allClosed;
           _isLoading = false;
         });
       }
     } catch (e) {
+      debugPrint("Error checking restaurant status: $e");
       if (mounted) {
         setState(() {
+          // Fallback to open if something errors out, don't block user
           _isRestaurantOpen = true;
           _isLoading = false;
         });
@@ -110,9 +149,10 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
       );
     }
 
-    if (!_isRestaurantOpen) {
-      return const ClosedRestaurantScreen();
-    }
+    // Removed blocking ClosedRestaurantScreen as per user request
+    // if (!_isRestaurantOpen) {
+    //   return const ClosedRestaurantScreen();
+    // }
 
     return Consumer<CartService>(
       builder: (context, cart, child) {
@@ -187,18 +227,19 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
   }
 
   Widget _offersIcon() => Container(
-    width: 48,
-    height: 48,
-    decoration: BoxDecoration(
-      shape: BoxShape.circle,
-      color: AppColors.primaryBlue,
-      border: Border.all(color: Colors.white, width: 6),
-      boxShadow: const [
-        BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 2))
-      ],
-    ),
-    child: const Icon(Icons.local_offer, color: Colors.white, size: 22),
-  );
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppColors.primaryBlue,
+          border: Border.all(color: Colors.white, width: 6),
+          boxShadow: const [
+            BoxShadow(
+                color: Colors.black12, blurRadius: 6, offset: Offset(0, 2))
+          ],
+        ),
+        child: const Icon(Icons.local_offer, color: Colors.white, size: 22),
+      );
 
   Widget _cartIconWithBadge(int itemCount) {
     return Stack(
@@ -296,7 +337,8 @@ class ClosedRestaurantScreen extends StatelessWidget {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryBlue,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),

@@ -106,7 +106,8 @@ class CouponModel {
     if (branchIds.isNotEmpty && !branchIds.contains(branchId)) return false;
 
     // User restriction checks
-    if (allowedUsers.isNotEmpty && (userId == null || !allowedUsers.contains(userId))) {
+    if (allowedUsers.isNotEmpty &&
+        (userId == null || !allowedUsers.contains(userId))) {
       return false;
     }
 
@@ -149,7 +150,8 @@ class CartModel {
   });
 
   String getLocalizedName(BuildContext context) {
-    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    final isArabic =
+        Provider.of<LanguageProvider>(context, listen: false).isArabic;
     return isArabic && (nameAr.isNotEmpty) ? nameAr : name;
   }
 
@@ -212,9 +214,25 @@ class AppColors {
 }
 
 class AppTextStyles {
-  static final headline1 = TextStyle(fontSize: 28, fontWeight: FontWeight.bold, letterSpacing: 1.2);
+  static final headline1 =
+      TextStyle(fontSize: 28, fontWeight: FontWeight.bold, letterSpacing: 1.2);
   static final headline2 = TextStyle(fontSize: 22, fontWeight: FontWeight.w600);
   static final bodyText1 = TextStyle(fontSize: 16);
   static final bodyText2 = TextStyle(fontSize: 14, color: AppColors.darkGrey);
-  static final buttonText = TextStyle(fontSize: 18, fontWeight: FontWeight.w600);
+  static final buttonText =
+      TextStyle(fontSize: 18, fontWeight: FontWeight.w600);
+}
+
+class Branch {
+  final String id;
+  final String name;
+  final bool isActive;
+  final GeoPoint? geolocation;
+
+  Branch({
+    required this.id,
+    required this.name,
+    required this.isActive,
+    this.geolocation,
+  });
 }

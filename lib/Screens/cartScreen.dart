@@ -20,21 +20,12 @@ import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../Services/PaymentService.dart';
 import '../Services/language_provider.dart';
+import '../Services/BranchService.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({Key? key}) : super(key: key);
   @override
   _CartScreenState createState() => _CartScreenState();
-}
-
-class BranchDistance {
-  final String id;
-  final String name;
-  final double distance;
-  final bool isOpen;
-  final bool isInRange;
-
-  BranchDistance(this.id, this.name, this.distance, this.isOpen, this.isInRange);
 }
 
 class _CartScreenState extends State<CartScreen> {
@@ -113,7 +104,8 @@ class _CartScreenState extends State<CartScreen> {
     setState(() => _isCheckingStock = true);
 
     try {
-      final outOfStockItems = await CartService().getOutOfStockItems(_currentBranchIds);
+      final outOfStockItems =
+          await CartService().getOutOfStockItems(_currentBranchIds);
 
       if (mounted) {
         setState(() {
@@ -121,9 +113,9 @@ class _CartScreenState extends State<CartScreen> {
         });
       }
 
-      final newOutOfStockItems = outOfStockItems.where(
-              (item) => !_notifiedOutOfStockItems.contains(item.id)
-      ).toList();
+      final newOutOfStockItems = outOfStockItems
+          .where((item) => !_notifiedOutOfStockItems.contains(item.id))
+          .toList();
 
       if (newOutOfStockItems.isNotEmpty && mounted && !_isFirstStockCheck) {
         _showOutOfStockPopup(newOutOfStockItems);
@@ -133,11 +125,9 @@ class _CartScreenState extends State<CartScreen> {
       }
 
       _notifiedOutOfStockItems.removeWhere(
-              (itemId) => !outOfStockItems.any((item) => item.id == itemId)
-      );
+          (itemId) => !outOfStockItems.any((item) => item.id == itemId));
 
       _isFirstStockCheck = false;
-
     } catch (e) {
       debugPrint('Error checking out-of-stock items: $e');
     } finally {
@@ -160,7 +150,8 @@ class _CartScreenState extends State<CartScreen> {
           children: [
             Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 24),
             const SizedBox(width: 8),
-            Text(AppStrings.get('item_unavailable_title', context), style: AppTextStyles.headline2),
+            Text(AppStrings.get('item_unavailable_title', context),
+                style: AppTextStyles.headline2),
           ],
         ),
         content: Column(
@@ -173,26 +164,27 @@ class _CartScreenState extends State<CartScreen> {
             ),
             const SizedBox(height: 12),
             ...outOfStockItems.map((item) => Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: [
-                  Icon(Icons.close, color: Colors.red, size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '${item.name} (${AppStrings.get('quantity', context)}: ${AppStrings.formatNumber(item.quantity, context)})',
-                      style: AppTextStyles.bodyText1.copyWith(
-                        fontWeight: FontWeight.w500,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Icon(Icons.close, color: Colors.red, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${item.name} (${AppStrings.get('quantity', context)}: ${AppStrings.formatNumber(item.quantity, context)})',
+                          style: AppTextStyles.bodyText1.copyWith(
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
-              ),
-            )),
+                )),
             const SizedBox(height: 16),
             Text(
               AppStrings.get('remove_items_question', context),
-              style: AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade600),
+              style:
+                  AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade600),
             ),
           ],
         ),
@@ -206,7 +198,8 @@ class _CartScreenState extends State<CartScreen> {
             },
             child: Text(
               AppStrings.get('keep_items', context),
-              style: AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey),
+              style:
+                  AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey),
             ),
           ),
           ElevatedButton(
@@ -218,7 +211,8 @@ class _CartScreenState extends State<CartScreen> {
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
-            child: Text(AppStrings.get('remove_all', context), style: AppTextStyles.buttonText),
+            child: Text(AppStrings.get('remove_all', context),
+                style: AppTextStyles.buttonText),
           ),
         ],
       ),
@@ -284,9 +278,9 @@ class _CartScreenState extends State<CartScreen> {
 
     _allBranches = snap.docs
         .map((d) => {
-      'id': d.id,
-      'name': d['name'] as String? ?? d.id,
-    })
+              'id': d.id,
+              'name': d['name'] as String? ?? d.id,
+            })
         .toList();
   }
 
@@ -296,132 +290,97 @@ class _CartScreenState extends State<CartScreen> {
     setState(() => _isFindingNearestBranch = true);
 
     try {
-      // 1. Get User Location (Address or GPS)
+      // 1. Get User Location
       GeoPoint? userLocation;
       if (_orderType == 'delivery') {
         userLocation = await _getUserLocationFromAddress();
+        // If address is missing, we can't do delivery logic properly yet.
+        // But let's try current location as fallback or just stop.
+        if (userLocation == null) {
+          final pos = await _getCurrentLocation();
+          if (pos != null) userLocation = GeoPoint(pos.latitude, pos.longitude);
+        }
       } else {
         final pos = await _getCurrentLocation();
         if (pos != null) userLocation = GeoPoint(pos.latitude, pos.longitude);
       }
 
-      if (userLocation == null) throw Exception("Location not found");
-
-      // 2. Fetch ALL Active Branches
-      final branchesSnapshot = await FirebaseFirestore.instance
-          .collection('Branch')
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      if (branchesSnapshot.docs.isEmpty) throw Exception("No active branches");
-
-      // 3. Calculate Stats for Every Branch
-      List<BranchDistance> sortedBranches = [];
-
-      for (final doc in branchesSnapshot.docs) {
-        final data = doc.data();
-        final addressData = data['address'] as Map<String, dynamic>?;
-
-        if (addressData != null && addressData['geolocation'] != null) {
-          final branchGeo = addressData['geolocation'] as GeoPoint;
-          final double distance = _calculateDistance(
-            userLocation.latitude,
-            userLocation.longitude,
-            branchGeo.latitude,
-            branchGeo.longitude,
-          );
-
-          final bool isOpen = data['isOpen'] ?? true;
-          final String name = data['name'] ?? doc.id;
-
-          // Check Delivery Range
-          final double noDeliveryRange = (data['noDeliveryRange'] ?? 0).toDouble();
-
-          // STRICT RULE: If delivery, range matters. If pickup, range doesn't matter.
-          final bool isInRange = _orderType == 'pickup'
-              ? true
-              : (noDeliveryRange > 0 && distance <= noDeliveryRange);
-
-          sortedBranches.add(BranchDistance(doc.id, name, distance, isOpen, isInRange));
-        }
+      if (userLocation == null) {
+        // Fallback or just abort if we truly can't find location
+        // For now let's assume Old_Airport if nothing else works to prevent crash
+        throw Exception("Location not found");
       }
 
-      if (sortedBranches.isEmpty) throw Exception("No branches with location data");
+      // 2. Use BranchService
+      final branchService = BranchService();
+      final result = await branchService.findBestBranch(
+        userLocation: userLocation,
+        orderType: _orderType,
+      );
 
-      // --- FILTERING FOR DELIVERY ---
-      if (_orderType == 'delivery') {
-        // If it's delivery, we STRICTLY remove any branch that is out of range.
-        sortedBranches.removeWhere((b) => !b.isInRange);
-
-        if (sortedBranches.isEmpty) {
-          // NO BRANCHES DELIVER HERE
-          setState(() {
-            _noDeliveryAvailable = true;
-            _isFindingNearestBranch = false;
-          });
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _showNoDeliveryDialog();
-          });
-          return;
-        }
-      }
-
-      // 4. SORTING
-      // Order: Open > Closest
-      sortedBranches.sort((a, b) {
-        if (a.isOpen != b.isOpen) {
-          return a.isOpen ? -1 : 1; // Open first
-        }
-        return a.distance.compareTo(b.distance); // Closest first
-      });
-
-      // 5. Select the Best Branch
-      BranchDistance selectedBranch = sortedBranches.first;
-
-      // Determine UI State variables
-      final bool allClosed = sortedBranches.every((b) => !b.isOpen);
-
-      // Check if we skipped a closer branch because it was closed
-      // Note: We only check against other *valid* (in-range) branches
-      final geometricNearest = sortedBranches.reduce((curr, next) => curr.distance < next.distance ? curr : next);
-
-      bool fellBack = false;
-      if (selectedBranch.id != geometricNearest.id && !geometricNearest.isOpen) {
-        fellBack = true;
-        _closedNearestBranchName = geometricNearest.name;
-
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _showFallbackBranchDialog(geometricNearest.name, selectedBranch.name);
-        });
-      }
-
-      if (allClosed) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _showAllBranchesClosedDialog();
-        });
-      }
-
-      // 6. Apply State
-      if (mounted) {
+      // 3. Handle Results
+      if (result.noDeliveryAvailable) {
         setState(() {
-          _currentBranchIds = [selectedBranch.id];
-          _nearestBranchIds = [selectedBranch.id];
-          _isDefaultNearest = !fellBack;
-          _areAllBranchesClosed = allClosed;
-          _noDeliveryAvailable = false;
+          _noDeliveryAvailable = true;
+          _areAllBranchesClosed = false; // Clear conflicting flag
           _isFindingNearestBranch = false;
-          _distanceToBranch = selectedBranch.distance;
-          _isOutOfDeliveryRange = false;
         });
-
-        CartService().updateCurrentBranchIds([selectedBranch.id]);
-        CartService().startStockMonitoring([selectedBranch.id]);
-
-        await loadDeliveryFee(selectedBranch.id);
-        await _loadEstimatedTime();
-        _loadDrinks();
+        // Removed blocking dialog as per user request to just grey out the button
+        // WidgetsBinding.instance.addPostFrameCallback((_) {
+        //   _showNoDeliveryDialog();
+        // });
+        return;
       }
 
+      if (result.allClosed) {
+        setState(() {
+          _areAllBranchesClosed = true;
+          _noDeliveryAvailable = false;
+        });
+
+        // Fix: Only show "We Are Closed" popup for PICKUP.
+        // For DELIVERY, we just show the greyed out button (no infinite loop).
+        if (_orderType == 'pickup') {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showPickupClosedDialog();
+          });
+        }
+        return;
+      }
+
+      // If we have a valid branch
+      if (result.selectedBranch != null) {
+        final selected = result.selectedBranch!;
+
+        // Handle Fallback Popup
+        if (result.fallbackOccurred && result.nearestClosedBranch != null) {
+          _closedNearestBranchName = result.nearestClosedBranch!.name;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showFallbackBranchDialog(
+                result.nearestClosedBranch!.name, selected.name);
+          });
+        }
+
+        if (mounted) {
+          setState(() {
+            _currentBranchIds = [selected.id];
+            _nearestBranchIds = [selected.id];
+            _isDefaultNearest = !result.fallbackOccurred;
+            _areAllBranchesClosed = false;
+            _noDeliveryAvailable = false;
+            _isFindingNearestBranch = false;
+            _distanceToBranch = selected.distance;
+            _isOutOfDeliveryRange = false; // logic handled by service
+          });
+
+          CartService().updateCurrentBranchIds([selected.id]);
+          CartService().startStockMonitoring([selected.id]);
+
+          await loadDeliveryFee(selected.id);
+          await _loadEstimatedTime();
+          _loadDrinks();
+        }
+      }
     } catch (e) {
       debugPrint('Error setting branch: $e');
       if (mounted) {
@@ -433,27 +392,35 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  void _showNoDeliveryDialog() {
+  void _showPickupClosedDialog([String? message]) {
     showDialog(
       context: context,
+      barrierDismissible: true, // Allow clicking outside to close
       builder: (context) => AlertDialog(
         backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            Icon(Icons.location_off, color: Colors.red, size: 28),
+            Icon(Icons.info_outline, color: Colors.orange, size: 28),
             SizedBox(width: 12),
-            Expanded(child: Text(AppStrings.get('location_not_serviceable', context), style: AppTextStyles.headline2)),
+            Expanded(
+                child: Text(AppStrings.get('we_are_closed', context),
+                    style: AppTextStyles.headline2)),
           ],
         ),
         content: Text(
-          AppStrings.get('no_delivery_available_msg', context),
+          // Use provided message or fallback to default
+          message ?? AppStrings.get('all_branches_closed_msg', context),
           style: AppTextStyles.bodyText1,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text("OK", style: AppTextStyles.buttonText.copyWith(color: AppColors.primaryBlue)),
+            child: Text(
+              "OK",
+              style: AppTextStyles.buttonText
+                  .copyWith(color: AppColors.primaryBlue),
+            ),
           ),
         ],
       ),
@@ -471,7 +438,9 @@ class _CartScreenState extends State<CartScreen> {
           children: [
             Icon(Icons.access_time_filled, color: Colors.red, size: 28),
             SizedBox(width: 12),
-            Expanded(child: Text(AppStrings.get('we_are_closed', context), style: AppTextStyles.headline2)),
+            Expanded(
+                child: Text(AppStrings.get('we_are_closed', context),
+                    style: AppTextStyles.headline2)),
           ],
         ),
         content: Text(
@@ -483,15 +452,18 @@ class _CartScreenState extends State<CartScreen> {
             onPressed: () {
               Navigator.pop(context);
               Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 0)),
-                    (route) => false,
+                MaterialPageRoute(
+                    builder: (_) => const MainApp(initialIndex: 0)),
+                (route) => false,
               );
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryBlue,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
             ),
-            child: Text(AppStrings.get('back_to_home', context), style: AppTextStyles.buttonText.copyWith(color: Colors.white)),
+            child: Text(AppStrings.get('back_to_home', context),
+                style: AppTextStyles.buttonText.copyWith(color: Colors.white)),
           ),
         ],
       ),
@@ -508,7 +480,9 @@ class _CartScreenState extends State<CartScreen> {
           children: [
             Icon(Icons.info_outline, color: Colors.blue, size: 28),
             SizedBox(width: 12),
-            Expanded(child: Text(AppStrings.get('branch_update', context), style: AppTextStyles.headline2)),
+            Expanded(
+                child: Text(AppStrings.get('branch_update', context),
+                    style: AppTextStyles.headline2)),
           ],
         ),
         content: Column(
@@ -517,7 +491,8 @@ class _CartScreenState extends State<CartScreen> {
           children: [
             Text(
               "${AppStrings.get('switched_to', context)} $openBranch.",
-              style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold),
+              style:
+                  AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold),
             ),
             SizedBox(height: 8),
             Text(
@@ -534,7 +509,9 @@ class _CartScreenState extends State<CartScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text("OK", style: AppTextStyles.buttonText.copyWith(color: AppColors.primaryBlue)),
+            child: Text("OK",
+                style: AppTextStyles.buttonText
+                    .copyWith(color: AppColors.primaryBlue)),
           ),
         ],
       ),
@@ -570,7 +547,8 @@ class _CartScreenState extends State<CartScreen> {
       final allDrinks = snap.docs.map((d) {
         final data = d.data();
         final branchIds = List<String>.from(data['branchIds'] ?? []);
-        final outOfStockBranches = List<String>.from(data['outOfStockBranches'] ?? []);
+        final outOfStockBranches =
+            List<String>.from(data['outOfStockBranches'] ?? []);
 
         return MenuItem(
           id: d.id,
@@ -586,7 +564,8 @@ class _CartScreenState extends State<CartScreen> {
           isAvailable: data['isAvailable'] ?? true,
           isPopular: data['isPopular'] ?? false,
           sortOrder: data['sortOrder'] ?? 0,
-          variants: (data['variants'] is Map) ? Map.from(data['variants']) : const {},
+          variants:
+              (data['variants'] is Map) ? Map.from(data['variants']) : const {},
           tags: (data['tags'] is Map) ? Map.from(data['tags']) : const {},
           outOfStockBranches: outOfStockBranches,
         );
@@ -694,7 +673,10 @@ class _CartScreenState extends State<CartScreen> {
         if (!userDoc.exists) return null;
 
         final userData = userDoc.data() as Map<String, dynamic>;
-        final addresses = (userData['address'] as List?)?.whereType<Map<String, dynamic>>().toList() ?? [];
+        final addresses = (userData['address'] as List?)
+                ?.whereType<Map<String, dynamic>>()
+                .toList() ??
+            [];
 
         try {
           address = addresses.firstWhere((a) => a['isDefault'] == true);
@@ -754,14 +736,18 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+  double _calculateDistance(
+      double lat1, double lon1, double lat2, double lon2) {
     const double earthRadius = 6371;
 
     double dLat = _toRadians(lat2 - lat1);
     double dLon = _toRadians(lon2 - lon1);
 
     double a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(_toRadians(lat1)) * cos(_toRadians(lat2)) * sin(dLon / 2) * sin(dLon / 2);
+        cos(_toRadians(lat1)) *
+            cos(_toRadians(lat2)) *
+            sin(dLon / 2) *
+            sin(dLon / 2);
 
     double c = 2 * atan2(sqrt(a), sqrt(1 - a));
 
@@ -816,7 +802,10 @@ class _CartScreenState extends State<CartScreen> {
       if (!doc.exists) return null;
 
       final userData = doc.data() as Map<String, dynamic>?;
-      final addresses = (userData?['address'] as List?)?.whereType<Map<String, dynamic>>().toList() ?? [];
+      final addresses = (userData?['address'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .toList() ??
+          [];
 
       Map<String, dynamic>? defaultAddress;
       try {
@@ -850,8 +839,10 @@ class _CartScreenState extends State<CartScreen> {
             context: context,
             builder: (context) => AlertDialog(
               backgroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: Text(AppStrings.get('restaurant_just_closed', context), style: AppTextStyles.headline2),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              title: Text(AppStrings.get('restaurant_just_closed', context),
+                  style: AppTextStyles.headline2),
               content: Text(
                 AppStrings.get('branch_closed_msg', context),
                 style: AppTextStyles.bodyText1,
@@ -862,7 +853,9 @@ class _CartScreenState extends State<CartScreen> {
                     Navigator.pop(context);
                     _setNearestBranch(); // Refresh logic to find next best branch
                   },
-                  child: Text("OK", style: AppTextStyles.buttonText.copyWith(color: AppColors.primaryBlue)),
+                  child: Text("OK",
+                      style: AppTextStyles.buttonText
+                          .copyWith(color: AppColors.primaryBlue)),
                 ),
               ],
             ),
@@ -874,9 +867,11 @@ class _CartScreenState extends State<CartScreen> {
     // ----------------------------------
 
     // 2. Basic Validations
-    if (_orderType == 'delivery' && (_isOutOfDeliveryRange || _noDeliveryAvailable)) {
+    if (_orderType == 'delivery' &&
+        (_isOutOfDeliveryRange || _noDeliveryAvailable)) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('${AppStrings.get('delivery_range_error', context)} ${AppStrings.formatNumber(_noDeliveryRange, context)} ${AppStrings.get('km', context)}.'),
+        content: Text(
+            '${AppStrings.get('delivery_range_error', context)} ${AppStrings.formatNumber(_noDeliveryRange, context)} ${AppStrings.get('km', context)}.'),
         backgroundColor: Colors.red,
       ));
       return;
@@ -901,7 +896,8 @@ class _CartScreenState extends State<CartScreen> {
     try {
       final cartService = CartService();
 
-      final outOfStockItems = await cartService.getOutOfStockItems(_currentBranchIds);
+      final outOfStockItems =
+          await cartService.getOutOfStockItems(_currentBranchIds);
       if (outOfStockItems.isNotEmpty) {
         setState(() {
           _isCheckingOut = false;
@@ -914,24 +910,37 @@ class _CartScreenState extends State<CartScreen> {
       await cartService.validateCartStock(_currentBranchIds);
       setState(() => _isValidatingStock = false);
 
-      if (cartService.items.isEmpty) throw Exception(AppStrings.get("your_cart_empty", context));
+      if (cartService.items.isEmpty)
+        throw Exception(AppStrings.get("your_cart_empty", context));
 
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null || user.email == null) throw Exception(AppStrings.get("user_not_authenticated", context));
+      if (user == null || user.email == null)
+        throw Exception(AppStrings.get("user_not_authenticated", context));
 
       Map<String, dynamic>? defaultAddress;
       if (_orderType == 'delivery') {
-        final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
-        if (!userDoc.exists) throw Exception(AppStrings.get("user_doc_not_found", context));
+        final userDoc = await FirebaseFirestore.instance
+            .collection('Users')
+            .doc(user.email)
+            .get();
+        if (!userDoc.exists)
+          throw Exception(AppStrings.get("user_doc_not_found", context));
 
         final userData = userDoc.data() as Map<String, dynamic>;
-        final addresses = ((userData['address'] as List?) ?? []).map((a) => Map<String, dynamic>.from(a as Map)).toList();
+        final addresses = ((userData['address'] as List?) ?? [])
+            .map((a) => Map<String, dynamic>.from(a as Map))
+            .toList();
 
-        if (addresses.isEmpty) throw Exception(AppStrings.get("no_delivery_address", context));
-        defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true, orElse: () => addresses[0]);
+        if (addresses.isEmpty)
+          throw Exception(AppStrings.get("no_delivery_address", context));
+        defaultAddress = addresses.firstWhere((a) => a['isDefault'] == true,
+            orElse: () => addresses[0]);
       }
 
-      final userDoc = await FirebaseFirestore.instance.collection('Users').doc(user.email).get();
+      final userDoc = await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(user.email)
+          .get();
       final userData = userDoc.data() as Map<String, dynamic>;
       final String userName = userData['name'] ?? 'Customer';
       final String userPhone = userData['phone'] ?? '12345678';
@@ -946,9 +955,11 @@ class _CartScreenState extends State<CartScreen> {
         orderType: _orderType,
       );
 
-      final double totalForPayment = cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0);
+      final double totalForPayment = cartService.totalAfterDiscount +
+          (_orderType == 'delivery' ? deliveryFee : 0.0);
 
-      if (_paymentType == 'Cash on Delivery' || _selectedMfPaymentMethod == null) {
+      if (_paymentType == 'Cash on Delivery' ||
+          _selectedMfPaymentMethod == null) {
         final paymentMeta = _composePaymentMeta(totalForPayment);
         await orderDoc.update(paymentMeta);
 
@@ -958,9 +969,7 @@ class _CartScreenState extends State<CartScreen> {
         });
 
         _showOrderConfirmationDialog();
-
       } else {
-
         if (_selectedMfPaymentMethod?.paymentMethodId == null) {
           throw Exception(AppStrings.get("invalid_payment_method", context));
         }
@@ -1029,7 +1038,9 @@ class _CartScreenState extends State<CartScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(AppStrings.get('you_might_also_like', context), style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+            Text(AppStrings.get('you_might_also_like', context),
+                style: AppTextStyles.headline2
+                    .copyWith(color: AppColors.darkGrey)),
             const SizedBox(height: 16),
             SizedBox(
               height: 260,
@@ -1049,7 +1060,8 @@ class _CartScreenState extends State<CartScreen> {
                         child: Container(
                           decoration: BoxDecoration(
                             color: AppColors.lightGrey,
-                            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                            borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(16)),
                           ),
                         ),
                       ),
@@ -1088,7 +1100,9 @@ class _CartScreenState extends State<CartScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(AppStrings.get('you_might_also_like', context), style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+            Text(AppStrings.get('you_might_also_like', context),
+                style: AppTextStyles.headline2
+                    .copyWith(color: AppColors.darkGrey)),
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(16),
@@ -1112,7 +1126,9 @@ class _CartScreenState extends State<CartScreen> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-          child: Text(AppStrings.get('you_might_also_like', context), style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+          child: Text(AppStrings.get('you_might_also_like', context),
+              style:
+                  AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
         ),
         SizedBox(
           height: 260,
@@ -1121,7 +1137,8 @@ class _CartScreenState extends State<CartScreen> {
             clipBehavior: Clip.none,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: _drinksItems.length,
-            itemBuilder: (_, i) => _DrinkCard(drink: _drinksItems[i],currentBranchIds: _currentBranchIds),
+            itemBuilder: (_, i) => _DrinkCard(
+                drink: _drinksItems[i], currentBranchIds: _currentBranchIds),
           ),
         ),
       ],
@@ -1140,13 +1157,15 @@ class _CartScreenState extends State<CartScreen> {
           padding: const EdgeInsets.symmetric(vertical: 4.0),
           child: Row(
             children: [
-              const Icon(Icons.navigation_outlined, color: AppColors.primaryBlue, size: 28),
+              const Icon(Icons.navigation_outlined,
+                  color: AppColors.primaryBlue, size: 28),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(AppStrings.get('distance_to_branch', context),
+                    Text(
+                      AppStrings.get('distance_to_branch', context),
                       style: AppTextStyles.bodyText2.copyWith(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
@@ -1184,9 +1203,11 @@ class _CartScreenState extends State<CartScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            const Icon(Icons.error_outline_rounded, color: Colors.red, size: 28),
+            const Icon(Icons.error_outline_rounded,
+                color: Colors.red, size: 28),
             const SizedBox(width: 10),
-            Text(AppStrings.get('payment_failed', context), style: AppTextStyles.headline2),
+            Text(AppStrings.get('payment_failed', context),
+                style: AppTextStyles.headline2),
           ],
         ),
         content: Column(
@@ -1195,12 +1216,15 @@ class _CartScreenState extends State<CartScreen> {
           children: [
             Text(
               'Your payment could not be processed.',
-              style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold),
+              style:
+                  AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
-              errorMessage.replaceAll('Payment Cancelled', 'The payment was cancelled.'),
-              style: AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade700),
+              errorMessage.replaceAll(
+                  'Payment Cancelled', 'The payment was cancelled.'),
+              style:
+                  AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade700),
             ),
           ],
         ),
@@ -1209,7 +1233,8 @@ class _CartScreenState extends State<CartScreen> {
             onPressed: () => Navigator.pop(context),
             child: Text(
               'Try Again',
-              style: AppTextStyles.buttonText.copyWith(color: AppColors.primaryBlue),
+              style: AppTextStyles.buttonText
+                  .copyWith(color: AppColors.primaryBlue),
             ),
           ),
         ],
@@ -1239,8 +1264,8 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(4),
-                  child: Image.asset('assets/googlemaps.png', width: 28, height: 28, fit: BoxFit.contain),
-
+                  child: Image.asset('assets/googlemaps.png',
+                      width: 28, height: 28, fit: BoxFit.contain),
                 ),
               ),
               const SizedBox(width: 12),
@@ -1262,8 +1287,8 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 child: ClipRRect(
                     borderRadius: BorderRadius.circular(4),
-                    child: Image.asset('assets/applemaps.png', width: 28, height: 28, fit: BoxFit.cover)
-                ),
+                    child: Image.asset('assets/applemaps.png',
+                        width: 28, height: 28, fit: BoxFit.cover)),
               ),
               const SizedBox(width: 12),
               const Text('Apple Maps', style: TextStyle(fontSize: 15)),
@@ -1312,7 +1337,8 @@ class _CartScreenState extends State<CartScreen> {
 
       if (!branchDoc.exists) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(AppStrings.get('branch_info_not_found', context))),
+          SnackBar(
+              content: Text(AppStrings.get('branch_info_not_found', context))),
         );
         return;
       }
@@ -1322,7 +1348,9 @@ class _CartScreenState extends State<CartScreen> {
 
       if (addressData == null || addressData['geolocation'] == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(AppStrings.get('branch_location_unavailable', context))),
+          SnackBar(
+              content:
+                  Text(AppStrings.get('branch_location_unavailable', context))),
         );
         return;
       }
@@ -1343,13 +1371,15 @@ class _CartScreenState extends State<CartScreen> {
         await launch(url);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(AppStrings.get('could_not_open_maps', context))),
+          SnackBar(
+              content: Text(AppStrings.get('could_not_open_maps', context))),
         );
       }
     } catch (e) {
       debugPrint('Error opening navigation: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(AppStrings.get('error_opening_navigation', context))),
+        SnackBar(
+            content: Text(AppStrings.get('error_opening_navigation', context))),
       );
     }
   }
@@ -1358,6 +1388,11 @@ class _CartScreenState extends State<CartScreen> {
     if (newType != _orderType) {
       setState(() => _orderType = newType);
       await _setNearestBranch();
+
+      // Force check for popup after switching type
+      if (mounted && _areAllBranchesClosed && _orderType == 'pickup') {
+        _showPickupClosedDialog();
+      }
 
       if (newType == 'pickup') {
         await _calculateDistanceForPickup();
@@ -1396,8 +1431,8 @@ class _CartScreenState extends State<CartScreen> {
       body: !_isInitialized
           ? _buildLoadingShimmer()
           : cartService.items.isEmpty
-          ? _buildEmptyCartView()
-          : _buildCartContent(cartService),
+              ? _buildEmptyCartView()
+              : _buildCartContent(cartService),
     );
   }
 
@@ -1409,10 +1444,12 @@ class _CartScreenState extends State<CartScreen> {
         const SizedBox(height: 24),
         _buildShimmerCard(height: 80),
         const SizedBox(height: 16),
-        ...List.generate(3, (index) => Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: _buildShimmerCard(height: 100),
-        )),
+        ...List.generate(
+            3,
+            (index) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _buildShimmerCard(height: 100),
+                )),
         const SizedBox(height: 16),
         _buildShimmerCard(height: 120),
         const SizedBox(height: 16),
@@ -1455,7 +1492,8 @@ class _CartScreenState extends State<CartScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
                   AppStrings.get('your_items', context),
-                  style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey),
+                  style: AppTextStyles.headline2
+                      .copyWith(color: AppColors.darkGrey),
                 ),
               ),
               const SizedBox(height: 8),
@@ -1498,7 +1536,8 @@ class _CartScreenState extends State<CartScreen> {
               item: cartService.items[i],
               cartService: cartService,
               // NEW: Pass the current branch ID here
-              currentBranchId: _currentBranchIds.isNotEmpty ? _currentBranchIds.first : '',
+              currentBranchId:
+                  _currentBranchIds.isNotEmpty ? _currentBranchIds.first : '',
 
               onRemove: (item) {
                 // ... existing onRemove logic ...
@@ -1531,17 +1570,23 @@ class _CartScreenState extends State<CartScreen> {
             const SizedBox(height: 16),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _buildBillRow(AppStrings.get('subtotal', context), cartService.totalAmount),
+              child: _buildBillRow(
+                  AppStrings.get('subtotal', context), cartService.totalAmount),
             ),
-            if (_orderType == 'delivery' && deliveryFee > 0 && cartService.items.isNotEmpty)
+            if (_orderType == 'delivery' &&
+                deliveryFee > 0 &&
+                cartService.items.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _buildBillRow(AppStrings.get('delivery_fee', context), deliveryFee),
+                child: _buildBillRow(
+                    AppStrings.get('delivery_fee', context), deliveryFee),
               ),
             if (cartService.couponDiscount > 0) ...[
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _buildBillRow(AppStrings.get('discount', context), -cartService.couponDiscount, isDiscount: true),
+                child: _buildBillRow(AppStrings.get('discount', context),
+                    -cartService.couponDiscount,
+                    isDiscount: true),
               ),
               const Divider(height: 24, thickness: 0.5),
             ],
@@ -1551,8 +1596,9 @@ class _CartScreenState extends State<CartScreen> {
                 AppStrings.get('total', context),
                 cartService.items.isEmpty
                     ? 0.0
-                    : (cartService.totalAfterDiscount + (_orderType == 'delivery' ? deliveryFee : 0.0))
-                    .clamp(0, double.infinity),
+                    : (cartService.totalAfterDiscount +
+                            (_orderType == 'delivery' ? deliveryFee : 0.0))
+                        .clamp(0, double.infinity),
                 isTotal: true,
               ),
             ),
@@ -1568,21 +1614,24 @@ class _CartScreenState extends State<CartScreen> {
 
     bool hasUnavailableItems = _outOfStockItems.isNotEmpty;
 
-    final bool isDisabled = _isCheckingOut || _isValidatingStock ||
-        isCartEmpty || hasUnavailableItems ||
-        _areAllBranchesClosed || _noDeliveryAvailable ||
+    final bool isDisabled = _isCheckingOut ||
+        _isValidatingStock ||
+        isCartEmpty ||
+        hasUnavailableItems ||
+        _areAllBranchesClosed ||
+        _noDeliveryAvailable ||
         (_orderType == 'delivery' && _isOutOfDeliveryRange);
 
     String buttonText = AppStrings.get('checkout', context);
 
-    if (_noDeliveryAvailable) {
+    if (_noDeliveryAvailable ||
+        (_orderType == 'delivery' && _isOutOfDeliveryRange)) {
+      // Consolidated delivery range checks
       buttonText = AppStrings.get('location_not_serviceable', context);
     } else if (_areAllBranchesClosed) {
       buttonText = AppStrings.get('restaurant_closed', context);
     } else if (_isValidatingStock) {
       buttonText = AppStrings.get('checking_stock', context);
-    } else if (_orderType == 'delivery' && _isOutOfDeliveryRange) {
-      buttonText = AppStrings.get('outside_delivery_range', context);
     } else if (hasUnavailableItems) {
       buttonText = AppStrings.get('unavailable_items_in_cart', context);
     }
@@ -1591,51 +1640,59 @@ class _CartScreenState extends State<CartScreen> {
       width: double.infinity,
       child: _isCheckingOut || _isValidatingStock
           ? ElevatedButton(
-        onPressed: null,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primaryBlue.withOpacity(0.7),
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(AppColors.white),
+              onPressed: null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryBlue.withOpacity(0.7),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(AppColors.white),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    _isValidatingStock
+                        ? AppStrings.get('checking_stock', context)
+                        : AppStrings.get('processing', context),
+                    style: AppTextStyles.buttonText
+                        .copyWith(color: AppColors.white),
+                  ),
+                ],
+              ),
+            )
+          : ElevatedButton(
+              onPressed: isDisabled ? null : _proceedToCheckout,
+              style: ElevatedButton.styleFrom(
+                backgroundColor:
+                    isDisabled ? Colors.grey : AppColors.primaryBlue,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              child: Text(
+                buttonText,
+                style: AppTextStyles.buttonText.copyWith(
+                  color: AppColors.white,
+                ),
               ),
             ),
-            const SizedBox(width: 12),
-            Text(
-              _isValidatingStock ? AppStrings.get('checking_stock', context) : AppStrings.get('processing', context),
-              style: AppTextStyles.buttonText.copyWith(color: AppColors.white),
-            ),
-          ],
-        ),
-      )
-          : ElevatedButton(
-        onPressed: isDisabled ? null : _proceedToCheckout,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isDisabled ? Colors.grey : AppColors.primaryBlue,
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-        child: Text(
-          buttonText,
-          style: AppTextStyles.buttonText.copyWith(
-            color: AppColors.white,
-          ),
-        ),
-      ),
     );
   }
 
   AppBar _buildAppBar(CartService cartService) {
     return AppBar(
-      title: Text(AppStrings.get('cart_title', context), style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
+      title: Text(AppStrings.get('cart_title', context),
+          style: AppTextStyles.headline2.copyWith(color: AppColors.darkGrey)),
       backgroundColor: AppColors.white,
       elevation: 0,
       centerTitle: true,
@@ -1665,12 +1722,14 @@ class _CartScreenState extends State<CartScreen> {
                 size: 120, color: AppColors.primaryBlue.withOpacity(0.15)),
             const SizedBox(height: 24),
             Text(AppStrings.get('cart_empty', context),
-                style: AppTextStyles.headline1.copyWith(color: AppColors.darkGrey, fontSize: 24)),
+                style: AppTextStyles.headline1
+                    .copyWith(color: AppColors.darkGrey, fontSize: 24)),
             const SizedBox(height: 12),
             Text(
               AppStrings.get('cart_empty_sub', context),
               textAlign: TextAlign.center,
-              style: AppTextStyles.bodyText1.copyWith(color: Colors.grey.shade600),
+              style:
+                  AppTextStyles.bodyText1.copyWith(color: Colors.grey.shade600),
             ),
             const SizedBox(height: 32),
             ElevatedButton.icon(
@@ -1684,12 +1743,15 @@ class _CartScreenState extends State<CartScreen> {
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryBlue,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: () {
                 BottomNavController.index.value = 0;
-                Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
+                Navigator.of(context, rootNavigator: true)
+                    .popUntil((r) => r.isFirst);
               },
             ),
           ],
@@ -1717,12 +1779,10 @@ class _CartScreenState extends State<CartScreen> {
           _buildOrderTypeToggle(),
           const SizedBox(height: 16),
           _orderType == 'delivery' ? _buildAddressSection() : buildPickupInfo(),
-
           if (_orderType == 'delivery' && _distanceToBranch > 0) ...[
             const Divider(height: 16, thickness: 0.5),
             buildDeliveryRangeInfo(),
           ],
-
           const Divider(height: 24, thickness: 0.5),
           _buildTimeEstimate(),
           const Divider(height: 24, thickness: 0.5),
@@ -1738,15 +1798,18 @@ class _CartScreenState extends State<CartScreen> {
 
     if (_isOutOfDeliveryRange) {
       // UPDATED: Localized delivery range number
-      statusText = "${AppStrings.get('delivery_range_error', context)} ${AppStrings.formatNumber(_noDeliveryRange, context)} ${AppStrings.get('km', context)}";
+      statusText =
+          "${AppStrings.get('delivery_range_error', context)} ${AppStrings.formatNumber(_noDeliveryRange, context)} ${AppStrings.get('km', context)}";
       statusColor = Colors.red;
     } else if (deliveryFee == 0) {
       // UPDATED: Localized delivery range number
-      statusText = "${AppStrings.get('free_delivery_within', context)} ${AppStrings.formatNumber(_freeDeliveryRange, context)} ${AppStrings.get('kms', context)}";
+      statusText =
+          "${AppStrings.get('free_delivery_within', context)} ${AppStrings.formatNumber(_freeDeliveryRange, context)} ${AppStrings.get('kms', context)}";
       statusColor = Colors.green;
     } else {
       // UPDATED: Localized distance
-      statusText = "${AppStrings.formatNumber(_distanceToBranch.toStringAsFixed(1), context)} ${AppStrings.get('km', context)} ${AppStrings.get('from branch', context)}";
+      statusText =
+          "${AppStrings.formatNumber(_distanceToBranch.toStringAsFixed(1), context)} ${AppStrings.get('km', context)} ${AppStrings.get('from branch', context)}";
       statusColor = AppColors.darkGrey;
     }
 
@@ -1774,7 +1837,6 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-
   Widget _buildPaymentSection() {
     return InkWell(
       onTap: _showPaymentMethodsBottomSheet,
@@ -1783,13 +1845,15 @@ class _CartScreenState extends State<CartScreen> {
         padding: const EdgeInsets.symmetric(vertical: 4.0),
         child: Row(
           children: [
-            const Icon(Icons.payments_outlined, color: AppColors.primaryBlue, size: 28),
+            const Icon(Icons.payments_outlined,
+                color: AppColors.primaryBlue, size: 28),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(AppStrings.get('payment_method', context),
+                  Text(
+                    AppStrings.get('payment_method', context),
                     style: AppTextStyles.bodyText2.copyWith(
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
@@ -1811,7 +1875,8 @@ class _CartScreenState extends State<CartScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkGrey),
+            const Icon(Icons.arrow_forward_ios,
+                size: 16, color: AppColors.darkGrey),
           ],
         ),
       ),
@@ -1831,16 +1896,21 @@ class _CartScreenState extends State<CartScreen> {
             child: GestureDetector(
               onTap: () => _onOrderTypeChanged('delivery'),
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                 decoration: BoxDecoration(
-                  color: _orderType == 'delivery' ? AppColors.primaryBlue : Colors.transparent,
+                  color: _orderType == 'delivery'
+                      ? AppColors.primaryBlue
+                      : Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   AppStrings.get('delivery', context),
                   textAlign: TextAlign.center,
                   style: AppTextStyles.bodyText1.copyWith(
-                    color: _orderType == 'delivery' ? AppColors.white : AppColors.darkGrey,
+                    color: _orderType == 'delivery'
+                        ? AppColors.white
+                        : AppColors.darkGrey,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -1851,16 +1921,21 @@ class _CartScreenState extends State<CartScreen> {
             child: GestureDetector(
               onTap: () => _onOrderTypeChanged('pickup'),
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                 decoration: BoxDecoration(
-                  color: _orderType == 'pickup' ? AppColors.primaryBlue : Colors.transparent,
+                  color: _orderType == 'pickup'
+                      ? AppColors.primaryBlue
+                      : Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   AppStrings.get('pickup', context),
                   textAlign: TextAlign.center,
                   style: AppTextStyles.bodyText1.copyWith(
-                    color: _orderType == 'pickup' ? AppColors.white : AppColors.darkGrey,
+                    color: _orderType == 'pickup'
+                        ? AppColors.white
+                        : AppColors.darkGrey,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -1884,11 +1959,12 @@ class _CartScreenState extends State<CartScreen> {
               children: [
                 _isFindingNearestBranch
                     ? const SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(strokeWidth: 3),
-                )
-                    : const Icon(Icons.storefront_outlined, color: AppColors.primaryBlue, size: 28),
+                        width: 28,
+                        height: 28,
+                        child: CircularProgressIndicator(strokeWidth: 3),
+                      )
+                    : const Icon(Icons.storefront_outlined,
+                        color: AppColors.primaryBlue, size: 28),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
@@ -1896,26 +1972,35 @@ class _CartScreenState extends State<CartScreen> {
                     children: [
                       Text(AppStrings.get('pick_up_from', context),
                           style: AppTextStyles.bodyText2.copyWith(
-                              fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                              color: Colors.grey)),
                       const SizedBox(height: 4),
                       // REPLACEMENT START: Dynamic Branch Name Fetcher
                       StreamBuilder<DocumentSnapshot>(
                         stream: FirebaseFirestore.instance
                             .collection('Branch')
-                            .doc(_currentBranchIds.isNotEmpty ? _currentBranchIds.first : 'Old_Airport')
+                            .doc(_currentBranchIds.isNotEmpty
+                                ? _currentBranchIds.first
+                                : 'Old_Airport')
                             .snapshots(),
                         builder: (context, snapshot) {
                           // Default to the ID if loading or no data
                           String displayBranchName = _isFindingNearestBranch
-                              ? AppStrings.get('finding_nearest_branch_loading', context)
+                              ? AppStrings.get(
+                                  'finding_nearest_branch_loading', context)
                               : _getBranchesDisplayName(_currentBranchIds);
 
                           if (snapshot.hasData && snapshot.data!.exists) {
-                            final data = snapshot.data!.data() as Map<String, dynamic>;
-                            final isArabic = Provider.of<LanguageProvider>(context).isArabic;
+                            final data =
+                                snapshot.data!.data() as Map<String, dynamic>;
+                            final isArabic =
+                                Provider.of<LanguageProvider>(context).isArabic;
 
                             // 1. If Arabic is selected AND 'name_ar' exists in Firebase, use it
-                            if (isArabic && data['name_ar'] != null && data['name_ar'].toString().isNotEmpty) {
+                            if (isArabic &&
+                                data['name_ar'] != null &&
+                                data['name_ar'].toString().isNotEmpty) {
                               displayBranchName = data['name_ar'];
                             }
                             // 2. Otherwise, try to use the English 'name' field if it exists
@@ -1939,13 +2024,15 @@ class _CartScreenState extends State<CartScreen> {
                       if (_isDefaultNearest && !_isFindingNearestBranch)
                         Text(
                           AppStrings.get('nearest_to_address', context),
-                          style: AppTextStyles.bodyText2.copyWith(color: Colors.green, fontSize: 11),
+                          style: AppTextStyles.bodyText2
+                              .copyWith(color: Colors.green, fontSize: 11),
                         ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkGrey),
+                const Icon(Icons.arrow_forward_ios,
+                    size: 16, color: AppColors.darkGrey),
               ],
             ),
           ),
@@ -1958,7 +2045,8 @@ class _CartScreenState extends State<CartScreen> {
   Widget _buildAddressSection() {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.email == null) {
-      return  Text(AppStrings.get('please_login_address', context));;
+      return Text(AppStrings.get('please_login_address', context));
+      ;
     }
 
     if (_cachedAddress == null && !_isLoadingAddress) {
@@ -1981,18 +2069,19 @@ class _CartScreenState extends State<CartScreen> {
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
         children: [
-          const Icon(Icons.location_on_outlined, color: AppColors.primaryBlue, size: 28),
+          const Icon(Icons.location_on_outlined,
+              color: AppColors.primaryBlue, size: 28),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(AppStrings.get('deliver_to', context),
+                Text(
+                  AppStrings.get('deliver_to', context),
                   style: AppTextStyles.bodyText2.copyWith(
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
-                      color: Colors.grey
-                  ),
+                      color: Colors.grey),
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -2022,32 +2111,32 @@ class _CartScreenState extends State<CartScreen> {
         padding: const EdgeInsets.symmetric(vertical: 4.0),
         child: Row(
           children: [
-            const Icon(Icons.location_on_outlined, color: AppColors.primaryBlue, size: 28),
+            const Icon(Icons.location_on_outlined,
+                color: AppColors.primaryBlue, size: 28),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(AppStrings.get('deliver_to', context),
+                  Text(
+                    AppStrings.get('deliver_to', context),
                     style: AppTextStyles.bodyText2.copyWith(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
-                        color: Colors.grey
-                    ),
+                        color: Colors.grey),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     AppStrings.get('set_delivery_address', context),
                     style: AppTextStyles.bodyText1.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.darkGrey
-                    ),
+                        fontWeight: FontWeight.w600, color: AppColors.darkGrey),
                   ),
                 ],
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkGrey),
+            const Icon(Icons.arrow_forward_ios,
+                size: 16, color: AppColors.darkGrey),
           ],
         ),
       ),
@@ -2056,10 +2145,14 @@ class _CartScreenState extends State<CartScreen> {
 
   Widget _buildAddressContent(Map<String, dynamic> defaultAddress) {
     final addressText = [
-      if (defaultAddress['flat']?.isNotEmpty ?? false) 'Flat ${defaultAddress['flat']}',
-      if (defaultAddress['floor']?.isNotEmpty ?? false) 'Floor ${defaultAddress['floor']}',
-      if (defaultAddress['building']?.isNotEmpty ?? false) 'Building ${defaultAddress['building']}',
-      if (defaultAddress['street']?.isNotEmpty ?? false) defaultAddress['street'],
+      if (defaultAddress['flat']?.isNotEmpty ?? false)
+        'Flat ${defaultAddress['flat']}',
+      if (defaultAddress['floor']?.isNotEmpty ?? false)
+        'Floor ${defaultAddress['floor']}',
+      if (defaultAddress['building']?.isNotEmpty ?? false)
+        'Building ${defaultAddress['building']}',
+      if (defaultAddress['street']?.isNotEmpty ?? false)
+        defaultAddress['street'],
       if (defaultAddress['city']?.isNotEmpty ?? false) defaultAddress['city'],
     ].join(', ');
 
@@ -2074,26 +2167,25 @@ class _CartScreenState extends State<CartScreen> {
         padding: const EdgeInsets.symmetric(vertical: 4.0),
         child: Row(
           children: [
-            const Icon(Icons.location_on_outlined, color: AppColors.primaryBlue, size: 28),
+            const Icon(Icons.location_on_outlined,
+                color: AppColors.primaryBlue, size: 28),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(AppStrings.get('deliver_to', context),
+                  Text(
+                    AppStrings.get('deliver_to', context),
                     style: AppTextStyles.bodyText2.copyWith(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
-                        color: Colors.grey
-                    ),
+                        color: Colors.grey),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     addressText,
                     style: AppTextStyles.bodyText1.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.darkGrey
-                    ),
+                        fontWeight: FontWeight.w600, color: AppColors.darkGrey),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -2101,7 +2193,8 @@ class _CartScreenState extends State<CartScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.darkGrey),
+            const Icon(Icons.arrow_forward_ios,
+                size: 16, color: AppColors.darkGrey),
           ],
         ),
       ),
@@ -2110,10 +2203,8 @@ class _CartScreenState extends State<CartScreen> {
 
   Widget _buildTimeEstimate() {
     // Replace "mins" with localized version
-    final timeString = _estimatedTime.replaceAll(
-        'mins',
-        AppStrings.get('mins', context)
-    );
+    final timeString =
+        _estimatedTime.replaceAll('mins', AppStrings.get('mins', context));
     // Format any numbers found in the time string
     final localizedTime = AppStrings.formatNumber(timeString, context);
 
@@ -2121,7 +2212,8 @@ class _CartScreenState extends State<CartScreen> {
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
         children: [
-          const Icon(Icons.timer_outlined, color: AppColors.primaryBlue, size: 28),
+          const Icon(Icons.timer_outlined,
+              color: AppColors.primaryBlue, size: 28),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
@@ -2139,7 +2231,8 @@ class _CartScreenState extends State<CartScreen> {
                 Text(
                   // UPDATED: Localized time string
                   localizedTime,
-                  style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w600, color: AppColors.darkGrey),
+                  style: AppTextStyles.bodyText1.copyWith(
+                      fontWeight: FontWeight.w600, color: AppColors.darkGrey),
                 ),
                 if (_orderType == 'pickup' && !_isFindingNearestBranch)
                   Text(
@@ -2177,9 +2270,16 @@ class _CartScreenState extends State<CartScreen> {
             hintStyle: AppTextStyles.bodyText2,
             filled: true,
             fillColor: AppColors.white,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade200)),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade200)),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.5)),
+            border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey.shade200)),
+            enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey.shade200)),
+            focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide:
+                    const BorderSide(color: AppColors.primaryBlue, width: 1.5)),
             contentPadding: const EdgeInsets.all(16),
           ),
         ),
@@ -2202,12 +2302,14 @@ class _CartScreenState extends State<CartScreen> {
             Expanded(
               child: Text(
                 'Coupon "${cartService.appliedCoupon!.code}" applied!',
-                style: AppTextStyles.bodyText1.copyWith(color: Colors.green.shade800, fontWeight: FontWeight.bold),
+                style: AppTextStyles.bodyText1.copyWith(
+                    color: Colors.green.shade800, fontWeight: FontWeight.bold),
               ),
             ),
             TextButton(
               onPressed: () => cartService.removeCoupon(),
-              child: Text('Remove', style: AppTextStyles.bodyText2.copyWith(color: Colors.red)),
+              child: Text('Remove',
+                  style: AppTextStyles.bodyText2.copyWith(color: Colors.red)),
             ),
           ],
         ),
@@ -2215,7 +2317,11 @@ class _CartScreenState extends State<CartScreen> {
     } else {
       return InkWell(
         onTap: () async {
-          await Navigator.push(context, MaterialPageRoute(builder: (context) => CouponsScreen(cartService: cartService)));
+          await Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (context) =>
+                      CouponsScreen(cartService: cartService)));
         },
         borderRadius: BorderRadius.circular(12),
         child: Container(
@@ -2228,8 +2334,13 @@ class _CartScreenState extends State<CartScreen> {
             children: [
               const Icon(Icons.discount_outlined, color: AppColors.primaryBlue),
               const SizedBox(width: 12),
-              Expanded(child: Text(AppStrings.get('apply_coupon', context), style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.w500, color: AppColors.primaryBlue))),
-              const Icon(Icons.arrow_forward_ios, size: 16, color: AppColors.primaryBlue),
+              Expanded(
+                  child: Text(AppStrings.get('apply_coupon', context),
+                      style: AppTextStyles.bodyText1.copyWith(
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.primaryBlue))),
+              const Icon(Icons.arrow_forward_ios,
+                  size: 16, color: AppColors.primaryBlue),
             ],
           ),
         ),
@@ -2237,9 +2348,12 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  Widget _buildBillRow(String label, double amount, {bool isTotal = false, bool isDiscount = false}) {
+  Widget _buildBillRow(String label, double amount,
+      {bool isTotal = false, bool isDiscount = false}) {
     final style = AppTextStyles.bodyText1.copyWith(
-        color: isDiscount ? Colors.green.shade700 : (isTotal ? AppColors.darkGrey : Colors.grey.shade600),
+        color: isDiscount
+            ? Colors.green.shade700
+            : (isTotal ? AppColors.darkGrey : Colors.grey.shade600),
         fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
         fontSize: isTotal ? 18 : 16);
 
@@ -2262,7 +2376,10 @@ class _CartScreenState extends State<CartScreen> {
             amountText,
             style: style.copyWith(
               fontWeight: isTotal ? FontWeight.bold : FontWeight.w600,
-              color: label == AppStrings.get('delivery_fee', context) && amount == 0 ? Colors.green : null,
+              color: label == AppStrings.get('delivery_fee', context) &&
+                      amount == 0
+                  ? Colors.green
+                  : null,
             ),
           ),
         ],
@@ -2289,7 +2406,8 @@ class _CartScreenState extends State<CartScreen> {
             onPressed: () => Navigator.pop(context),
             child: Text(
               AppStrings.get('cancel', context),
-              style: AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey),
+              style:
+                  AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey),
             ),
           ),
           TextButton(
@@ -2310,7 +2428,6 @@ class _CartScreenState extends State<CartScreen> {
       ),
     );
   }
-
 
   void _showPaymentMethodsBottomSheet() {
     final cartService = CartService();
@@ -2347,8 +2464,7 @@ class _CartScreenState extends State<CartScreen> {
                   bottom: MediaQuery.of(context).viewInsets.bottom + 24,
                   left: 16,
                   right: 16,
-                  top: 12
-              ),
+                  top: 12),
               decoration: const BoxDecoration(
                 color: AppColors.white,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -2361,27 +2477,24 @@ class _CartScreenState extends State<CartScreen> {
                       height: 4,
                       decoration: BoxDecoration(
                           color: Colors.grey.shade300,
-                          borderRadius: BorderRadius.circular(2)
-                      )
-                  ),
+                          borderRadius: BorderRadius.circular(2))),
                   const SizedBox(height: 20),
-                  Text(AppStrings.get('select_payment_method', context), style: AppTextStyles.headline2),
+                  Text(AppStrings.get('select_payment_method', context),
+                      style: AppTextStyles.headline2),
                   const SizedBox(height: 16),
-
                   ListTile(
                     leading: CircleAvatar(
                       backgroundColor: AppColors.lightGrey,
-                      child: Icon(Icons.money_outlined, color: AppColors.primaryBlue),
+                      child: Icon(Icons.money_outlined,
+                          color: AppColors.primaryBlue),
                     ),
                     title: Text(
-                      // UPDATED: Localized text for cash on delivery
+                        // UPDATED: Localized text for cash on delivery
                         AppStrings.get('cash_on_delivery', context),
                         style: AppTextStyles.bodyText1.copyWith(
                             fontWeight: _paymentType == 'Cash on Delivery'
                                 ? FontWeight.bold
-                                : FontWeight.normal
-                        )
-                    ),
+                                : FontWeight.normal)),
                     trailing: _paymentType == 'Cash on Delivery'
                         ? const Icon(Icons.check_circle, color: Colors.green)
                         : null,
@@ -2393,9 +2506,7 @@ class _CartScreenState extends State<CartScreen> {
                       Navigator.pop(context);
                     },
                   ),
-
                   const Divider(),
-
                   if (_isLoadingPaymentMethods)
                     const Padding(
                       padding: EdgeInsets.all(16.0),
@@ -2409,28 +2520,31 @@ class _CartScreenState extends State<CartScreen> {
                     )
                   else
                     ..._mfPaymentMethods.map((method) {
-                      final isSelected = _selectedMfPaymentMethod?.paymentMethodId == method.paymentMethodId;
+                      final isSelected =
+                          _selectedMfPaymentMethod?.paymentMethodId ==
+                              method.paymentMethodId;
                       return ListTile(
                         leading: SizedBox(
                           width: 40,
                           height: 40,
                           child: CachedNetworkImage(
                             imageUrl: method.imageUrl ?? '',
-                            errorWidget: (_, __, ___) => const Icon(Icons.credit_card),
+                            errorWidget: (_, __, ___) =>
+                                const Icon(Icons.credit_card),
                             placeholder: (_, __) => const Padding(
                               padding: EdgeInsets.all(8.0),
                               child: CircularProgressIndicator(strokeWidth: 2),
                             ),
                           ),
                         ),
-                        title: Text(
-                            method.paymentMethodEn ?? 'Unknown',
+                        title: Text(method.paymentMethodEn ?? 'Unknown',
                             style: AppTextStyles.bodyText1.copyWith(
-                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal
-                            )
-                        ),
+                                fontWeight: isSelected
+                                    ? FontWeight.bold
+                                    : FontWeight.normal)),
                         trailing: isSelected
-                            ? const Icon(Icons.check_circle, color: Colors.green)
+                            ? const Icon(Icons.check_circle,
+                                color: Colors.green)
                             : null,
                         onTap: () {
                           setState(() {
@@ -2452,11 +2566,16 @@ class _CartScreenState extends State<CartScreen> {
 
   IconData _getPaymentIcon(String method) {
     switch (method) {
-      case 'Cash on Delivery': return Icons.money_outlined;
-      case 'Card': return Icons.credit_card_outlined;
-      case 'Apple Pay': return Icons.phone_iphone_outlined;
-      case 'Google Pay': return Icons.android_outlined;
-      default: return Icons.payments_outlined;
+      case 'Cash on Delivery':
+        return Icons.money_outlined;
+      case 'Card':
+        return Icons.credit_card_outlined;
+      case 'Apple Pay':
+        return Icons.phone_iphone_outlined;
+      case 'Google Pay':
+        return Icons.android_outlined;
+      default:
+        return Icons.payments_outlined;
     }
   }
 
@@ -2466,12 +2585,23 @@ class _CartScreenState extends State<CartScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 24, left: 16, right: 16, top: 12),
-        decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            left: 16,
+            right: 16,
+            top: 12),
+        decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+            Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2))),
             const SizedBox(height: 20),
             Text(
               AppStrings.get('select_pickup_branch', context),
@@ -2479,54 +2609,65 @@ class _CartScreenState extends State<CartScreen> {
             ),
             const SizedBox(height: 16),
             if (_allBranches.isEmpty)
-              Padding(padding: const EdgeInsets.symmetric(vertical: 32), child: Text(
-                AppStrings.get('no_branches_available', context),
-                style: AppTextStyles.bodyText2,
-              ),)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                child: Text(
+                  AppStrings.get('no_branches_available', context),
+                  style: AppTextStyles.bodyText2,
+                ),
+              )
             else
               ..._allBranches.map((branch) => ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: Colors.grey.shade100,
-                  child: Icon(_currentBranchIds.contains(branch['id']) ? Icons.store : Icons.storefront_outlined, color: Colors.blue.shade800),
-                ),
-                title: Text(branch['name']!, style: AppTextStyles.bodyText1.copyWith(
-                  fontWeight: _currentBranchIds.contains(branch['id']) ? FontWeight.bold : FontWeight.normal,
-                )),
-                trailing: _currentBranchIds.contains(branch['id']) ? const Icon(Icons.check_circle, color: Colors.green) : null,
-                onTap: () async {
+                    leading: CircleAvatar(
+                      backgroundColor: Colors.grey.shade100,
+                      child: Icon(
+                          _currentBranchIds.contains(branch['id'])
+                              ? Icons.store
+                              : Icons.storefront_outlined,
+                          color: Colors.blue.shade800),
+                    ),
+                    title: Text(branch['name']!,
+                        style: AppTextStyles.bodyText1.copyWith(
+                          fontWeight: _currentBranchIds.contains(branch['id'])
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        )),
+                    trailing: _currentBranchIds.contains(branch['id'])
+                        ? const Icon(Icons.check_circle, color: Colors.green)
+                        : null,
+                    onTap: () async {
+                      final branchDoc = await FirebaseFirestore.instance
+                          .collection('Branch')
+                          .doc(branch['id'])
+                          .get();
+                      final bool isOpen = branchDoc.data()?['isOpen'] ?? true;
 
-                  final branchDoc = await FirebaseFirestore.instance.collection('Branch').doc(branch['id']).get();
-                  final bool isOpen = branchDoc.data()?['isOpen'] ?? true;
+                      if (!isOpen) {
+                        Navigator.pop(context);
+                        _showPickupClosedDialog(
+                            "${branch['name']} is currently closed for pickup.");
+                        return;
+                      }
 
-                  if (!isOpen) {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text("${branch['name']} is currently closed for pickup."),
-                      backgroundColor: Colors.red,
-                      duration: Duration(seconds: 3),
-                    ));
-                    return;
-                  }
+                      setState(() {
+                        _currentBranchIds = [branch['id']!];
+                        _isDefaultNearest = false;
+                        _areAllBranchesClosed = false;
+                        _notifiedOutOfStockItems.clear();
+                        _isFirstStockCheck = true;
+                      });
 
-                  setState(() {
-                    _currentBranchIds = [branch['id']!];
-                    _isDefaultNearest = false;
-                    _areAllBranchesClosed = false;
-                    _notifiedOutOfStockItems.clear();
-                    _isFirstStockCheck = true;
-                  });
+                      await _loadDrinks();
+                      await _loadEstimatedTime();
+                      await loadDeliveryFee(branch['id']!);
 
-                  await _loadDrinks();
-                  await _loadEstimatedTime();
-                  await loadDeliveryFee(branch['id']!);
+                      if (_orderType == 'pickup') {
+                        await _calculateDistanceForPickup();
+                      }
 
-                  if (_orderType == 'pickup') {
-                    await _calculateDistanceForPickup();
-                  }
-
-                  Navigator.pop(context);
-                },
-              )),
+                      Navigator.pop(context);
+                    },
+                  )),
           ],
         ),
       ),
@@ -2570,7 +2711,8 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  void _showAddressBottomSheet(Function(String label, String fullAddress) onAddressSelected) {
+  void _showAddressBottomSheet(
+      Function(String label, String fullAddress) onAddressSelected) {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.email == null) return;
 
@@ -2579,28 +2721,45 @@ class _CartScreenState extends State<CartScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => StreamBuilder<DocumentSnapshot>(
-        stream: FirebaseFirestore.instance.collection('Users').doc(user.email).snapshots(),
+        stream: FirebaseFirestore.instance
+            .collection('Users')
+            .doc(user.email)
+            .snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          if (!snapshot.hasData)
+            return const Center(child: CircularProgressIndicator());
 
-          final userData = (snapshot.data!.data() as Map<String, dynamic>?) ?? {};
-          final List<Map<String, dynamic>> addresses = ((userData['address'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+          final userData =
+              (snapshot.data!.data() as Map<String, dynamic>?) ?? {};
+          final List<Map<String, dynamic>> addresses =
+              ((userData['address'] as List?) ?? [])
+                  .map((e) => Map<String, dynamic>.from(e as Map))
+                  .toList();
 
           return StatefulBuilder(builder: (context, setModalState) {
             Future<void> _setDefaultAddress(int index) async {
-              if (addresses.isEmpty || index < 0 || index >= addresses.length) return;
+              if (addresses.isEmpty || index < 0 || index >= addresses.length)
+                return;
               for (int i = 0; i < addresses.length; i++) {
                 addresses[i]['isDefault'] = i == index;
               }
               setModalState(() {});
-              await FirebaseFirestore.instance.collection('Users').doc(user.email).update({'address': addresses});
+              await FirebaseFirestore.instance
+                  .collection('Users')
+                  .doc(user.email)
+                  .update({'address': addresses});
               final selected = addresses[index];
               final detailed = [
-                if ((selected['flat'] ?? '').toString().isNotEmpty) 'Flat ${selected['flat']}',
-                if ((selected['floor'] ?? '').toString().isNotEmpty) 'Floor ${selected['floor']}',
-                if ((selected['building'] ?? '').toString().isNotEmpty) 'Building ${selected['building']}',
-                if ((selected['street'] ?? '').toString().isNotEmpty) selected['street'],
-                if ((selected['city'] ?? '').toString().isNotEmpty) selected['city'],
+                if ((selected['flat'] ?? '').toString().isNotEmpty)
+                  'Flat ${selected['flat']}',
+                if ((selected['floor'] ?? '').toString().isNotEmpty)
+                  'Floor ${selected['floor']}',
+                if ((selected['building'] ?? '').toString().isNotEmpty)
+                  'Building ${selected['building']}',
+                if ((selected['street'] ?? '').toString().isNotEmpty)
+                  selected['street'],
+                if ((selected['city'] ?? '').toString().isNotEmpty)
+                  selected['city'],
               ].join(', ');
 
               if (mounted) {
@@ -2609,19 +2768,32 @@ class _CartScreenState extends State<CartScreen> {
                 });
               }
 
-              onAddressSelected((selected['label'] ?? 'Home').toString(), detailed);
+              onAddressSelected(
+                  (selected['label'] ?? 'Home').toString(), detailed);
               await _calculateAndUpdateDeliveryFee();
 
               if (Navigator.canPop(context)) Navigator.pop(context);
             }
 
             return Container(
-              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 24, left: 16, right: 16, top: 12),
-              decoration: const BoxDecoration(color: AppColors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+                  left: 16,
+                  right: 16,
+                  top: 12),
+              decoration: const BoxDecoration(
+                  color: AppColors.white,
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(24))),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+                  Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(2))),
                   const SizedBox(height: 20),
                   Text(
                     AppStrings.get('select_delivery_address', context),
@@ -2629,18 +2801,25 @@ class _CartScreenState extends State<CartScreen> {
                   ),
                   const SizedBox(height: 16),
                   if (addresses.isEmpty)
-                    Padding(padding: const EdgeInsets.symmetric(vertical: 32), child: Text(
-                      AppStrings.get('no_addresses_saved', context),
-                      style: AppTextStyles.bodyText2,
-                    ),)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 32),
+                      child: Text(
+                        AppStrings.get('no_addresses_saved', context),
+                        style: AppTextStyles.bodyText2,
+                      ),
+                    )
                   else
                     ...addresses.asMap().entries.map((entry) {
                       final address = entry.value;
                       final detailedAddress = [
-                        if ((address['flat'] ?? '').isNotEmpty) 'Flat ${address['flat']}',
-                        if ((address['floor'] ?? '').isNotEmpty) 'Floor ${address['floor']}',
-                        if ((address['building'] ?? '').isNotEmpty) 'Building ${address['building']}',
-                        if ((address['street'] ?? '').isNotEmpty) address['street'],
+                        if ((address['flat'] ?? '').isNotEmpty)
+                          'Flat ${address['flat']}',
+                        if ((address['floor'] ?? '').isNotEmpty)
+                          'Floor ${address['floor']}',
+                        if ((address['building'] ?? '').isNotEmpty)
+                          'Building ${address['building']}',
+                        if ((address['street'] ?? '').isNotEmpty)
+                          address['street'],
                         if ((address['city'] ?? '').isNotEmpty) address['city'],
                       ].join(', ');
                       final isDefault = address['isDefault'] == true;
@@ -2648,11 +2827,21 @@ class _CartScreenState extends State<CartScreen> {
                       return ListTile(
                         leading: CircleAvatar(
                           backgroundColor: AppColors.lightGrey,
-                          child: Icon(label == 'Home' ? Icons.home_outlined : Icons.work_outline, color: AppColors.primaryBlue),
+                          child: Icon(
+                              label == 'Home'
+                                  ? Icons.home_outlined
+                                  : Icons.work_outline,
+                              color: AppColors.primaryBlue),
                         ),
-                        title: Text(label, style: AppTextStyles.bodyText1.copyWith(fontWeight: FontWeight.bold)),
-                        subtitle: Text(detailedAddress, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        trailing: isDefault ? const Icon(Icons.check_circle, color: Colors.green) : null,
+                        title: Text(label,
+                            style: AppTextStyles.bodyText1
+                                .copyWith(fontWeight: FontWeight.bold)),
+                        subtitle: Text(detailedAddress,
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        trailing: isDefault
+                            ? const Icon(Icons.check_circle,
+                                color: Colors.green)
+                            : null,
                         onTap: () => _setDefaultAddress(entry.key),
                       );
                     }),
@@ -2662,16 +2851,23 @@ class _CartScreenState extends State<CartScreen> {
                     child: ElevatedButton(
                       onPressed: () {
                         Navigator.pop(context);
-                        Navigator.push(context, MaterialPageRoute(builder: (context) => const SavedAddressesScreen()));
+                        Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const SavedAddressesScreen()));
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.accentBlue.withOpacity(0.15),
                         foregroundColor: AppColors.primaryBlue,
                         elevation: 0,
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
                       ),
-                      child: Text('Manage Addresses', style: AppTextStyles.buttonText.copyWith(fontSize: 16)),
+                      child: Text('Manage Addresses',
+                          style:
+                              AppTextStyles.buttonText.copyWith(fontSize: 16)),
                     ),
                   ),
                 ],
@@ -2691,7 +2887,12 @@ class _CartScreenState extends State<CartScreen> {
           'paymentStatus': 'pending',
           'transactionId': 'no_payment',
           'paymentDate': FieldValue.serverTimestamp(),
-          'paymentDetails': {'method': 'cod', 'amount': amountQar, 'gateway': 'none', 'note': 'COD placeholder'},
+          'paymentDetails': {
+            'method': 'cod',
+            'amount': amountQar,
+            'gateway': 'none',
+            'note': 'COD placeholder'
+          },
         };
       case 'Card':
         return {
@@ -2699,7 +2900,12 @@ class _CartScreenState extends State<CartScreen> {
           'paymentStatus': 'pending',
           'transactionId': 'pending',
           'paymentDate': FieldValue.serverTimestamp(),
-          'paymentDetails': {'method': 'card', 'amount': amountQar, 'gateway': 'placeholder', 'note': 'Card placeholder'},
+          'paymentDetails': {
+            'method': 'card',
+            'amount': amountQar,
+            'gateway': 'placeholder',
+            'note': 'Card placeholder'
+          },
         };
       case 'Apple Pay':
         return {
@@ -2707,7 +2913,12 @@ class _CartScreenState extends State<CartScreen> {
           'paymentStatus': 'pending',
           'transactionId': 'pending',
           'paymentDate': FieldValue.serverTimestamp(),
-          'paymentDetails': {'method': 'apple_pay', 'amount': amountQar, 'gateway': 'placeholder', 'note': 'Apple Pay placeholder'},
+          'paymentDetails': {
+            'method': 'apple_pay',
+            'amount': amountQar,
+            'gateway': 'placeholder',
+            'note': 'Apple Pay placeholder'
+          },
         };
       default:
         return {
@@ -2715,7 +2926,12 @@ class _CartScreenState extends State<CartScreen> {
           'paymentStatus': 'pending',
           'transactionId': 'pending',
           'paymentDate': FieldValue.serverTimestamp(),
-          'paymentDetails': {'method': 'google_pay', 'amount': amountQar, 'gateway': 'placeholder', 'note': 'Google Pay placeholder'},
+          'paymentDetails': {
+            'method': 'google_pay',
+            'amount': amountQar,
+            'gateway': 'placeholder',
+            'note': 'Google Pay placeholder'
+          },
         };
     }
   }
@@ -2730,12 +2946,14 @@ class _CartScreenState extends State<CartScreen> {
     required String orderType,
   }) async {
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    final counterRef = FirebaseFirestore.instance.collection('daily_counters').doc(today);
+    final counterRef =
+        FirebaseFirestore.instance.collection('daily_counters').doc(today);
     final orderDoc = FirebaseFirestore.instance.collection('Orders').doc();
 
     return await FirebaseFirestore.instance.runTransaction((transaction) async {
       final counterSnap = await transaction.get(counterRef);
-      int dailyCount = counterSnap.exists ? (counterSnap.get('count') as int) + 1 : 1;
+      int dailyCount =
+          counterSnap.exists ? (counterSnap.get('count') as int) + 1 : 1;
       final paddedOrderNumber = dailyCount.toString().padLeft(3, '0');
       final String orderId = 'FD-$today-$paddedOrderNumber';
 
@@ -2758,7 +2976,8 @@ class _CartScreenState extends State<CartScreen> {
           'addons': item.addons,
           'total': item.finalPrice * item.quantity,
           if (item.couponCode != null) 'couponCode': item.couponCode,
-          if (item.couponDiscount != null) 'couponDiscount': item.couponDiscount,
+          if (item.couponDiscount != null)
+            'couponDiscount': item.couponDiscount,
           if (item.couponId != null) 'couponId': item.couponId,
         };
       }).toList();
@@ -2784,9 +3003,12 @@ class _CartScreenState extends State<CartScreen> {
         'paymentStatus': 'pending',
         'riderPaymentAmount': riderPaymentAmount,
         'branchIds': _currentBranchIds,
-        if (cartService.appliedCoupon != null) 'couponCode': cartService.appliedCoupon!.code,
-        if (cartService.appliedCoupon != null) 'couponDiscount': cartService.couponDiscount,
-        if (cartService.appliedCoupon != null) 'couponId': cartService.appliedCoupon!.id,
+        if (cartService.appliedCoupon != null)
+          'couponCode': cartService.appliedCoupon!.code,
+        if (cartService.appliedCoupon != null)
+          'couponDiscount': cartService.couponDiscount,
+        if (cartService.appliedCoupon != null)
+          'couponId': cartService.appliedCoupon!.id,
       };
 
       transaction.set(orderDoc, orderData);
@@ -2794,7 +3016,8 @@ class _CartScreenState extends State<CartScreen> {
     });
   }
 
-  Future<void> _handleSuccessfulPayment(DocumentReference orderDoc, Map<String, dynamic> paymentVerification) async {
+  Future<void> _handleSuccessfulPayment(DocumentReference orderDoc,
+      Map<String, dynamic> paymentVerification) async {
     await orderDoc.update({
       'status': 'pending',
       'paymentStatus': 'paid',
@@ -2803,7 +3026,8 @@ class _CartScreenState extends State<CartScreen> {
     });
 
     final cartService = CartService();
-    if (cartService.appliedCoupon != null && FirebaseAuth.instance.currentUser?.email != null) {
+    if (cartService.appliedCoupon != null &&
+        FirebaseAuth.instance.currentUser?.email != null) {
       await FirebaseFirestore.instance.collection('coupon_usage').add({
         'couponId': cartService.appliedCoupon!.id,
         'userId': FirebaseAuth.instance.currentUser!.email,
@@ -2827,9 +3051,11 @@ class _CartScreenState extends State<CartScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.check_circle, color: AppColors.primaryBlue, size: 60),
+            const Icon(Icons.check_circle,
+                color: AppColors.primaryBlue, size: 60),
             const SizedBox(height: 16),
-            Text(AppStrings.get('order_confirmed', context), style: AppTextStyles.headline2),
+            Text(AppStrings.get('order_confirmed', context),
+                style: AppTextStyles.headline2),
             const SizedBox(height: 8),
             Text(
               AppStrings.get('order_received_success', context),
@@ -2842,7 +3068,9 @@ class _CartScreenState extends State<CartScreen> {
             StreamBuilder<DocumentSnapshot>(
               stream: FirebaseFirestore.instance
                   .collection('Branch')
-                  .doc(_currentBranchIds.isNotEmpty ? _currentBranchIds.first : 'Old_Airport')
+                  .doc(_currentBranchIds.isNotEmpty
+                      ? _currentBranchIds.first
+                      : 'Old_Airport')
                   .snapshots(),
               builder: (context, snapshot) {
                 // Default to the ID if loading or no data
@@ -2852,10 +3080,13 @@ class _CartScreenState extends State<CartScreen> {
 
                 if (snapshot.hasData && snapshot.data!.exists) {
                   final data = snapshot.data!.data() as Map<String, dynamic>;
-                  final isArabic = Provider.of<LanguageProvider>(context).isArabic;
+                  final isArabic =
+                      Provider.of<LanguageProvider>(context).isArabic;
 
                   // 1. If Arabic is selected AND 'name_ar' exists in Firebase, use it
-                  if (isArabic && data['name_ar'] != null && data['name_ar'].toString().isNotEmpty) {
+                  if (isArabic &&
+                      data['name_ar'] != null &&
+                      data['name_ar'].toString().isNotEmpty) {
                     displayBranchName = data['name_ar'];
                   }
                   // 2. Otherwise, try to use the English 'name' field if it exists
@@ -2877,16 +3108,20 @@ class _CartScreenState extends State<CartScreen> {
               child: ElevatedButton(
                 onPressed: () {
                   Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (_) => const MainApp(initialIndex: 0)),
-                        (route) => false,
+                    MaterialPageRoute(
+                        builder: (_) => const MainApp(initialIndex: 0)),
+                    (route) => false,
                   );
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryBlue,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
                 ),
-                child: Text('Back to Menu', style: AppTextStyles.buttonText.copyWith(color: AppColors.white)),
+                child: Text('Back to Menu',
+                    style: AppTextStyles.buttonText
+                        .copyWith(color: AppColors.white)),
               ),
             ),
           ],
@@ -2957,12 +3192,13 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
         final data = menuItemSnap.data()!;
         _imageUrl = data['imageUrl'] ?? '';
 
-        final outOfStockBranches = List<String>.from(data['outOfStockBranches'] ?? []);
+        final outOfStockBranches =
+            List<String>.from(data['outOfStockBranches'] ?? []);
         final isAvailable = data['isAvailable'] ?? true;
 
         // Check availability against the CURRENT branch ID passed from parent
-        final isAvailableInBranch = isAvailable &&
-            !outOfStockBranches.contains(widget.currentBranchId);
+        final isAvailableInBranch =
+            isAvailable && !outOfStockBranches.contains(widget.currentBranchId);
 
         if (mounted) {
           setState(() {
@@ -2978,7 +3214,6 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
             mounted &&
             !widget.notifiedOutOfStockItems.contains(widget.item.id) &&
             !_hasShownDialog) {
-
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && !_hasShownDialog) {
               _showOutOfStockDialog();
@@ -3012,7 +3247,8 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
           children: [
             Icon(Icons.inventory_2_outlined, color: Colors.orange, size: 24),
             const SizedBox(width: 8),
-            Text(AppStrings.get('item_unavailable_title', context), style: AppTextStyles.headline2),
+            Text(AppStrings.get('item_unavailable_title', context),
+                style: AppTextStyles.headline2),
           ],
         ),
         content: Column(
@@ -3026,7 +3262,8 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
             const SizedBox(height: 8),
             Text(
               'Would you like to remove it from your cart?',
-              style: AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade600),
+              style:
+                  AppTextStyles.bodyText2.copyWith(color: Colors.grey.shade600),
             ),
           ],
         ),
@@ -3076,11 +3313,12 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
   Widget build(BuildContext context) {
     final item = widget.item;
     final bool hasDiscount = item.discountedPrice != null;
-    final double displayPrice = hasDiscount ? item.discountedPrice! : item.price;
-    final isArabic = Provider.of<LanguageProvider>(context, listen: false).isArabic;
-    final itemName = isArabic && (item.nameAr.isNotEmpty ?? false)
-        ? item.nameAr
-        : item.name;
+    final double displayPrice =
+        hasDiscount ? item.discountedPrice! : item.price;
+    final isArabic =
+        Provider.of<LanguageProvider>(context, listen: false).isArabic;
+    final itemName =
+        isArabic && (item.nameAr.isNotEmpty ?? false) ? item.nameAr : item.name;
 
     return Dismissible(
       key: ValueKey(item.id),
@@ -3097,7 +3335,8 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
             end: Alignment.centerRight,
           ),
         ),
-        child: const Icon(Icons.delete_sweep_outlined, color: Colors.white, size: 32),
+        child: const Icon(Icons.delete_sweep_outlined,
+            color: Colors.white, size: 32),
       ),
       child: Container(
         padding: const EdgeInsets.all(12),
@@ -3109,8 +3348,18 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
               ? null
               : Border.all(color: Colors.orange.withOpacity(0.5), width: 1.5),
           boxShadow: _isItemAvailable
-              ? [BoxShadow(color: AppColors.primaryBlue.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 4))]
-              : [BoxShadow(color: Colors.orange.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 2))],
+              ? [
+                  BoxShadow(
+                      color: AppColors.primaryBlue.withOpacity(0.05),
+                      blurRadius: 15,
+                      offset: const Offset(0, 4))
+                ]
+              : [
+                  BoxShadow(
+                      color: Colors.orange.withOpacity(0.1),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2))
+                ],
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3125,21 +3374,24 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
                     height: 70,
                     child: _imageUrl.isNotEmpty
                         ? CachedNetworkImage(
-                      imageUrl: _imageUrl,
-                      fit: BoxFit.cover,
-                      placeholder: (context, url) => Container(
-                        color: AppColors.lightGrey,
-                        child: const Icon(Icons.fastfood_outlined, color: Colors.grey),
-                      ),
-                      errorWidget: (context, url, error) => Container(
-                        color: AppColors.lightGrey,
-                        child: const Icon(Icons.fastfood_outlined, color: Colors.grey),
-                      ),
-                    )
+                            imageUrl: _imageUrl,
+                            fit: BoxFit.cover,
+                            placeholder: (context, url) => Container(
+                              color: AppColors.lightGrey,
+                              child: const Icon(Icons.fastfood_outlined,
+                                  color: Colors.grey),
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              color: AppColors.lightGrey,
+                              child: const Icon(Icons.fastfood_outlined,
+                                  color: Colors.grey),
+                            ),
+                          )
                         : Container(
-                      color: AppColors.lightGrey,
-                      child: const Icon(Icons.fastfood_outlined, color: Colors.grey),
-                    ),
+                            color: AppColors.lightGrey,
+                            child: const Icon(Icons.fastfood_outlined,
+                                color: Colors.grey),
+                          ),
                   ),
                 ),
                 if (!_isItemAvailable)
@@ -3170,7 +3422,9 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
                           itemName,
                           style: AppTextStyles.bodyText1.copyWith(
                             fontWeight: FontWeight.bold,
-                            color: _isItemAvailable ? AppColors.darkGrey : Colors.grey,
+                            color: _isItemAvailable
+                                ? AppColors.darkGrey
+                                : Colors.grey,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -3182,12 +3436,14 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
                           height: 16,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(AppColors.primaryBlue),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                                AppColors.primaryBlue),
                           ),
                         )
                       else if (!_isItemAvailable)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
                             color: Colors.orange,
                             borderRadius: BorderRadius.circular(6),
@@ -3227,7 +3483,9 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
-                                color: _isItemAvailable ? Colors.green : Colors.grey,
+                                color: _isItemAvailable
+                                    ? Colors.green
+                                    : Colors.grey,
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -3250,7 +3508,8 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
                         if (_isItemAvailable) const SizedBox(height: 4),
                         if (_isItemAvailable)
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
                               color: Colors.green.withOpacity(0.1),
                               borderRadius: BorderRadius.circular(4),
@@ -3274,7 +3533,9 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: _isItemAvailable ? AppColors.primaryBlue : Colors.grey,
+                        color: _isItemAvailable
+                            ? AppColors.primaryBlue
+                            : Colors.grey,
                       ),
                     ),
                   if (!_isItemAvailable) ...[
@@ -3282,16 +3543,19 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
                     GestureDetector(
                       onTap: _handleOutOfStockTap,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
                           color: Colors.orange.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                          border:
+                              Border.all(color: Colors.orange.withOpacity(0.3)),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.info_outline, color: Colors.orange, size: 14),
+                            Icon(Icons.info_outline,
+                                color: Colors.orange, size: 14),
                             const SizedBox(width: 4),
                             Text(
                               'Tap for options',
@@ -3373,7 +3637,8 @@ class _CartItemWidgetState extends State<_CartItemWidget> {
             ),
           ),
           InkWell(
-            onTap: () => widget.cartService.updateQuantity(item.id, item.quantity + 1),
+            onTap: () =>
+                widget.cartService.updateQuantity(item.id, item.quantity + 1),
             borderRadius: BorderRadius.circular(20),
             child: const Padding(
               padding: EdgeInsets.all(6.0),
@@ -3404,7 +3669,7 @@ class _DrinkCardState extends State<_DrinkCard> {
   void updateDrinkQuantity(int change) {
     final cartService = CartService();
     final currentItem = cartService.items.firstWhere(
-          (item) => item.id == widget.drink.id,
+      (item) => item.id == widget.drink.id,
       orElse: () => CartModel(
         id: widget.drink.id,
         name: widget.drink.name,
@@ -3416,11 +3681,13 @@ class _DrinkCardState extends State<_DrinkCard> {
       ),
     );
 
-    final isAvailable = widget.drink.isAvailableInBranch(widget.currentBranchIds.first);
+    final isAvailable =
+        widget.drink.isAvailableInBranch(widget.currentBranchIds.first);
     if (!isAvailable) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("${widget.drink.name} is not available in selected branch"),
+          content:
+              Text("${widget.drink.name} is not available in selected branch"),
           backgroundColor: Colors.orange,
         ),
       );
@@ -3446,7 +3713,7 @@ class _DrinkCardState extends State<_DrinkCard> {
       builder: (context, child) {
         final cartService = CartService();
         final cartItem = cartService.items.firstWhere(
-              (item) => item.id == widget.drink.id,
+          (item) => item.id == widget.drink.id,
           orElse: () => CartModel(
             id: widget.drink.id,
             name: '',
@@ -3458,7 +3725,8 @@ class _DrinkCardState extends State<_DrinkCard> {
         );
 
         int quantity = cartItem.quantity;
-        final isAvailable = widget.drink.isAvailableInBranch(widget.currentBranchIds.first);
+        final isAvailable =
+            widget.drink.isAvailableInBranch(widget.currentBranchIds.first);
 
         final drinkName = widget.drink.getLocalizedName(context);
 
@@ -3481,7 +3749,8 @@ class _DrinkCardState extends State<_DrinkCard> {
             children: [
               Expanded(
                 child: ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(16)),
                   child: Stack(
                     children: [
                       Opacity(
@@ -3490,7 +3759,8 @@ class _DrinkCardState extends State<_DrinkCard> {
                           imageUrl: widget.drink.imageUrl,
                           fit: BoxFit.cover,
                           width: double.infinity,
-                          placeholder: (context, url) => Container(color: AppColors.lightGrey),
+                          placeholder: (context, url) =>
+                              Container(color: AppColors.lightGrey),
                           errorWidget: (context, url, error) => const Icon(
                             Icons.local_drink_outlined,
                             size: 40,
@@ -3518,7 +3788,8 @@ class _DrinkCardState extends State<_DrinkCard> {
                           left: 0,
                           right: 0,
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
                             color: Colors.red.withOpacity(0.9),
                             child: const Text(
                               "Remove from cart",
@@ -3536,7 +3807,8 @@ class _DrinkCardState extends State<_DrinkCard> {
                           top: 8,
                           left: 8,
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
                               color: Colors.green,
                               borderRadius: BorderRadius.circular(8),
@@ -3555,7 +3827,6 @@ class _DrinkCardState extends State<_DrinkCard> {
                   ),
                 ),
               ),
-
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
                 child: Column(
@@ -3577,7 +3848,8 @@ class _DrinkCardState extends State<_DrinkCard> {
                         children: [
                           Text(
                             // UPDATED: Localized price
-                            AppStrings.formatPrice(widget.drink.discountedPrice!, context),
+                            AppStrings.formatPrice(
+                                widget.drink.discountedPrice!, context),
                             style: AppTextStyles.bodyText1.copyWith(
                               color: isAvailable ? Colors.green : Colors.grey,
                               fontWeight: FontWeight.w600,
@@ -3598,7 +3870,8 @@ class _DrinkCardState extends State<_DrinkCard> {
                         // UPDATED: Localized price
                         AppStrings.formatPrice(widget.drink.price, context),
                         style: AppTextStyles.bodyText1.copyWith(
-                          color: isAvailable ? AppColors.primaryBlue : Colors.grey,
+                          color:
+                              isAvailable ? AppColors.primaryBlue : Colors.grey,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -3617,7 +3890,6 @@ class _DrinkCardState extends State<_DrinkCard> {
                   ],
                 ),
               ),
-
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                 child: _buildAddButton(
@@ -3635,11 +3907,11 @@ class _DrinkCardState extends State<_DrinkCard> {
   }
 
   Widget _buildAddButton(
-      MenuItem item,
-      String currentBranchId,
-      Function(int) onUpdateQuantity,
-      int currentQuantity,
-      ) {
+    MenuItem item,
+    String currentBranchId,
+    Function(int) onUpdateQuantity,
+    int currentQuantity,
+  ) {
     final isAvailable = item.isAvailableInBranch(currentBranchId);
 
     if (!isAvailable) {
@@ -3650,7 +3922,8 @@ class _DrinkCardState extends State<_DrinkCard> {
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.grey.shade300,
             disabledBackgroundColor: Colors.grey.shade300,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             padding: const EdgeInsets.symmetric(vertical: 8),
           ),
           child: Text(
@@ -3666,52 +3939,54 @@ class _DrinkCardState extends State<_DrinkCard> {
 
     return currentQuantity == 0
         ? SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: () => onUpdateQuantity(1),
-        icon: const Icon(Icons.add_shopping_cart, size: 18),
-        label: Text(
-          // UPDATED: Localized text for Add
-          AppStrings.get('add', context),
-          style: AppTextStyles.buttonText.copyWith(fontSize: 14),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primaryBlue,
-          foregroundColor: AppColors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          padding: const EdgeInsets.symmetric(vertical: 8),
-        ),
-      ),
-    )
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => onUpdateQuantity(1),
+              icon: const Icon(Icons.add_shopping_cart, size: 18),
+              label: Text(
+                // UPDATED: Localized text for Add
+                AppStrings.get('add', context),
+                style: AppTextStyles.buttonText.copyWith(fontSize: 14),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryBlue,
+                foregroundColor: AppColors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+              ),
+            ),
+          )
         : Container(
-      height: 40,
-      decoration: BoxDecoration(
-        color: AppColors.primaryBlue,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          IconButton(
-            onPressed: () => onUpdateQuantity(-1),
-            icon: const Icon(Icons.remove),
-            color: AppColors.white,
-            iconSize: 20,
-          ),
-          Text(
-            // UPDATED: Localized quantity
-            AppStrings.formatNumber(currentQuantity, context),
-            style: AppTextStyles.buttonText.copyWith(color: AppColors.white),
-          ),
-          IconButton(
-            onPressed: () => onUpdateQuantity(1),
-            icon: const Icon(Icons.add),
-            color: AppColors.white,
-            iconSize: 20,
-          ),
-        ],
-      ),
-    );
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppColors.primaryBlue,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                IconButton(
+                  onPressed: () => onUpdateQuantity(-1),
+                  icon: const Icon(Icons.remove),
+                  color: AppColors.white,
+                  iconSize: 20,
+                ),
+                Text(
+                  // UPDATED: Localized quantity
+                  AppStrings.formatNumber(currentQuantity, context),
+                  style:
+                      AppTextStyles.buttonText.copyWith(color: AppColors.white),
+                ),
+                IconButton(
+                  onPressed: () => onUpdateQuantity(1),
+                  icon: const Icon(Icons.add),
+                  color: AppColors.white,
+                  iconSize: 20,
+                ),
+              ],
+            ),
+          );
   }
 }
 
@@ -3802,30 +4077,27 @@ class CartService extends ChangeNotifier {
   }
 
   Future<void> addToCartWithStockCheck(
-      MenuItem menuItem, {
-        int quantity = 1,
-        required String branchId,
-        Map<String, dynamic>? variants,
-        List<String>? addons,
-      }) async {
+    MenuItem menuItem, {
+    int quantity = 1,
+    required String branchId,
+    Map<String, dynamic>? variants,
+    List<String>? addons,
+  }) async {
     if (!menuItem.isAvailableInBranch(branchId)) {
-      throw Exception('${menuItem.name} is not available in the selected branch');
+      throw Exception(
+          '${menuItem.name} is not available in the selected branch');
     }
 
-    await addToCart(
-        menuItem,
-        quantity: quantity,
-        variants: variants,
-        addons: addons
-    );
+    await addToCart(menuItem,
+        quantity: quantity, variants: variants, addons: addons);
   }
 
   Future<void> addToCart(
-      MenuItem menuItem, {
-        int quantity = 1,
-        Map<String, dynamic>? variants,
-        List<String>? addons,
-      }) async {
+    MenuItem menuItem, {
+    int quantity = 1,
+    Map<String, dynamic>? variants,
+    List<String>? addons,
+  }) async {
     final existingIndex = _items.indexWhere((item) => item.id == menuItem.id);
     if (existingIndex >= 0) {
       _items[existingIndex].quantity += quantity;
@@ -3862,7 +4134,8 @@ class CartService extends ChangeNotifier {
         }
 
         final menuItemData = menuItemSnap.data()!;
-        final outOfStockBranches = List<String>.from(menuItemData['outOfStockBranches'] ?? []);
+        final outOfStockBranches =
+            List<String>.from(menuItemData['outOfStockBranches'] ?? []);
         final isAvailable = menuItemData['isAvailable'] as bool? ?? true;
 
         bool isAvailableInAnyBranch = false;
@@ -3906,7 +4179,8 @@ class CartService extends ChangeNotifier {
         }
 
         final menuItemData = menuItemSnap.data()!;
-        final outOfStockBranches = List<String>.from(menuItemData['outOfStockBranches'] ?? []);
+        final outOfStockBranches =
+            List<String>.from(menuItemData['outOfStockBranches'] ?? []);
         final isAvailable = menuItemData['isAvailable'] as bool? ?? true;
 
         bool isAvailableInAnyBranch = false;
@@ -3918,9 +4192,9 @@ class CartService extends ChangeNotifier {
         }
 
         if (!isAvailableInAnyBranch) {
-          throw Exception('${item.name} is out of stock in all selected branches');
+          throw Exception(
+              '${item.name} is out of stock in all selected branches');
         }
-
       } catch (e) {
         debugPrint('Stock validation error for ${item.name}: $e');
         rethrow;
@@ -3931,7 +4205,8 @@ class CartService extends ChangeNotifier {
   void startStockMonitoring(List<String> branchIds) {
     _stockMonitorTimer?.cancel();
 
-    _stockMonitorTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
+    _stockMonitorTimer =
+        Timer.periodic(const Duration(seconds: 30), (timer) async {
       final outOfStockItems = await getOutOfStockItems(branchIds);
       if (outOfStockItems.isNotEmpty) {
         notifyListeners();
@@ -4061,7 +4336,7 @@ class CartService extends ChangeNotifier {
 
   int getItemQuantity(String itemId) {
     final item = _items.firstWhere(
-          (item) => item.id == itemId,
+      (item) => item.id == itemId,
       orElse: () => CartModel(
         id: '',
         name: '',

@@ -78,11 +78,14 @@ class _OrderScreenState extends State<OrdersScreen> {
     String key = rawReason.toLowerCase().trim();
     if (key.isEmpty) return '';
 
-    if (key.contains('stock')) return AppStrings.get('items_out_of_stock', context);
+    if (key.contains('stock'))
+      return AppStrings.get('items_out_of_stock', context);
     if (key.contains('busy')) return AppStrings.get('kitchen_busy', context);
     if (key.contains('clos')) return AppStrings.get('closing_soon', context);
-    if (key.contains('address')) return AppStrings.get('invalid_address', context);
-    if (key.contains('request')) return AppStrings.get('customer_request', context);
+    if (key.contains('address'))
+      return AppStrings.get('invalid_address', context);
+    if (key.contains('request'))
+      return AppStrings.get('customer_request', context);
     if (key.contains('other')) return AppStrings.get('other', context);
 
     return AppStrings.get(key, context) != key
@@ -98,7 +101,8 @@ class _OrderScreenState extends State<OrdersScreen> {
         .orderBy('timestamp', descending: true);
 
     if (_selectedFilterKey != 'all') {
-      query = query.where('status', isEqualTo: _selectedFilterKey.toLowerCase());
+      query =
+          query.where('status', isEqualTo: _selectedFilterKey.toLowerCase());
     }
 
     return query;
@@ -135,7 +139,7 @@ class _OrderScreenState extends State<OrdersScreen> {
 
     try {
       Query<Map<String, dynamic>> query =
-      _buildBaseQuery(user).limit(_pageSize);
+          _buildBaseQuery(user).limit(_pageSize);
       if (_lastDoc != null) {
         query = query.startAfterDocument(_lastDoc!);
       }
@@ -147,20 +151,18 @@ class _OrderScreenState extends State<OrdersScreen> {
         _lastDoc = docs.last;
         final newOrders = docs.map((doc) {
           final data = doc.data();
-          final String? customerName = (data['customerName'] ??
-              data['customer_name'] ??
-              data['name'])
-              ?.toString()
-              .trim();
+          final String? customerName =
+              (data['customerName'] ?? data['customer_name'] ?? data['name'])
+                  ?.toString()
+                  .trim();
 
           return {
             ...data,
             'id': doc.id,
             'items':
-            (data['items'] as List? ?? []).cast<Map<String, dynamic>>(),
+                (data['items'] as List? ?? []).cast<Map<String, dynamic>>(),
             'timestamp': data['timestamp'],
-            'statusDisplay':
-            _formatOrderStatus(data['status'] as String?),
+            'statusDisplay': _formatOrderStatus(data['status'] as String?),
             'customerName': customerName,
           };
         }).toList();
@@ -192,23 +194,26 @@ class _OrderScreenState extends State<OrdersScreen> {
       _filteredOrders = searchQuery.isEmpty
           ? List<Map<String, dynamic>>.from(_allOrders)
           : _allOrders.where((order) {
-        final items =
-        (order['items'] as List).cast<Map<String, dynamic>>();
-        return items.any((item) {
-          final name = (item['name'] as String? ?? '').toLowerCase();
-          final nameAr = (item['name_ar'] as String? ?? '').toLowerCase();
-          return name.contains(searchQuery) || nameAr.contains(searchQuery);
-        });
-      }).toList();
+              final items =
+                  (order['items'] as List).cast<Map<String, dynamic>>();
+              return items.any((item) {
+                final name = (item['name'] as String? ?? '').toLowerCase();
+                final nameAr = (item['name_ar'] as String? ?? '').toLowerCase();
+                return name.contains(searchQuery) ||
+                    nameAr.contains(searchQuery);
+              });
+            }).toList();
     });
   }
 
   String _formatOrderStatus(String? status) {
-    if (status == null || status.isEmpty) return AppStrings.get('unknown', context);
+    if (status == null || status.isEmpty)
+      return AppStrings.get('unknown', context);
     return status
         .replaceAll('_', ' ')
         .split(' ')
-        .map((word) => word.isNotEmpty ? word[0].toUpperCase() + word.substring(1) : '')
+        .map((word) =>
+            word.isNotEmpty ? word[0].toUpperCase() + word.substring(1) : '')
         .join(' ');
   }
 
@@ -225,7 +230,10 @@ class _OrderScreenState extends State<OrdersScreen> {
         return Colors.green.shade600;
       case 'cancelled':
       case 'rejected':
+      case 'refund_rejected':
         return Colors.red.shade600;
+      case 'refunded':
+        return Colors.deepPurple.shade600;
       default:
         return Colors.grey.shade600;
     }
@@ -404,14 +412,26 @@ class _OrderScreenState extends State<OrdersScreen> {
     final items = (order['items'] as List).cast<Map<String, dynamic>>();
     final orderType = order['Order_type'] as String? ?? 'delivery';
     final restaurantAddress = order['restaurantAddress'] as String? ?? '';
-    final status = order['status'] as String?;
+
+    // Compute effective status based on refundRequest
+    String status = order['status'] as String? ?? '';
+    final refundRequest = order['refundRequest'] as Map<String, dynamic>?;
+    if (refundRequest != null) {
+      final refundStatus = refundRequest['status'] as String? ?? 'pending';
+      if (refundStatus == 'accepted') {
+        status = 'refunded';
+      } else if (refundStatus == 'rejected') {
+        status = 'refund_rejected';
+      }
+    }
 
     final timestamp = order['timestamp'] as Timestamp?;
     String formattedDate = '--';
     if (timestamp != null) {
       final isArabic = Provider.of<LanguageProvider>(context).isArabic;
       final locale = isArabic ? 'ar' : 'en';
-      final dateStr = DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
+      final dateStr =
+          DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
       formattedDate = AppStrings.formatNumber(dateStr, context);
     }
 
@@ -424,7 +444,8 @@ class _OrderScreenState extends State<OrdersScreen> {
       return "${AppStrings.formatNumber(qty, context)}x $displayName";
     }).join(', ');
 
-    final isCancelled = status?.toLowerCase() == 'cancelled' || status?.toLowerCase() == 'rejected';
+    final isCancelled = status.toLowerCase() == 'cancelled' ||
+        status.toLowerCase() == 'rejected';
     final cancellationReason = order['cancellationReason'] as String? ?? '';
 
     final statusColor = _getStatusColor(status);
@@ -467,8 +488,8 @@ class _OrderScreenState extends State<OrdersScreen> {
                     orderType.toLowerCase() == 'delivery'
                         ? Icons.delivery_dining
                         : orderType.toLowerCase() == 'dine-in'
-                        ? Icons.restaurant
-                        : Icons.takeout_dining,
+                            ? Icons.restaurant
+                            : Icons.takeout_dining,
                     color: Colors.grey.shade700,
                   ),
                   const SizedBox(width: 12),
@@ -533,13 +554,13 @@ class _OrderScreenState extends State<OrdersScreen> {
                 children: [
                   Container(
                     padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
                       color: statusColor.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      order['statusDisplay'] as String? ?? AppStrings.get('unknown', context),
+                      _formatOrderStatus(status),
                       style: TextStyle(
                         fontSize: 12,
                         color: statusColor,
@@ -554,12 +575,12 @@ class _OrderScreenState extends State<OrdersScreen> {
                   ),
                 ],
               ),
-
               if (isCancelled && cancellationReason.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: Colors.red.shade50,
                     borderRadius: BorderRadius.circular(8),
@@ -567,16 +588,19 @@ class _OrderScreenState extends State<OrdersScreen> {
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.info_outline, size: 16, color: Colors.red.shade700),
+                      Icon(Icons.info_outline,
+                          size: 16, color: Colors.red.shade700),
                       const SizedBox(width: 8),
                       Expanded(
                         child: RichText(
                           text: TextSpan(
-                            style: TextStyle(fontSize: 13, color: Colors.red.shade900),
+                            style: TextStyle(
+                                fontSize: 13, color: Colors.red.shade900),
                             children: [
                               TextSpan(
                                 text: '${AppStrings.get('reason', context)}: ',
-                                style: const TextStyle(fontWeight: FontWeight.bold),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
                               ),
                               TextSpan(
                                 text: _getLocalizedReason(cancellationReason),
@@ -589,14 +613,13 @@ class _OrderScreenState extends State<OrdersScreen> {
                   ),
                 ),
               ],
-
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
                   onPressed: () {
                     final cartService =
-                    Provider.of<CartService>(context, listen: false);
+                        Provider.of<CartService>(context, listen: false);
                     for (var itemData in items) {
                       final menuItem = MenuItem(
                         id: itemData['itemId'] ?? UniqueKey().toString(),
@@ -611,7 +634,8 @@ class _OrderScreenState extends State<OrdersScreen> {
                         isPopular: false,
                         sortOrder: 0,
                         tags: itemData['tags'] as Map<String, dynamic>? ?? {},
-                        variants: itemData['variants'] as Map<String, dynamic>? ?? {},
+                        variants:
+                            itemData['variants'] as Map<String, dynamic>? ?? {},
                         outOfStockBranches: [],
                       );
                       cartService.addToCart(
@@ -669,7 +693,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     _currentOrder = widget.order;
     _listenToOrderUpdates();
     // Initialize Future once to avoid re-fetching on build
-    _restaurantGeoFuture = _fetchRestaurantGeo(_currentOrder['restaurantId'] as String? ?? 'Old_Airport');
+    _restaurantGeoFuture = _fetchRestaurantGeo(
+        _currentOrder['restaurantId'] as String? ?? 'Old_Airport');
   }
 
   void _listenToOrderUpdates() {
@@ -688,14 +713,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     });
   }
 
-  Future<void> _checkRefundStatusAndCleanup(Map<String, dynamic> orderData) async {
+  Future<void> _checkRefundStatusAndCleanup(
+      Map<String, dynamic> orderData) async {
     final refundRequest = orderData['refundRequest'] as Map<String, dynamic>?;
     if (refundRequest == null) return;
 
-    final status = refundRequest['status'] as String? ?? 'pending';
+    final refundStatus = refundRequest['status'] as String? ?? 'pending';
     final imageUrl = refundRequest['imageUrl'] as String?;
 
-    if ((status == 'accepted' || status == 'rejected') &&
+    // Clean up refund image after decision is made
+    if ((refundStatus == 'accepted' || refundStatus == 'rejected') &&
         imageUrl != null &&
         imageUrl.isNotEmpty) {
       try {
@@ -713,6 +740,21 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         debugPrint("Error cleaning up refund image: $e");
       }
     }
+  }
+
+  /// Returns the effective display status based on the order status and refund request
+  String _getEffectiveStatus() {
+    final refundRequest =
+        _currentOrder['refundRequest'] as Map<String, dynamic>?;
+    if (refundRequest != null) {
+      final refundStatus = refundRequest['status'] as String? ?? 'pending';
+      if (refundStatus == 'accepted') {
+        return 'refunded';
+      } else if (refundStatus == 'rejected') {
+        return 'refund_rejected';
+      }
+    }
+    return _currentOrder['status'] as String? ?? '';
   }
 
   // --- Strict Logic for Tracking Status ---
@@ -741,11 +783,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     String key = rawReason.toLowerCase().trim();
     if (key.isEmpty) return '';
 
-    if (key.contains('stock')) return AppStrings.get('items_out_of_stock', context);
+    if (key.contains('stock'))
+      return AppStrings.get('items_out_of_stock', context);
     if (key.contains('busy')) return AppStrings.get('kitchen_busy', context);
     if (key.contains('clos')) return AppStrings.get('closing_soon', context);
-    if (key.contains('address')) return AppStrings.get('invalid_address', context);
-    if (key.contains('request')) return AppStrings.get('customer_request', context);
+    if (key.contains('address'))
+      return AppStrings.get('invalid_address', context);
+    if (key.contains('request'))
+      return AppStrings.get('customer_request', context);
     if (key.contains('other')) return AppStrings.get('other', context);
 
     return AppStrings.get(key, context) != key
@@ -755,7 +800,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   void _reorderItems(BuildContext context) {
     final cartService = Provider.of<CartService>(context, listen: false);
-    final items = (_currentOrder['items'] as List? ?? []).cast<Map<String, dynamic>>();
+    final items =
+        (_currentOrder['items'] as List? ?? []).cast<Map<String, dynamic>>();
 
     if (items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -767,7 +813,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     for (var itemData in items) {
       final dynamic rawAddons = itemData['addons'];
       final List<String> addonsList =
-      rawAddons is List ? rawAddons.map((e) => e.toString()).toList() : [];
+          rawAddons is List ? rawAddons.map((e) => e.toString()).toList() : [];
 
       final menuItem = MenuItem(
         id: itemData['itemId'] ?? UniqueKey().toString(),
@@ -824,7 +870,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
   Future<GeoPoint?> _fetchRestaurantGeo(String branchId) async {
-    final doc = await FirebaseFirestore.instance.collection('Branch').doc(branchId).get();
+    final doc = await FirebaseFirestore.instance
+        .collection('Branch')
+        .doc(branchId)
+        .get();
     return doc.data()?['address']?['geolocation'] as GeoPoint?;
   }
 
@@ -835,7 +884,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!ok && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(AppStrings.get('could_not_open_dialer', context))),
+          SnackBar(
+              content: Text(AppStrings.get('could_not_open_dialer', context))),
         );
       }
     } catch (e) {
@@ -847,7 +897,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
-  List<Widget> _buildOrderItems(BuildContext context, List<Map<String, dynamic>> items) {
+  List<Widget> _buildOrderItems(
+      BuildContext context, List<Map<String, dynamic>> items) {
     if (items.isEmpty) {
       return [Text(AppStrings.get('no_items_in_order', context))];
     }
@@ -857,8 +908,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     return items.map((item) {
       final price = (item['price'] as num?)?.toDouble() ?? 0.0;
       final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
-      final double? discountedPrice = (item['discountedPrice'] as num?)?.toDouble();
-      final effectivePrice = (discountedPrice != null && discountedPrice > 0 && discountedPrice < price)
+      final double? discountedPrice =
+          (item['discountedPrice'] as num?)?.toDouble();
+      final effectivePrice = (discountedPrice != null &&
+              discountedPrice > 0 &&
+              discountedPrice < price)
           ? discountedPrice
           : price;
       final itemTotal = effectivePrice * quantity;
@@ -879,14 +933,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 children: [
                   Text(
                     '${AppStrings.formatNumber(quantity, context)} x $displayName',
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w500),
                   ),
                   if (effectivePrice < price)
                     Padding(
                       padding: const EdgeInsets.only(top: 2.0),
                       child: Text(
                         '${AppStrings.get('unit_price', context)} ${AppStrings.formatPrice(effectivePrice, context)}',
-                        style: TextStyle(fontSize: 12, color: Colors.green.shade700),
+                        style: TextStyle(
+                            fontSize: 12, color: Colors.green.shade700),
                       ),
                     ),
                 ],
@@ -897,7 +953,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               children: [
                 Text(
                   AppStrings.formatPrice(itemTotal, context),
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w500),
                 ),
                 if (effectivePrice < price)
                   Text(
@@ -918,24 +975,29 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final items = (_currentOrder['items'] as List? ?? []).cast<Map<String, dynamic>>();
-    final status = _currentOrder['status'] as String? ?? 'pending';
+    final items =
+        (_currentOrder['items'] as List? ?? []).cast<Map<String, dynamic>>();
+    final status = _getEffectiveStatus();
     final statusColor = _getStatusColor(status);
     final orderId = _currentOrder['orderId'] as String? ?? '';
     final riderId = _currentOrder['riderId'] as String? ?? '';
-    final userGeo = _currentOrder['deliveryAddress']?['geolocation'] as GeoPoint?;
+    final userGeo =
+        _currentOrder['deliveryAddress']?['geolocation'] as GeoPoint?;
 
     final timestamp = _currentOrder['timestamp'] as Timestamp?;
     String formattedDate = '--';
     if (timestamp != null) {
       final isArabic = Provider.of<LanguageProvider>(context).isArabic;
       final locale = isArabic ? 'ar' : 'en';
-      final dateStr = DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
+      final dateStr =
+          DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
       formattedDate = AppStrings.formatNumber(dateStr, context);
     }
 
-    final isCancelled = status.toLowerCase() == 'cancelled' || status.toLowerCase() == 'rejected';
-    final cancellationReason = _currentOrder['cancellationReason'] as String? ?? '';
+    final isCancelled = status.toLowerCase() == 'cancelled' ||
+        status.toLowerCase() == 'rejected';
+    final cancellationReason =
+        _currentOrder['cancellationReason'] as String? ?? '';
 
     final orderNumber = orderId.split('-').last.padLeft(3, '0');
     final displayOrderId = AppStrings.formatNumber(orderNumber, context);
@@ -944,10 +1006,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final statusClean = statusRaw.toLowerCase().trim();
 
     // Allow 'delivered' and 'completed' as valid refund states
-    final bool canRefund = statusClean == 'delivered' || statusClean == 'completed';
+    final bool canRefund =
+        statusClean == 'delivered' || statusClean == 'completed';
 
     // FIX FOR MAP LAG: Strict check. Only show map if order is active.
-    final bool trackingActive = riderId.isNotEmpty && _isTrackingActiveStatus(statusClean);
+    final bool trackingActive =
+        riderId.isNotEmpty && _isTrackingActiveStatus(statusClean);
     final bool showMap = trackingActive;
     final bool showDriverInfo = trackingActive;
 
@@ -956,7 +1020,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         refundRequestData is Map &&
         refundRequestData.isNotEmpty;
 
-    final refundRequestMap = hasActiveRefundRequest ? refundRequestData as Map<String, dynamic> : null;
+    final refundRequestMap = hasActiveRefundRequest
+        ? refundRequestData as Map<String, dynamic>
+        : null;
 
     Widget liveMapSection = const SizedBox.shrink();
     if (showMap) {
@@ -971,7 +1037,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               borderRadius: BorderRadius.circular(16),
               clipBehavior: Clip.antiAlias,
               child: LiveTrackingMap(
-                driverRef: FirebaseFirestore.instance.collection('Drivers').doc(riderId),
+                driverRef: FirebaseFirestore.instance
+                    .collection('Drivers')
+                    .doc(riderId),
                 userGeo: userGeo,
                 restaurantGeo: restaurantGeo,
               ),
@@ -983,8 +1051,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
     Widget driverDetailsSection = const SizedBox.shrink();
     if (showDriverInfo) {
-      driverDetailsSection = StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance.collection('Drivers').doc(riderId).snapshots(),
+      driverDetailsSection =
+          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('Drivers')
+            .doc(riderId)
+            .snapshots(),
         builder: (context, snap) {
           if (!snap.hasData || !(snap.data?.exists ?? false)) {
             return const SizedBox.shrink();
@@ -1006,7 +1078,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   CircleAvatar(
                     radius: 24,
                     backgroundColor: Colors.grey.shade200,
-                    backgroundImage: imageUrl.isNotEmpty ? NetworkImage(imageUrl) : null,
+                    backgroundImage:
+                        imageUrl.isNotEmpty ? NetworkImage(imageUrl) : null,
                     child: imageUrl.isEmpty
                         ? const Icon(Icons.person, color: Colors.grey)
                         : null,
@@ -1040,7 +1113,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   ),
                   const SizedBox(width: 12),
                   ElevatedButton.icon(
-                    onPressed: phone.isEmpty ? null : () => _callDriver(phone, context),
+                    onPressed: phone.isEmpty
+                        ? null
+                        : () => _callDriver(phone, context),
                     icon: const Icon(Icons.phone, size: 18),
                     label: Text(AppStrings.get('call', context)),
                     style: ElevatedButton.styleFrom(
@@ -1077,7 +1152,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             foregroundColor: Colors.white,
             elevation: 0,
             flexibleSpace: FlexibleSpaceBar(
-              titlePadding: const EdgeInsets.only(left: 16, right: 16, bottom: 60),
+              titlePadding:
+                  const EdgeInsets.only(left: 16, right: 16, bottom: 60),
               title: Text(
                 'Order #$displayOrderId',
                 style: const TextStyle(
@@ -1116,14 +1192,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     padding: const EdgeInsets.only(bottom: 16.0),
                     child: Text(
                       '${AppStrings.get('placed_on', context)} $formattedDate',
-                      style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                      style:
+                          TextStyle(fontSize: 14, color: Colors.grey.shade600),
                     ),
                   ),
                 ),
-
                 if (refundRequestMap != null)
                   _buildRefundStatusCard(refundRequestMap),
-
                 if (isCancelled && cancellationReason.isNotEmpty)
                   Container(
                     margin: const EdgeInsets.only(bottom: 16),
@@ -1138,7 +1213,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.cancel_outlined, color: Colors.red.shade700),
+                            Icon(Icons.cancel_outlined,
+                                color: Colors.red.shade700),
                             const SizedBox(width: 8),
                             Text(
                               AppStrings.get('order_cancelled', context),
@@ -1153,20 +1229,23 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                         const SizedBox(height: 8),
                         RichText(
                           text: TextSpan(
-                            style: TextStyle(color: Colors.red.shade900, fontSize: 14),
+                            style: TextStyle(
+                                color: Colors.red.shade900, fontSize: 14),
                             children: [
                               TextSpan(
                                 text: '${AppStrings.get('reason', context)}: ',
-                                style: const TextStyle(fontWeight: FontWeight.bold),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
                               ),
-                              TextSpan(text: _getLocalizedReason(cancellationReason, context)),
+                              TextSpan(
+                                  text: _getLocalizedReason(
+                                      cancellationReason, context)),
                             ],
                           ),
                         ),
                       ],
                     ),
                   ),
-
                 liveMapSection,
                 if (showDriverInfo) ...[
                   driverDetailsSection,
@@ -1189,7 +1268,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: _buildActionButtons(context, canRefund, hasActiveRefundRequest),
+      bottomNavigationBar:
+          _buildActionButtons(context, canRefund, hasActiveRefundRequest),
     );
   }
 
@@ -1254,7 +1334,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           const SizedBox(height: 8),
           Text(
             '${AppStrings.get('reason', context)}: ${refundRequest['reason']}',
-            style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.black54),
+            style: const TextStyle(
+                fontStyle: FontStyle.italic, color: Colors.black54),
           ),
         ],
       ),
@@ -1295,14 +1376,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   Widget _buildPaymentSummary(BuildContext context) {
     final subtotal = (_currentOrder['subtotal'] as num?)?.toDouble() ?? 0.0;
-    final totalAmount = (_currentOrder['totalAmount'] as num?)?.toDouble() ?? 0.0;
+    final totalAmount =
+        (_currentOrder['totalAmount'] as num?)?.toDouble() ?? 0.0;
     final transactionId = _currentOrder['transactionId'] as String?;
 
     return Column(
       children: [
         _buildPriceRow(context, AppStrings.get('subtotal', context), subtotal),
-
-        if (transactionId != null && transactionId.isNotEmpty && transactionId != 'no_payment') ...[
+        if (transactionId != null &&
+            transactionId.isNotEmpty &&
+            transactionId != 'no_payment') ...[
           const SizedBox(height: 8),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 4.0),
@@ -1325,14 +1408,15 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             ),
           ),
         ],
-
         const Divider(height: 24),
-        _buildPriceRow(context, AppStrings.get('total', context), totalAmount, isBold: true),
+        _buildPriceRow(context, AppStrings.get('total', context), totalAmount,
+            isBold: true),
       ],
     );
   }
 
-  Widget _buildPriceRow(BuildContext context, String label, double amount, {bool isBold = false}) {
+  Widget _buildPriceRow(BuildContext context, String label, double amount,
+      {bool isBold = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
@@ -1354,7 +1438,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     );
   }
 
-  Widget _buildActionButtons(BuildContext context, bool canRefund, bool hasActiveRefundRequest) {
+  Widget _buildActionButtons(
+      BuildContext context, bool canRefund, bool hasActiveRefundRequest) {
     return Container(
       padding: EdgeInsets.fromLTRB(
         16,
@@ -1388,51 +1473,54 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           Expanded(
             child: (canRefund && !hasActiveRefundRequest)
                 ? ElevatedButton.icon(
-              onPressed: _showRefundRequestDialog,
-              icon: const Icon(Icons.undo_rounded, size: 18, color: Colors.white),
-              label: Text(
-                AppStrings.get('request_refund', context),
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryBlue,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-            )
+                    onPressed: _showRefundRequestDialog,
+                    icon: const Icon(Icons.undo_rounded,
+                        size: 18, color: Colors.white),
+                    label: Text(
+                      AppStrings.get('request_refund', context),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryBlue,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                  )
                 : ElevatedButton.icon(
-              onPressed: () {
-                final dailyOrderNumber = _currentOrder['dailyOrderNumber']?.toString() ?? '';
-                const supportNumber = '919152822169';
-                final msg = 'Hello, I need help with order #$dailyOrderNumber';
-                _contactOnWhatsApp(
-                  rawPhoneE164NoPlus: supportNumber,
-                  message: msg,
-                );
-              },
-              icon: const FaIcon(
-                FontAwesomeIcons.whatsapp,
-                color: Colors.white,
-                size: 18,
-              ),
-              label: Text(AppStrings.get('contact_us', context)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF25D366),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-            ),
+                    onPressed: () {
+                      final dailyOrderNumber =
+                          _currentOrder['dailyOrderNumber']?.toString() ?? '';
+                      const supportNumber = '919152822169';
+                      final msg =
+                          'Hello, I need help with order #$dailyOrderNumber';
+                      _contactOnWhatsApp(
+                        rawPhoneE164NoPlus: supportNumber,
+                        message: msg,
+                      );
+                    },
+                    icon: const FaIcon(
+                      FontAwesomeIcons.whatsapp,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                    label: Text(AppStrings.get('contact_us', context)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF25D366),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                  ),
           ),
         ],
       ),
@@ -1450,6 +1538,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       case 'ready':
       case 'delivered':
         return Colors.green.shade600;
+      case 'refunded':
+        return Colors.deepPurple.shade600;
+      case 'refund_rejected':
+        return Colors.red.shade600;
       default:
         return Colors.grey.shade600;
     }
@@ -1468,7 +1560,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 // --- Refund Dialog (Box) with Isolated State ---
 class RefundRequestDialog extends StatefulWidget {
   final String orderId;
-  const RefundRequestDialog({Key? key, required this.orderId}) : super(key: key);
+  const RefundRequestDialog({Key? key, required this.orderId})
+      : super(key: key);
 
   @override
   State<RefundRequestDialog> createState() => _RefundRequestDialogState();
@@ -1516,7 +1609,8 @@ class _RefundRequestDialogState extends State<RefundRequestDialog> {
     setState(() => _isUploadingRefund = true);
 
     try {
-      final String fileName = 'refund_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final String fileName =
+          'refund_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final ref = FirebaseStorage.instance
           .ref()
           .child('refund_images')
@@ -1592,7 +1686,8 @@ class _RefundRequestDialogState extends State<RefundRequestDialog> {
                       color: AppColors.primaryBlue.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Icon(Icons.undo_rounded, color: AppColors.primaryBlue, size: 24),
+                    child: Icon(Icons.undo_rounded,
+                        color: AppColors.primaryBlue, size: 24),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -1630,7 +1725,8 @@ class _RefundRequestDialogState extends State<RefundRequestDialog> {
                   style: const TextStyle(fontSize: 16),
                   decoration: InputDecoration(
                     hintText: AppStrings.get('refund_reason_hint', context),
-                    hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                    hintStyle:
+                        TextStyle(color: Colors.grey.shade400, fontSize: 14),
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.all(16),
                   ),
@@ -1657,49 +1753,52 @@ class _RefundRequestDialogState extends State<RefundRequestDialog> {
                     color: Colors.grey.shade50,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: _refundImage != null ? Colors.transparent : Colors.grey.shade300,
+                      color: _refundImage != null
+                          ? Colors.transparent
+                          : Colors.grey.shade300,
                       width: 1.5,
                     ),
                     image: _refundImage != null
                         ? DecorationImage(
-                      image: FileImage(_refundImage!),
-                      fit: BoxFit.cover,
-                    )
+                            image: FileImage(_refundImage!),
+                            fit: BoxFit.cover,
+                          )
                         : null,
                   ),
                   child: _refundImage == null
                       ? Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.add_a_photo_outlined,
-                          size: 32, color: Colors.grey.shade400),
-                      const SizedBox(height: 8),
-                      Text(
-                        AppStrings.get('attach_image', context),
-                        style: TextStyle(
-                          color: Colors.grey.shade500,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  )
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.add_a_photo_outlined,
+                                size: 32, color: Colors.grey.shade400),
+                            const SizedBox(height: 8),
+                            Text(
+                              AppStrings.get('attach_image', context),
+                              style: TextStyle(
+                                color: Colors.grey.shade500,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        )
                       : Stack(
-                    children: [
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.6),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.edit, color: Colors.white, size: 16),
+                          children: [
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.6),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.edit,
+                                    color: Colors.white, size: 16),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
-                  ),
                 ),
               ),
               const SizedBox(height: 32),
@@ -1729,7 +1828,8 @@ class _RefundRequestDialogState extends State<RefundRequestDialog> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: _isUploadingRefund ? null : _submitRefundRequest,
+                      onPressed:
+                          _isUploadingRefund ? null : _submitRefundRequest,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primaryBlue,
                         foregroundColor: Colors.white,
@@ -1741,20 +1841,20 @@ class _RefundRequestDialogState extends State<RefundRequestDialog> {
                       ),
                       child: _isUploadingRefund
                           ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
                           : Text(
-                        AppStrings.get('submit_request', context),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                        ),
-                      ),
+                              AppStrings.get('submit_request', context),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                              ),
+                            ),
                     ),
                   ),
                 ],
@@ -1783,7 +1883,8 @@ class LiveTrackingMap extends StatefulWidget {
   State<LiveTrackingMap> createState() => _LiveTrackingMapState();
 }
 
-class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderStateMixin {
+class _LiveTrackingMapState extends State<LiveTrackingMap>
+    with TickerProviderStateMixin {
   late final MapController _map;
   late final AnimationController _pulseController;
   late final Animation<double> _pulseAnimation;
@@ -1906,7 +2007,8 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
       points.add(LatLng(widget.userGeo!.latitude, widget.userGeo!.longitude));
     }
     if (widget.restaurantGeo != null) {
-      points.add(LatLng(widget.restaurantGeo!.latitude, widget.restaurantGeo!.longitude));
+      points.add(LatLng(
+          widget.restaurantGeo!.latitude, widget.restaurantGeo!.longitude));
     }
 
     if (points.length > 1) {
@@ -1970,7 +2072,8 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
         point: _driverPos!,
         width: 50,
         height: 50,
-        child: _modernBadge(Icons.directions_car_filled, Colors.blue, isPulsing: true),
+        child: _modernBadge(Icons.directions_car_filled, Colors.blue,
+            isPulsing: true),
       ),
     ];
 
@@ -2040,7 +2143,8 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
               left: 0,
               right: 0,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
@@ -2054,7 +2158,8 @@ class _LiveTrackingMapState extends State<LiveTrackingMap> with TickerProviderSt
                 child: Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.9),
                         borderRadius: BorderRadius.circular(20),
