@@ -521,6 +521,31 @@ class _OrderScreenState extends State<OrdersScreen> {
                       ],
                     ),
                   ),
+                  if (((order['restaurantId'] as String?)?.isNotEmpty ==
+                          true) ||
+                      (order['branchIds'] is List &&
+                          (order['branchIds'] as List).isNotEmpty)) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Text(
+                        ((order['restaurantId'] as String?) ??
+                                (order['branchIds'] as List).first.toString())
+                            .replaceAll('_', ' '),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
               const Divider(height: 24, color: Colors.black12),
@@ -757,15 +782,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     return _currentOrder['status'] as String? ?? '';
   }
 
-  // --- Strict Logic for Tracking Status ---
-  bool _isTrackingActiveStatus(String statusClean) {
-    return statusClean == 'pending' ||
-        statusClean == 'confirmed' ||
-        statusClean == 'preparing' ||
-        statusClean == 'on_the_way' ||
-        statusClean == 'on the way';
-  }
-
   void _showRefundRequestDialog() {
     // Using showDialog ("the box") as requested, but logic is in a separate widget
     // to prevent this screen from rebuilding heavily on typing.
@@ -979,7 +995,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         (_currentOrder['items'] as List? ?? []).cast<Map<String, dynamic>>();
     final status = _getEffectiveStatus();
     final statusColor = _getStatusColor(status);
-    final orderId = _currentOrder['orderId'] as String? ?? '';
     final riderId = _currentOrder['riderId'] as String? ?? '';
     final userGeo =
         _currentOrder['deliveryAddress']?['geolocation'] as GeoPoint?;
@@ -999,8 +1014,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final cancellationReason =
         _currentOrder['cancellationReason'] as String? ?? '';
 
-    final orderNumber = orderId.split('-').last.padLeft(3, '0');
-    final displayOrderId = AppStrings.formatNumber(orderNumber, context);
+    final dailyOrderNumber = _currentOrder['dailyOrderNumber']?.toString();
+    final displayOrderId = dailyOrderNumber != null
+        ? AppStrings.formatNumber(dailyOrderNumber, context)
+        : 'Processing...';
 
     final statusRaw = _currentOrder['status'] as String? ?? '';
     final statusClean = statusRaw.toLowerCase().trim();
@@ -1009,11 +1026,15 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final bool canRefund =
         statusClean == 'delivered' || statusClean == 'completed';
 
-    // FIX FOR MAP LAG: Strict check. Only show map if order is active.
-    final bool trackingActive =
-        riderId.isNotEmpty && _isTrackingActiveStatus(statusClean);
-    final bool showMap = trackingActive;
-    final bool showDriverInfo = trackingActive;
+    // Restored map logic: Show map unless delivered/cancelled (or refunded)
+    final bool isCompleted = statusClean == 'delivered' ||
+        statusClean == 'cancelled' ||
+        statusClean == 'rejected' ||
+        statusClean == 'refunded' ||
+        statusClean == 'refund_rejected';
+
+    final bool showMap = riderId.isNotEmpty && !isCompleted;
+    final bool showDriverInfo = riderId.isNotEmpty && !isCompleted;
 
     final refundRequestData = _currentOrder['refundRequest'];
     final bool hasActiveRefundRequest = refundRequestData != null &&
@@ -1187,6 +1208,42 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             padding: const EdgeInsets.all(16.0),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
+                if (_currentOrder['restaurantId'] != null ||
+                    (_currentOrder['branchIds'] is List &&
+                        (_currentOrder['branchIds'] as List).isNotEmpty))
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryBlue.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.store,
+                                size: 14, color: AppColors.primaryBlue),
+                            const SizedBox(width: 6),
+                            Text(
+                              ((_currentOrder['restaurantId'] as String?) ??
+                                      (_currentOrder['branchIds'] as List)
+                                          .first
+                                          .toString())
+                                  .replaceAll('_', ' '),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primaryBlue,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 Center(
                   child: Padding(
                     padding: const EdgeInsets.only(bottom: 16.0),

@@ -45,12 +45,16 @@ class _HomeScreenState extends State<HomeScreen>
 
   // Carousel
   final PageController _pageController = PageController();
+  final PageController _bottomBarController = PageController();
   List<String> _carouselImages = [];
   int _currentPage = 0;
   Timer? _carouselTimer;
 
   final Set<String> _processedCancelledOrders = {};
   StreamSubscription? _cancellationSubscription;
+
+  final Set<String> _processedDeliveredOrders = {};
+  StreamSubscription? _deliverySubscription;
 
   // Categories and menu
   List<MenuCategory> _categories = [];
@@ -340,6 +344,7 @@ class _HomeScreenState extends State<HomeScreen>
     _initializeScreen();
     _setupOrdersStream();
     _setupCancellationListener();
+    _setupDeliveryListener();
 
     _bounceController = AnimationController(
       duration: const Duration(milliseconds: 800),
@@ -425,7 +430,10 @@ class _HomeScreenState extends State<HomeScreen>
     _categoryBarController.dispose();
     _activeCategoryIndexNotifier.dispose();
     _menuItemsSubscription?.cancel();
+    _menuItemsSubscription?.cancel();
     _cancellationSubscription?.cancel();
+    _deliverySubscription?.cancel();
+    _bottomBarController.dispose();
     super.dispose();
   }
 
@@ -496,6 +504,150 @@ class _HomeScreenState extends State<HomeScreen>
         }
       }
     });
+  }
+
+  Future<void> _setupDeliveryListener() async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final lastShownId = prefs.getString('last_delivered_popup_id');
+
+    if (lastShownId != null) {
+      _processedDeliveredOrders.add(lastShownId);
+    }
+
+    _deliverySubscription = _firestore
+        .collection('Orders')
+        .where('customerId', isEqualTo: user.email)
+        .where('status', isEqualTo: 'delivered')
+        .orderBy('timestamp', descending: true)
+        .limit(1)
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.docs.isNotEmpty) {
+        final doc = snapshot.docs.first;
+        final orderId = doc.id;
+        final data = doc.data();
+        final timestamp = data['timestamp'] as Timestamp?;
+
+        if (!_processedDeliveredOrders.contains(orderId)) {
+          // Check recency (e.g., delivered within last 24 hours to avoid showing ancient orders)
+          // If no timestamp, skip or assume recent? Assume recent if it just appeared in snapshot.
+          bool isRecent = true;
+          if (timestamp != null) {
+            final now = DateTime.now();
+            final date = timestamp.toDate();
+            if (now.difference(date).inHours > 24) {
+              isRecent = false;
+            }
+          }
+
+          if (isRecent) {
+            _processedDeliveredOrders.add(orderId);
+            prefs.setString('last_delivered_popup_id', orderId);
+
+            if (mounted) {
+              _showDeliverySuccessDialog(timestamp);
+            }
+          } else {
+            // Mark as processed anyway to stop checking it
+            _processedDeliveredOrders.add(orderId);
+            prefs.setString('last_delivered_popup_id', orderId);
+          }
+        }
+      }
+    });
+  }
+
+  void _showDeliverySuccessDialog(Timestamp? createdAt) {
+    String timeText = '';
+    if (createdAt != null) {
+      final duration = DateTime.now().difference(createdAt.toDate());
+      final minutes = duration.inMinutes; // e.g. 45
+      // If minutes is very small (e.g. 0), display "< 1 min"
+      if (minutes < 1) {
+        timeText = "We reached you in < 1 minute!";
+      } else {
+        timeText = "We reached you in $minutes minutes!";
+      }
+    } else {
+      timeText = "Order Delivered!";
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: true, // Allow user to dismiss easily
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        contentPadding:
+            const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TweenAnimationBuilder<double>(
+              duration: const Duration(milliseconds: 800),
+              tween: Tween(begin: 0.0, end: 1.0),
+              curve: Curves.elasticOut,
+              builder: (context, value, child) {
+                return Transform.scale(
+                  scale: value,
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.check_rounded,
+                        color: Colors.green, size: 50),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Enjoy your meal!',
+              style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              timeText,
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryBlue,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  elevation: 0,
+                ),
+                child: const Text(
+                  'Great!',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white),
+                ),
+              ),
+            )
+          ],
+        ),
+      ),
+    );
   }
 
   // NEW: Helper to map raw reason text to localized AppStrings
@@ -1659,8 +1811,6 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget buildCartAndOrderBar() {
-    final pageController = PageController();
-
     return StreamBuilder<List<Order>>(
       stream: ordersStream,
       builder: (context, orderSnapshot) {
@@ -1693,19 +1843,19 @@ class _HomeScreenState extends State<HomeScreen>
               mainAxisSize: MainAxisSize.min,
               children: [
                 SizedBox(
-                  height: 100,
+                  height: 80,
                   child: PageView(
-                    controller: pageController,
+                    controller: _bottomBarController,
                     children: pages,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 SmoothPageIndicator(
-                  controller: pageController,
+                  controller: _bottomBarController,
                   count: pages.length,
                   effect: ScrollingDotsEffect(
-                    dotHeight: 8,
-                    dotWidth: 8,
+                    dotHeight: 6,
+                    dotWidth: 6,
                     activeDotColor: AppColors.primaryBlue,
                     dotColor: Colors.grey.shade300,
                   ),
@@ -2897,18 +3047,6 @@ class _PopularItemCard extends StatelessWidget {
                                 cart.addToCart(item);
 
                                 HapticFeedback.lightImpact();
-
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                        '${item.getLocalizedName(context)} added to cart'),
-                                    duration: const Duration(seconds: 1),
-                                    behavior: SnackBarBehavior.floating,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                  ),
-                                );
                               },
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
@@ -3186,12 +3324,6 @@ class _MenuItemCardState extends State<MenuItemCard> {
 
   void _addItemToCart(MenuItem item, CartService cartService) {
     cartService.addToCart(item);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${item.getLocalizedName(context)} added to cart'),
-        duration: const Duration(seconds: 1),
-      ),
-    );
   }
 
   int _getItemCount(CartService cartService) {
@@ -3730,18 +3862,6 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     }
 
     Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          // UPDATED: Localized quantity in snackbar
-          '${AppStrings.formatNumber(quantity, context)}x ${widget.item.getLocalizedName(context)} ${existingQty == 0 ? "added" : "updated"}',
-          style: const TextStyle(fontSize: 14),
-        ),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        duration: const Duration(seconds: 2),
-      ),
-    );
   }
 
   Widget _buildOutOfStockOverlay() {
