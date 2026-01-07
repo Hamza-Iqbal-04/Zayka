@@ -1575,7 +1575,10 @@ class _CartScreenState extends State<CartScreen> {
 
   /// Build closing countdown banner showing time until restaurant closes
   Widget _buildClosingCountdownBanner() {
-    if (_timeUntilClose == null) return const SizedBox.shrink();
+    // Only show if closing within 1 hour (60 minutes)
+    if (_timeUntilClose == null || _timeUntilClose!.inMinutes > 60) {
+      return const SizedBox.shrink();
+    }
 
     final isArabic =
         Provider.of<LanguageProvider>(context, listen: false).isArabic;
