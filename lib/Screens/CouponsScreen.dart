@@ -21,7 +21,6 @@ class _CouponsScreenState extends State<CouponsScreen> {
   bool _isLoading = true;
   String? _error;
 
-
   @override
   void initState() {
     super.initState();
@@ -342,21 +341,21 @@ class _CouponsScreenState extends State<CouponsScreen> {
                 decoration: BoxDecoration(
                   gradient: isValid
                       ? LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Colors.white,
-                      AppColors.primaryBlue.withOpacity(0.02),
-                    ],
-                  )
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Colors.white,
+                            AppColors.primaryBlue.withOpacity(0.02),
+                          ],
+                        )
                       : LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Colors.grey.shade50,
-                      Colors.grey.shade100,
-                    ],
-                  ),
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Colors.grey.shade50,
+                            Colors.grey.shade100,
+                          ],
+                        ),
                   border: Border.all(
                     color: isValid
                         ? AppColors.primaryBlue.withOpacity(0.3)
@@ -386,21 +385,21 @@ class _CouponsScreenState extends State<CouponsScreen> {
                                     gradient: LinearGradient(
                                       colors: isValid
                                           ? [
-                                        AppColors.primaryBlue,
-                                        AppColors.primaryBlue
-                                            .withOpacity(0.8),
-                                      ]
+                                              AppColors.primaryBlue,
+                                              AppColors.primaryBlue
+                                                  .withOpacity(0.8),
+                                            ]
                                           : [
-                                        Colors.grey.shade400,
-                                        Colors.grey.shade500,
-                                      ],
+                                              Colors.grey.shade400,
+                                              Colors.grey.shade500,
+                                            ],
                                     ),
                                     borderRadius: BorderRadius.circular(12),
                                     boxShadow: [
                                       BoxShadow(
                                         color: isValid
                                             ? AppColors.primaryBlue
-                                            .withOpacity(0.3)
+                                                .withOpacity(0.3)
                                             : Colors.grey.withOpacity(0.2),
                                         blurRadius: 8,
                                         offset: const Offset(0, 4),
@@ -552,18 +551,18 @@ class _CouponsScreenState extends State<CouponsScreen> {
                               borderRadius: BorderRadius.circular(16),
                               boxShadow: isValid
                                   ? [
-                                BoxShadow(
-                                  color: AppColors.primaryBlue
-                                      .withOpacity(0.3),
-                                  blurRadius: 12,
-                                  offset: const Offset(0, 6),
-                                ),
-                              ]
+                                      BoxShadow(
+                                        color: AppColors.primaryBlue
+                                            .withOpacity(0.3),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 6),
+                                      ),
+                                    ]
                                   : null,
                             ),
                             child: ElevatedButton(
                               onPressed:
-                              isValid ? () => _applyCoupon(coupon) : null,
+                                  isValid ? () => _applyCoupon(coupon) : null,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: isValid
                                     ? AppColors.primaryBlue
@@ -631,7 +630,7 @@ class _CouponsScreenState extends State<CouponsScreen> {
         builder: (ctx) {
           return AlertDialog(
             shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             backgroundColor: Colors.white,
             title: Row(
               children: [
@@ -670,7 +669,8 @@ class _CouponsScreenState extends State<CouponsScreen> {
                 onPressed: () {
                   Navigator.of(ctx).pop(); // close dialog
                   BottomNavController.index.value = 3; // Cart tab
-                  Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
+                  Navigator.of(context, rootNavigator: true)
+                      .popUntil((r) => r.isFirst);
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryBlue,
@@ -696,7 +696,7 @@ class _CouponsScreenState extends State<CouponsScreen> {
         useRootNavigator: true,
         builder: (ctx) => AlertDialog(
           shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           backgroundColor: Colors.white,
           title: Row(
             children: [
