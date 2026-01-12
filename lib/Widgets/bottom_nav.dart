@@ -35,7 +35,6 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
   bool _isRestaurantOpen = true;
   bool _isLoading = true;
   int _cartItemCount = 0;
-  DateTime? _lastPressedTime;
 
   @override
   void initState() {
@@ -159,11 +158,9 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
     return Consumer<CartService>(
       builder: (context, cart, child) {
         return PopScope(
-          canPop: _currentIndex == 0,
+          canPop: false,
           onPopInvokedWithResult: (bool didPop, Object? result) {
             if (didPop) return;
-
-            final now = DateTime.now();
 
             // 1. If not on Home tab, go to Home
             if (_currentIndex != 0) {
@@ -173,36 +170,73 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
               return;
             }
 
-            // 2. If on Home tab, check double-press to exit
-            if (_lastPressedTime == null ||
-                now.difference(_lastPressedTime!) >
-                    const Duration(seconds: 2)) {
-              // First press (or timed out) -> Show Toast
-              _lastPressedTime = now;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    "Press back again to exit",
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  backgroundColor: Colors.black87,
-                  duration: const Duration(seconds: 2),
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  margin: const EdgeInsets.only(
-                    bottom: 80, // Adjust to be above bottom nav
-                    left: 20,
-                    right: 20,
+            // 2. If on Home tab, show Exit Confirmation Dialog
+            showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
+                title: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.logout_rounded,
+                        color: Colors.red,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'Exit App',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 20,
+                      ),
+                    ),
+                  ],
+                ),
+                content: const Text(
+                  'Are you sure you want to exit the application?',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.black87,
                   ),
                 ),
-              );
-              return;
-            }
-
-            // 3. Second press within 2 seconds -> Exit App
-            SystemNavigator.pop();
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.grey.shade700,
+                    ),
+                    child: const Text(
+                      'No, Stay',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => SystemNavigator.pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 10),
+                    ),
+                    child: const Text(
+                      'Yes, Exit',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            );
           },
           child: Scaffold(
             extendBody: true,

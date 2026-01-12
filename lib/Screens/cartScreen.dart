@@ -4533,3 +4533,70 @@ class CartService extends ChangeNotifier {
     super.dispose();
   }
 }
+
+// Add this class at the bottom of the file or in a separate widget file
+class LoadingOverlay extends StatelessWidget {
+  final bool isLoading;
+  final String? message;
+  final Widget child;
+
+  const LoadingOverlay({
+    Key? key,
+    required this.isLoading,
+    this.message,
+    required this.child,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        child,
+        if (isLoading)
+          AbsorbPointer(
+            absorbing: true,
+            child: Container(
+              color: Colors.black.withOpacity(0.5),
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 10,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(
+                          color: AppColors.primaryBlue),
+                      if (message != null) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          message!,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black87,
+                            decoration: TextDecoration.none,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
