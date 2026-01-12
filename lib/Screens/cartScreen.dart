@@ -1470,14 +1470,61 @@ class _CartScreenState extends State<CartScreen> {
   Widget build(BuildContext context) {
     final cartService = CartService();
 
-    return Scaffold(
-      backgroundColor: AppColors.lightGrey,
-      appBar: _buildAppBar(cartService),
-      body: !_isInitialized
-          ? _buildLoadingShimmer()
-          : cartService.items.isEmpty
-              ? _buildEmptyCartView()
-              : _buildCartContent(cartService),
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: AppColors.lightGrey,
+          appBar: _buildAppBar(cartService),
+          body: !_isInitialized
+              ? _buildLoadingShimmer()
+              : cartService.items.isEmpty
+                  ? _buildEmptyCartView()
+                  : _buildCartContent(cartService),
+        ),
+        if (_isCheckingOut || _isValidatingStock)
+          AbsorbPointer(
+            absorbing: true,
+            child: Container(
+              color: Colors.black.withOpacity(0.5), // Semi-transparent overlay
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                            AppColors.primaryBlue),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _isValidatingStock
+                            ? AppStrings.get('checking_stock', context)
+                            : AppStrings.get('processing', context),
+                        style: AppTextStyles.bodyText1.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.darkGrey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -1859,7 +1906,7 @@ class _CartScreenState extends State<CartScreen> {
             ElevatedButton.icon(
               icon: const Icon(Icons.restaurant_menu, color: Colors.white),
               label: Text(
-                'Browse Menu',
+                AppStrings.get('browse_menu', context),
                 style: AppTextStyles.buttonText.copyWith(
                   color: Colors.white,
                   fontSize: 16,

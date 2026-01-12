@@ -311,6 +311,33 @@ class AppStrings {
       // --- Working Hours / Closing Countdown ---
       'closing_in': 'Closing in',
       'restaurant_closing_soon': 'Restaurant closing soon - order now!',
+
+      // --- Coupons Page ---
+      'available_coupons_title': 'Available Coupons',
+      'loading_offers': 'Loading amazing offers...',
+      'failed_load_coupons': 'Failed to load coupons',
+      'try_again': 'Please try again later',
+      'no_coupons': 'No coupons available',
+      'check_back_later': 'Check back later for exciting offers!',
+      'apply_coupons_msg': 'Apply coupons to save more on your order!',
+      'off': 'OFF',
+      'on_orders_above': 'On orders above',
+      'on_all_orders': 'On all orders',
+      'valid_until': 'Valid until',
+      'code': 'CODE',
+      'not_applicable': 'Not applicable to current order',
+      'coupon_applied_title': 'Coupon Applied!',
+      'coupon_applied_msg': 'has been applied to your cart.',
+      'go_to_cart': 'Go to Cart',
+      'coupon_failed': 'Coupon Failed',
+      'failed_apply_coupon': 'Failed to apply coupon:',
+
+      // --- Navbar ---
+      'nav_home': 'Home',
+      'nav_orders': 'Orders',
+      'nav_offers': 'Offers',
+      'nav_cart': 'Cart',
+      'nav_profile': 'Profile',
     },
 
     // ========================================================================
@@ -581,6 +608,33 @@ class AppStrings {
       // --- Working Hours / Closing Countdown ---
       'closing_in': 'يغلق خلال',
       'restaurant_closing_soon': 'المطعم سيغلق قريباً - اطلب الآن!',
+
+      // --- Coupons Page ---
+      'available_coupons_title': 'القسائم المتاحة',
+      'loading_offers': 'جاري تحميل العروض مميزة...',
+      'failed_load_coupons': 'فشل تحميل القسائم',
+      'try_again': 'يرجى المحاولة مرة أخرى لاحقاً',
+      'no_coupons': 'لا توجد قسائم متاحة',
+      'check_back_later': 'تحقق لاحقاً من العروض المثيرة!',
+      'apply_coupons_msg': 'استخدم القسائم لتوفير المزيد على طلبك!',
+      'off': 'خصم',
+      'on_orders_above': 'على الطلبات فوق',
+      'on_all_orders': 'على جميع الطلبات',
+      'valid_until': 'صالح حتى',
+      'code': 'الرمز',
+      'not_applicable': 'غير صالح للطلب الحالي',
+      'coupon_applied_title': 'تم تطبيق القسيمة!',
+      'coupon_applied_msg': 'تم تطبيقه على سلتك.',
+      'go_to_cart': 'الذهاب للسلة',
+      'coupon_failed': 'فشلت القسيمة',
+      'failed_apply_coupon': 'فشل تطبيق القسيمة:',
+
+      // --- Navbar ---
+      'nav_home': 'الرئيسية',
+      'nav_orders': 'الطلبات',
+      'nav_offers': 'العروض',
+      'nav_cart': 'السلة',
+      'nav_profile': 'حسابي',
     },
   };
 

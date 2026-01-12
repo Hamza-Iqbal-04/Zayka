@@ -11,6 +11,7 @@ import 'package:mitra_da_dhaba/Screens/OrderScreen.dart';
 import 'package:mitra_da_dhaba/Screens/cartScreen.dart';
 import 'package:mitra_da_dhaba/Services/BranchService.dart';
 import 'package:geolocator/geolocator.dart';
+import '../Services/language_provider.dart';
 import 'models.dart';
 
 class BottomNavController {
@@ -34,6 +35,7 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
   bool _isRestaurantOpen = true;
   bool _isLoading = true;
   int _cartItemCount = 0;
+  DateTime? _lastPressedTime;
 
   @override
   void initState() {
@@ -161,13 +163,45 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
           onPopInvokedWithResult: (bool didPop, Object? result) {
             if (didPop) return;
 
+            final now = DateTime.now();
+
+            // 1. If not on Home tab, go to Home
             if (_currentIndex != 0) {
               setState(() => _currentIndex = 0);
-              _tabController.animateTo(0); // Sync controller on back press
+              _tabController.animateTo(0);
               BottomNavController.index.value = 0;
               return;
             }
 
+            // 2. If on Home tab, check double-press to exit
+            if (_lastPressedTime == null ||
+                now.difference(_lastPressedTime!) >
+                    const Duration(seconds: 2)) {
+              // First press (or timed out) -> Show Toast
+              _lastPressedTime = now;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    "Press back again to exit",
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  backgroundColor: Colors.black87,
+                  duration: const Duration(seconds: 2),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  margin: const EdgeInsets.only(
+                    bottom: 80, // Adjust to be above bottom nav
+                    left: 20,
+                    right: 20,
+                  ),
+                ),
+              );
+              return;
+            }
+
+            // 3. Second press within 2 seconds -> Exit App
             SystemNavigator.pop();
           },
           child: Scaffold(
@@ -202,18 +236,23 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
       color: Colors.grey,
       activeColor: AppColors.primaryBlue,
       items: [
-        const TabItem(icon: Icons.home_outlined, title: 'Home'),
-        const TabItem(icon: Icons.newspaper_outlined, title: 'Orders'),
         TabItem(
-          title: 'Offers',
+            icon: Icons.home_outlined,
+            title: AppStrings.get('nav_home', context)),
+        TabItem(
+            icon: Icons.newspaper_outlined,
+            title: AppStrings.get('nav_orders', context)),
+        TabItem(
+          title: AppStrings.get('nav_offers', context),
           icon: _offersIcon(),
           activeIcon: _offersIcon(),
         ),
         TabItem(
           icon: _cartIconWithBadge(_cartItemCount),
-          title: 'Cart',
+          title: AppStrings.get('nav_cart', context),
         ),
-        const TabItem(icon: Icons.person, title: 'Profile'),
+        TabItem(
+            icon: Icons.person, title: AppStrings.get('nav_profile', context)),
       ],
       // Remove initialActiveIndex as controller takes precedence
       onTap: (i) {

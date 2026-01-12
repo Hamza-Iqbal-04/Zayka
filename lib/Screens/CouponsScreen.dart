@@ -3,6 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import '../Services/language_provider.dart';
 import '../Widgets/bottom_nav.dart';
 import '../Widgets/models.dart';
 import 'cartScreen.dart';
@@ -52,7 +54,7 @@ class _CouponsScreenState extends State<CouponsScreen> {
       });
     } catch (e) {
       setState(() {
-        _error = 'Failed to load coupons';
+        _error = AppStrings.get('failed_load_coupons', context);
         _isLoading = false;
       });
     }
@@ -66,8 +68,8 @@ class _CouponsScreenState extends State<CouponsScreen> {
         elevation: 0,
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.black87,
-        title: const Text(
-          'Available Coupons',
+        title: Text(
+          AppStrings.get('available_coupons_title', context),
           style: TextStyle(
             fontSize: 24,
             fontWeight: FontWeight.w800,
@@ -98,8 +100,8 @@ class _CouponsScreenState extends State<CouponsScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            const Text(
-              'Loading amazing offers...',
+            Text(
+              AppStrings.get('loading_offers', context),
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
@@ -153,8 +155,8 @@ class _CouponsScreenState extends State<CouponsScreen> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Please try again later',
+              Text(
+                AppStrings.get('try_again', context),
                 style: TextStyle(
                   color: Colors.black54,
                   fontSize: 14,
@@ -206,8 +208,8 @@ class _CouponsScreenState extends State<CouponsScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-              const Text(
-                'No coupons available',
+              Text(
+                AppStrings.get('no_coupons', context),
                 style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w800,
@@ -215,8 +217,8 @@ class _CouponsScreenState extends State<CouponsScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Check back later for exciting offers!',
+              Text(
+                AppStrings.get('check_back_later', context),
                 style: TextStyle(
                   color: Colors.black54,
                   fontSize: 16,
@@ -268,9 +270,9 @@ class _CouponsScreenState extends State<CouponsScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Apply coupons to save more on your order!',
+                    AppStrings.get('apply_coupons_msg', context),
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
@@ -296,16 +298,50 @@ class _CouponsScreenState extends State<CouponsScreen> {
   }
 
   Widget _buildModernCouponCard(CouponModel coupon, bool isValid) {
-    final discountText = coupon.type == 'percentage'
-        ? '${coupon.value.toStringAsFixed(0)}% OFF'
-        : '${coupon.value} QAR OFF';
+    // Dynamic Localization Logic
+    final isArabic = Provider.of<LanguageProvider>(context).isArabic;
+    final locale = isArabic ? 'ar' : 'en';
 
-    final minSubtotalText = coupon.minSubtotal > 0
-        ? 'On orders above QAR ${coupon.minSubtotal.toStringAsFixed(0)}'
-        : 'On all orders';
+    // 1. Discount Text
+    final formattedValue = AppStrings.formatNumber(
+        coupon.type == 'percentage'
+            ? coupon.value.toStringAsFixed(0)
+            : coupon.value.toString(),
+        context);
+
+    final discountText = coupon.type == 'percentage'
+        ? '$formattedValue% ${AppStrings.get('off', context)}'
+        : '$formattedValue ${AppStrings.get('qar', context)} ${AppStrings.get('off', context)}';
+
+    // 2. Min Subtotal / Description
+    String subtotalText;
+    // Prefer description if available
+    if (isArabic &&
+        coupon.descriptionAr != null &&
+        coupon.descriptionAr!.isNotEmpty) {
+      subtotalText = coupon.descriptionAr!;
+    } else if (coupon.description != null && coupon.description!.isNotEmpty) {
+      subtotalText = coupon.description!;
+    } else {
+      // Fallback to constructed string
+      if (coupon.minSubtotal > 0) {
+        final formattedMin = AppStrings.formatNumber(
+            coupon.minSubtotal.toStringAsFixed(0), context);
+        subtotalText =
+            '${AppStrings.get('on_orders_above', context)} ${AppStrings.get('qar', context)} $formattedMin';
+      } else {
+        subtotalText = AppStrings.get('on_all_orders', context);
+      }
+    }
+
+    // 3. Validity Date
+    final formattedDate =
+        DateFormat('MMM dd, yyyy', locale).format(coupon.validUntil);
+    // Explicitly format numbers in date for Arabic if needed (DateFormat usually handles this but good to ensure consistency if mixing)
+    // Actually, DateFormat('...', 'ar') will use Arabic digits/months.
 
     final validityText =
-        'Valid until ${DateFormat('MMM dd, yyyy').format(coupon.validUntil)}';
+        '${AppStrings.get('valid_until', context)} $formattedDate';
 
     return TweenAnimationBuilder<double>(
       duration: const Duration(milliseconds: 400),
@@ -418,7 +454,7 @@ class _CouponsScreenState extends State<CouponsScreen> {
                                 ),
                                 const SizedBox(height: 12),
                                 Text(
-                                  minSubtotalText,
+                                  subtotalText,
                                   style: TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w600,
@@ -426,6 +462,8 @@ class _CouponsScreenState extends State<CouponsScreen> {
                                         ? Colors.black87
                                         : Colors.grey.shade600,
                                   ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ],
                             ),
@@ -481,7 +519,7 @@ class _CouponsScreenState extends State<CouponsScreen> {
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              'CODE: ',
+                              '${AppStrings.get('code', context)}: ',
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
@@ -532,9 +570,8 @@ class _CouponsScreenState extends State<CouponsScreen> {
                                   ],
                                 ),
                                 if (!isValid) ...[
-                                  const SizedBox(height: 4),
                                   Text(
-                                    'Not applicable to current order',
+                                    AppStrings.get('not_applicable', context),
                                     style: TextStyle(
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
@@ -581,7 +618,7 @@ class _CouponsScreenState extends State<CouponsScreen> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
-                                    'APPLY',
+                                    AppStrings.get('apply', context),
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w800,
                                       fontSize: 14,
@@ -657,7 +694,7 @@ class _CouponsScreenState extends State<CouponsScreen> {
               ],
             ),
             content: Text(
-              '${coupon.code} has been applied to your cart.',
+              '${coupon.code} ${AppStrings.get('coupon_applied_msg', context)}',
               style: const TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w500,
@@ -679,8 +716,8 @@ class _CouponsScreenState extends State<CouponsScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text(
-                  'Go to Cart',
+                child: Text(
+                  AppStrings.get('go_to_cart', context),
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
@@ -723,7 +760,7 @@ class _CouponsScreenState extends State<CouponsScreen> {
             ],
           ),
           content: Text(
-            'Failed to apply coupon: ${e.toString()}',
+            '${AppStrings.get('failed_apply_coupon', context)} ${e.toString()}',
             style: const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w500,

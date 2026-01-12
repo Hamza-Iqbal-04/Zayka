@@ -21,6 +21,8 @@ class CouponModel {
   final int maxUsesPerUser;
   final String scope;
   final String? userRestriction;
+  final String? description;
+  final String? descriptionAr;
 
   CouponModel({
     required this.id,
@@ -39,6 +41,8 @@ class CouponModel {
     required this.maxUsesPerUser,
     required this.scope,
     this.userRestriction,
+    this.description,
+    this.descriptionAr,
   });
 
   factory CouponModel.fromMap(Map<String, dynamic> map, String id) {
@@ -67,6 +71,8 @@ class CouponModel {
       maxUsesPerUser: map['maxUsesPerUser'] ?? 1,
       scope: map['scope'] ?? 'all',
       userRestriction: map['user_restriction'],
+      description: map['description'],
+      descriptionAr: map['description_ar'],
     );
   }
 
@@ -88,6 +94,8 @@ class CouponModel {
       'maxUsesPerUser': maxUsesPerUser,
       'scope': scope,
       'user_restriction': userRestriction,
+      'description': description,
+      'description_ar': descriptionAr,
     };
   }
 

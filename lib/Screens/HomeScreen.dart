@@ -381,7 +381,8 @@ class _HomeScreenState extends State<HomeScreen>
                 'cancelled',
                 'rejected',
                 'refunded',
-                'refund_rejected'
+                'refund_rejected',
+                'paid'
               ])
               .orderBy('timestamp', descending: true)
               .limit(5)
