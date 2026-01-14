@@ -56,6 +56,10 @@ class _HomeScreenState extends State<HomeScreen>
   final Set<String> _processedDeliveredOrders = {};
   StreamSubscription? _deliverySubscription;
 
+  // Pickup ready popup tracking
+  final Set<String> _processedPickupReadyOrders = {};
+  StreamSubscription? _pickupReadySubscription;
+
   // Categories and menu
   List<MenuCategory> _categories = [];
   List<MenuItem> _popularItems = [];
@@ -250,7 +254,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  String _getStatusMessage(String status) {
+  String _getStatusMessage(String status, {String orderType = 'delivery'}) {
     // Helper function to capitalize text
     String capitalize(String s) {
       if (s.isEmpty) return s;
@@ -259,6 +263,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     // 1. Clean the status string
     final cleanStatus = status.trim().toLowerCase();
+    final isPickup = orderType.toLowerCase() == 'pickup';
 
     // 2. Return localized string based on status
     switch (cleanStatus) {
@@ -271,7 +276,14 @@ class _HomeScreenState extends State<HomeScreen>
 
       case 'prepared':
       case 'ready':
+        // Show different message for pickup orders
+        if (isPickup) {
+          return AppStrings.get('status_pickup_prepared', context);
+        }
         return AppStrings.get('status_prepared', context);
+
+      case 'collected':
+        return AppStrings.get('status_collected', context);
 
       case 'rider_assigned':
       case 'rider assigned':
@@ -310,8 +322,30 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  double _getProgressValue(String status) {
+  double _getProgressValue(String status, {String orderType = 'delivery'}) {
     final cleanStatus = status.trim().toLowerCase();
+    final isPickup = orderType.toLowerCase() == 'pickup';
+
+    // Pickup orders have a simpler flow: pending -> preparing -> prepared -> collected/paid
+    if (isPickup) {
+      switch (cleanStatus) {
+        case 'pending':
+          return 0.2;
+        case 'preparing':
+        case 'accepted':
+          return 0.5;
+        case 'prepared':
+        case 'ready':
+          return 0.85;
+        case 'collected':
+        case 'paid':
+          return 1.0;
+        default:
+          return 0.0;
+      }
+    }
+
+    // Delivery orders have more steps
     switch (cleanStatus) {
       case 'pending':
         return 0.1;
@@ -345,6 +379,7 @@ class _HomeScreenState extends State<HomeScreen>
     _setupOrdersStream();
     _setupCancellationListener();
     _setupDeliveryListener();
+    _setupPickupReadyListener();
 
     _bounceController = AnimationController(
       duration: const Duration(milliseconds: 800),
@@ -382,7 +417,8 @@ class _HomeScreenState extends State<HomeScreen>
                 'rejected',
                 'refunded',
                 'refund_rejected',
-                'paid'
+                'paid',
+                'collected'
               ])
               .orderBy('timestamp', descending: true)
               .limit(5)
@@ -434,6 +470,7 @@ class _HomeScreenState extends State<HomeScreen>
     _menuItemsSubscription?.cancel();
     _cancellationSubscription?.cancel();
     _deliverySubscription?.cancel();
+    _pickupReadySubscription?.cancel();
     _bottomBarController.dispose();
     super.dispose();
   }
@@ -531,6 +568,13 @@ class _HomeScreenState extends State<HomeScreen>
         final orderId = doc.id;
         final data = doc.data();
         final timestamp = data['timestamp'] as Timestamp?;
+        final orderType = data['Order_type'] as String? ?? 'delivery';
+
+        // Skip delivered popup for pickup orders - they use 'collected' status instead
+        if (orderType.toLowerCase() == 'pickup') {
+          _processedDeliveredOrders.add(orderId);
+          return;
+        }
 
         if (!_processedDeliveredOrders.contains(orderId)) {
           // Check recency (e.g., delivered within last 24 hours to avoid showing ancient orders)
@@ -559,6 +603,139 @@ class _HomeScreenState extends State<HomeScreen>
         }
       }
     });
+  }
+
+  /// Listens for pickup orders that become 'prepared' to show a ready notification
+  Future<void> _setupPickupReadyListener() async {
+    final user = _auth.currentUser;
+    if (user == null || user.email == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final lastShownId = prefs.getString('last_pickup_ready_popup_id');
+
+    if (lastShownId != null) {
+      _processedPickupReadyOrders.add(lastShownId);
+    }
+
+    _pickupReadySubscription = _firestore
+        .collection('Orders')
+        .where('customerId', isEqualTo: user.email)
+        .where('Order_type', isEqualTo: 'pickup')
+        .where('status', isEqualTo: 'prepared')
+        .orderBy('timestamp', descending: true)
+        .limit(1)
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.docs.isNotEmpty) {
+        final doc = snapshot.docs.first;
+        final orderId = doc.id;
+        final data = doc.data();
+        final timestamp = data['timestamp'] as Timestamp?;
+
+        if (!_processedPickupReadyOrders.contains(orderId)) {
+          // Check recency (within last 24 hours)
+          bool isRecent = true;
+          if (timestamp != null) {
+            final now = DateTime.now();
+            final date = timestamp.toDate();
+            if (now.difference(date).inHours > 24) {
+              isRecent = false;
+            }
+          }
+
+          if (isRecent) {
+            _processedPickupReadyOrders.add(orderId);
+            prefs.setString('last_pickup_ready_popup_id', orderId);
+
+            if (mounted) {
+              _showPickupReadyDialog();
+            }
+          } else {
+            // Mark as processed anyway to stop checking it
+            _processedPickupReadyOrders.add(orderId);
+            prefs.setString('last_pickup_ready_popup_id', orderId);
+          }
+        }
+      }
+    });
+  }
+
+  void _showPickupReadyDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        contentPadding:
+            const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TweenAnimationBuilder<double>(
+              duration: const Duration(milliseconds: 800),
+              tween: Tween(begin: 0.0, end: 1.0),
+              curve: Curves.elasticOut,
+              builder: (context, value, child) {
+                return Transform.scale(
+                  scale: value,
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.store_rounded,
+                        color: Colors.green, size: 50),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+            Text(
+              AppStrings.get('pickup_ready_title', context),
+              style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              AppStrings.get('pickup_ready_msg', context),
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryBlue,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  elevation: 0,
+                ),
+                child: Text(
+                  AppStrings.get('ok', context) != 'ok'
+                      ? AppStrings.get('ok', context)
+                      : 'OK',
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white),
+                ),
+              ),
+            )
+          ],
+        ),
+      ),
+    );
   }
 
   void _showDeliverySuccessDialog(Timestamp? createdAt) {
@@ -1870,8 +2047,11 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildOrderStatusWidget(Order order) {
-    final statusMessage = _getStatusMessage(order.status);
-    final progress = _getProgressValue(order.status);
+    final statusMessage =
+        _getStatusMessage(order.status, orderType: order.orderType);
+    final progress =
+        _getProgressValue(order.status, orderType: order.orderType);
+    final isPickup = order.orderType.toLowerCase() == 'pickup';
 
     return InkWell(
       onTap: () => _openOrderDetails(order.id),
@@ -1905,8 +2085,11 @@ class _HomeScreenState extends State<HomeScreen>
                 builder: (context, child) {
                   return Transform.scale(
                     scale: _bounceAnimation.value,
-                    child: const Icon(
-                      Icons.delivery_dining_rounded,
+                    // Show different icon for pickup vs delivery
+                    child: Icon(
+                      isPickup
+                          ? Icons.store_rounded
+                          : Icons.delivery_dining_rounded,
                       color: Colors.white,
                       size: 22,
                     ),
@@ -3213,14 +3396,16 @@ class _PopularItemCard extends StatelessWidget {
 class Order {
   final String id;
   final String status;
+  final String orderType; // 'pickup' or 'delivery'
 
-  Order({required this.id, required this.status});
+  Order({required this.id, required this.status, required this.orderType});
 
   factory Order.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     return Order(
       id: doc.id,
       status: data['status'] ?? 'unknown',
+      orderType: data['Order_type'] ?? 'delivery',
     );
   }
 }
