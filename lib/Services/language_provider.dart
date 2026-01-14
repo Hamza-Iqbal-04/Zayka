@@ -247,6 +247,7 @@ class AppStrings {
       'unknown_reason': 'No reason provided',
 
       // --- Refund Feature (New) ---
+      'great': 'Great!',
       'request_refund': 'Request Refund',
       'refund_reason': 'Reason for refund',
       'refund_reason_hint': 'Explain why you are requesting a refund...',
@@ -551,6 +552,7 @@ class AppStrings {
       'unknown_reason': 'لم يتم تقديم سبب',
 
       // --- Refund Feature (New) ---
+      'great': 'رائع!',
       'request_refund': 'طلب استرجاع',
       'refund_reason': 'سبب الاسترجاع',
       'refund_reason_hint': 'اشرح سبب طلب الاسترجاع...',

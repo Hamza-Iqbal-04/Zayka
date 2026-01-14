@@ -722,9 +722,7 @@ class _HomeScreenState extends State<HomeScreen>
                   elevation: 0,
                 ),
                 child: Text(
-                  AppStrings.get('ok', context) != 'ok'
-                      ? AppStrings.get('ok', context)
-                      : 'OK',
+                  AppStrings.get('great', context),
                   style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -813,9 +811,9 @@ class _HomeScreenState extends State<HomeScreen>
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   elevation: 0,
                 ),
-                child: const Text(
-                  'Great!',
-                  style: TextStyle(
+                child: Text(
+                  AppStrings.get('great', context),
+                  style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
                       color: Colors.white),
