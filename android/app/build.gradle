@@ -17,7 +17,7 @@ configurations.all {
 }
 
 android {
-    namespace = "com.example.mitra_da_dhaba"
+    namespace = "com.zayka.customer"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -33,7 +33,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.mitra_da_dhaba"
+        applicationId = "com.zayka.customer"
         minSdkVersion 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

@@ -1,4 +1,4 @@
-package com.example.mitra_da_dhaba
+package com.zayka.customer
 
 import io.flutter.embedding.android.FlutterActivity
 

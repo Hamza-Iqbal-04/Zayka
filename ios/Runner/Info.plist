@@ -45,5 +45,13 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Zayka needs your location to find nearby branches and calculate delivery time.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Zayka needs your location to find nearby branches and calculate delivery time.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Zayka needs camera access to upload refund photos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Zayka needs photo library access to upload refund images.</string>
 </dict>
 </plist>
