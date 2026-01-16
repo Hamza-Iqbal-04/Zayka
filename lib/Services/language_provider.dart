@@ -112,6 +112,7 @@ class AppStrings {
       'keep_items': 'Keep Items',
       'remove_all': 'Remove All',
       'unavailable_items_in_cart': 'UNAVAILABLE ITEMS IN CART',
+      'your_items': 'Your Items',
       'checking_stock': 'CHECKING STOCK...',
       'processing': 'PROCESSING...',
 
@@ -417,6 +418,7 @@ class AppStrings {
       'keep_items': 'الاحتفاظ بالعناصر',
       'remove_all': 'إزالة الكل',
       'unavailable_items_in_cart': 'عناصر غير متوفرة في السلة',
+      'your_items': 'أصنافك',
       'checking_stock': 'جاري التحقق من المخزون...',
       'processing': 'جاري المعالجة...',
 
