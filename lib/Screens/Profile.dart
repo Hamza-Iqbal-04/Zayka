@@ -1883,6 +1883,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                     return _buildFavoriteItem(
                       itemId: itemId,
                       itemData: itemData,
+                      index: index,
                     );
                   },
                 );
@@ -1921,8 +1922,11 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     );
   }
 
-  Widget _buildFavoriteItem(
-      {required String itemId, required Map<String, dynamic> itemData}) {
+  Widget _buildFavoriteItem({
+    required String itemId,
+    required Map<String, dynamic> itemData,
+    required int index,
+  }) {
     // Localization logic for name
     final isArabic = Provider.of<LanguageProvider>(context).isArabic;
     final name = itemData['name'] ?? 'Unknown Dish';
@@ -1930,82 +1934,290 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     final displayName = (isArabic && nameAr.isNotEmpty) ? nameAr : name;
 
     final double price = (itemData['price'] ?? 0.0).toDouble();
+    final double? discountedPrice = itemData['discountedPrice']?.toDouble();
     final String imageUrl = itemData['imageUrl'] ?? '';
     final bool isSpicy = itemData['isSpicy'] ?? false;
-    return InkWell(
-      onTap: () => _addItemToCart(itemData, itemId),
-      borderRadius: BorderRadius.circular(16),
-      child: Card(
-        color: Colors.white,
-        elevation: 2,
-        shadowColor: Colors.black.withOpacity(0.1),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: Colors.grey.shade200, width: 1),
-        ),
+    final String? description = itemData['description'];
+
+    return TweenAnimationBuilder<double>(
+      duration: Duration(milliseconds: 300 + (index * 100)),
+      tween: Tween(begin: 0.0, end: 1.0),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) {
+        return Transform.translate(
+          offset: Offset(0, (1 - value) * 30),
+          child: Opacity(
+            opacity: value,
+            child: child,
+          ),
+        );
+      },
+      child: Container(
         margin: const EdgeInsets.only(bottom: 16),
-        child: Padding(
-          padding: const EdgeInsets.all(12.0),
-          child: Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: 80,
-                  height: 80,
-                  child: imageUrl.isNotEmpty
-                      ? Image.network(imageUrl,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              const Icon(Icons.fastfood, color: Colors.grey))
-                      : const Icon(Icons.fastfood, color: Colors.grey),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(displayName,
-                        style: const TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.bold),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Text('QAR ${price.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                                color: AppColors.primaryBlue,
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold)),
-                        if (isSpicy) ...[
-                          const SizedBox(width: 12),
-                          Icon(Icons.local_fire_department,
-                              color: Colors.red.shade600, size: 18),
-                        ],
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primaryBlue.withOpacity(0.08),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            onTap: () => _addItemToCart(itemData, itemId),
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Large Image with rounded corners
+                  Container(
+                    width: 110,
+                    height: 110,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
+                        ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              InkWell(
-                onTap: () => _removeFavorite(itemId),
-                customBorder: const CircleBorder(),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.grey.shade300)),
-                  child: const Icon(
-                    Icons.favorite,
-                    color: Colors.blueAccent,
-                    size: 20,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          imageUrl.isNotEmpty
+                              ? Image.network(
+                                  imageUrl,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    color: AppColors.lightGrey,
+                                    child: const Icon(
+                                      Icons.fastfood_rounded,
+                                      color: Colors.grey,
+                                      size: 40,
+                                    ),
+                                  ),
+                                )
+                              : Container(
+                                  color: AppColors.lightGrey,
+                                  child: const Icon(
+                                    Icons.fastfood_rounded,
+                                    color: Colors.grey,
+                                    size: 40,
+                                  ),
+                                ),
+                          // Discount badge
+                          if (discountedPrice != null)
+                            Positioned(
+                              top: 8,
+                              left: 8,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.green,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  '${(((price - discountedPrice) / price) * 100).toStringAsFixed(0)}% OFF',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 16),
+                  // Content
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    displayName,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.darkGrey,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  if (description != null &&
+                                      description.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      description,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            // Animated heart button
+                            _AnimatedHeartButton(
+                              onTap: () => _removeFavorite(itemId),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        // Tags row
+                        if (isSpicy)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.local_fire_department,
+                                  color: Colors.red.shade600,
+                                  size: 14,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  AppStrings.get('spicy', context),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.red.shade600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        // Price and Add button row
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (discountedPrice != null) ...[
+                                  Text(
+                                    AppStrings.formatPrice(
+                                        discountedPrice, context),
+                                    style: const TextStyle(
+                                      color: AppColors.primaryBlue,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  Text(
+                                    AppStrings.formatPrice(price, context),
+                                    style: TextStyle(
+                                      color: Colors.grey.shade500,
+                                      fontSize: 13,
+                                      decoration: TextDecoration.lineThrough,
+                                    ),
+                                  ),
+                                ] else
+                                  Text(
+                                    AppStrings.formatPrice(price, context),
+                                    style: const TextStyle(
+                                      color: AppColors.primaryBlue,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            // Quick Add Button
+                            Container(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    AppColors.primaryBlue,
+                                    AppColors.primaryBlue.withOpacity(0.8),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color:
+                                        AppColors.primaryBlue.withOpacity(0.3),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () => _addItemToCart(itemData, itemId),
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 10,
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.add_shopping_cart_rounded,
+                                          color: Colors.white,
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          AppStrings.get('add', context),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -2073,6 +2285,79 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ----------------------
+// ANIMATED HEART BUTTON
+// ----------------------
+class _AnimatedHeartButton extends StatefulWidget {
+  final VoidCallback onTap;
+
+  const _AnimatedHeartButton({
+    Key? key,
+    required this.onTap,
+  }) : super(key: key);
+
+  @override
+  State<_AnimatedHeartButton> createState() => _AnimatedHeartButtonState();
+}
+
+class _AnimatedHeartButtonState extends State<_AnimatedHeartButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 150),
+      vsync: this,
+    );
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.8).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _handleTap() async {
+    await _controller.forward();
+    await _controller.reverse();
+    widget.onTap();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _handleTap,
+      child: ListenableBuilder(
+        listenable: _scaleAnimation,
+        builder: (context, child) {
+          return Transform.scale(
+            scale: _scaleAnimation.value,
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.red.shade100, width: 1),
+              ),
+              child: Icon(
+                Icons.favorite_rounded,
+                color: Colors.red.shade400,
+                size: 22,
+              ),
+            ),
+          );
+        },
       ),
     );
   }

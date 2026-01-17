@@ -68,7 +68,7 @@ class CouponModel {
       branchIds: _convertToList(map['branch_ids']),
       categoryIds: _convertToList(map['category_ids']),
       itemIds: _convertToList(map['item_ids']),
-      maxUsesPerUser: map['maxUsesPerUser'] ?? 1,
+      maxUsesPerUser: map['maxUsesPerUser'] ?? 0,
       scope: map['scope'] ?? 'all',
       userRestriction: map['user_restriction'],
       description: map['description'],

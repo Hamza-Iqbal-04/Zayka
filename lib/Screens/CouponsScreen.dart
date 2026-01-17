@@ -21,6 +21,8 @@ class _CouponsScreenState extends State<CouponsScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   List<CouponModel> _availableCoupons = [];
   bool _isLoading = true;
+  bool _isApplyingCoupon = false;
+  String? _applyingCouponId;
   String? _error;
 
   @override
@@ -598,8 +600,9 @@ class _CouponsScreenState extends State<CouponsScreen> {
                                   : null,
                             ),
                             child: ElevatedButton(
-                              onPressed:
-                                  isValid ? () => _applyCoupon(coupon) : null,
+                              onPressed: (isValid && !_isApplyingCoupon)
+                                  ? () => _applyCoupon(coupon)
+                                  : null,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: isValid
                                     ? AppColors.primaryBlue
@@ -614,24 +617,34 @@ class _CouponsScreenState extends State<CouponsScreen> {
                                   borderRadius: BorderRadius.circular(16),
                                 ),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    AppStrings.get('apply', context),
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 14,
-                                      letterSpacing: 0.5,
+                              child: (_isApplyingCoupon &&
+                                      _applyingCouponId == coupon.id)
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          AppStrings.get('apply', context),
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 14,
+                                            letterSpacing: 0.5,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        const Icon(
+                                          Icons.arrow_forward_rounded,
+                                          size: 16,
+                                        ),
+                                      ],
                                     ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  const Icon(
-                                    Icons.arrow_forward_rounded,
-                                    size: 16,
-                                  ),
-                                ],
-                              ),
                             ),
                           ),
                         ],
@@ -656,6 +669,11 @@ class _CouponsScreenState extends State<CouponsScreen> {
   }
 
   Future<void> _applyCoupon(CouponModel coupon) async {
+    setState(() {
+      _isApplyingCoupon = true;
+      _applyingCouponId = coupon.id;
+    });
+
     try {
       await widget.cartService.applyCoupon(coupon.code);
       if (!mounted) return;
@@ -728,6 +746,12 @@ class _CouponsScreenState extends State<CouponsScreen> {
     } catch (e) {
       if (!mounted) return;
 
+      // Show user-friendly error message
+      String errorMessage = e.toString().replaceFirst('Exception: ', '');
+      if (errorMessage.contains('usage limit')) {
+        errorMessage = AppStrings.get('coupon_usage_limit_reached', context);
+      }
+
       await showDialog(
         context: context,
         useRootNavigator: true,
@@ -750,17 +774,19 @@ class _CouponsScreenState extends State<CouponsScreen> {
                 ),
               ),
               const SizedBox(width: 12),
-              const Text(
-                'Coupon Failed',
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 18,
+              Flexible(
+                child: Text(
+                  AppStrings.get('coupon_failed', context),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
                 ),
               ),
             ],
           ),
           content: Text(
-            '${AppStrings.get('failed_apply_coupon', context)} ${e.toString()}',
+            errorMessage,
             style: const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w500,
@@ -777,14 +803,21 @@ class _CouponsScreenState extends State<CouponsScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Text(
-                'OK',
-                style: TextStyle(fontWeight: FontWeight.w700),
+              child: Text(
+                AppStrings.get('ok', context),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
           ],
         ),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isApplyingCoupon = false;
+          _applyingCouponId = null;
+        });
+      }
     }
   }
 }

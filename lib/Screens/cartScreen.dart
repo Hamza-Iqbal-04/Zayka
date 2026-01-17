@@ -3218,6 +3218,7 @@ class _CartScreenState extends State<CartScreen> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
+        backgroundColor: AppColors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -4440,17 +4441,18 @@ class CartService extends ChangeNotifier {
             'Minimum order amount of QAR ${coupon.minSubtotal} not met');
       }
 
-      if (coupon.maxUsesPerUser > 0 && userId != null) {
-        final userUsage = await FirebaseFirestore.instance
-            .collection('coupon_usage')
-            .where('userId', isEqualTo: userId)
-            .where('couponId', isEqualTo: coupon.id)
-            .get();
-        if (userUsage.docs.length >= coupon.maxUsesPerUser) {
-          throw Exception(
-              'You have already used this coupon the maximum number of times');
-        }
+      // Check if coupon has usage limit (maxUsesPerUser > 0 means limited uses)
+      if (coupon.maxUsesPerUser <= 0) {
+        throw Exception('This coupon has reached its usage limit');
       }
+
+      // Decrement the maxUsesPerUser count in Firestore
+      await FirebaseFirestore.instance
+          .collection('coupons')
+          .doc(coupon.id)
+          .update({
+        'maxUsesPerUser': FieldValue.increment(-1),
+      });
 
       double discount = 0;
       if (coupon.type == 'percentage') {
@@ -4484,6 +4486,20 @@ class CartService extends ChangeNotifier {
   }
 
   Future<void> removeCoupon() async {
+    // Increment maxUsesPerUser back in Firestore if coupon was applied
+    if (_appliedCoupon != null) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('coupons')
+            .doc(_appliedCoupon!.id)
+            .update({
+          'maxUsesPerUser': FieldValue.increment(1),
+        });
+      } catch (e) {
+        debugPrint('Error incrementing coupon usage: $e');
+      }
+    }
+
     for (var item in _items) {
       item.couponDiscount = null;
       item.couponCode = null;

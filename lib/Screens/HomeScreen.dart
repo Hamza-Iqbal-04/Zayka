@@ -205,6 +205,7 @@ class _HomeScreenState extends State<HomeScreen>
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         title: const Text('Select Branch for Testing'),
         content: const Text('Choose a branch to test functionality:'),
         actions: [
@@ -665,6 +666,7 @@ class _HomeScreenState extends State<HomeScreen>
       context: context,
       barrierDismissible: true,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         contentPadding:
             const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
@@ -755,6 +757,7 @@ class _HomeScreenState extends State<HomeScreen>
       context: context,
       barrierDismissible: true, // Allow user to dismiss easily
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         contentPadding:
             const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
@@ -855,6 +858,7 @@ class _HomeScreenState extends State<HomeScreen>
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
@@ -949,6 +953,7 @@ class _HomeScreenState extends State<HomeScreen>
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
@@ -3428,39 +3433,34 @@ class _MenuItemCardState extends State<MenuItemCard> {
   static const double _buttonFloat = 24;
   static const double _extraBottomSpace = 12;
 
-  bool _isFavorite = false;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  Stream<bool>? _favoriteStream;
 
   @override
   void initState() {
     super.initState();
-    _checkIfFavorite();
+    _initFavoriteStream();
   }
 
-  Future<void> _checkIfFavorite() async {
+  void _initFavoriteStream() {
     final user = _auth.currentUser;
-    if (user == null || user.email == null) return;
-
-    try {
-      final doc = await _firestore.collection('Users').doc(user.email).get();
-      if (doc.exists && mounted) {
+    if (user?.email != null) {
+      _favoriteStream = _firestore
+          .collection('Users')
+          .doc(user!.email)
+          .snapshots()
+          .map((doc) {
+        if (!doc.exists) return false;
         final favorites =
             doc.data()?['favorites'] as Map<String, dynamic>? ?? {};
-        if (mounted) {
-          setState(() => _isFavorite = favorites.containsKey(widget.item.id));
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error checking favorite: ${e.toString()}')),
-        );
-      }
+        return favorites.containsKey(widget.item.id);
+      });
     }
   }
 
-  Future<void> _toggleFavorite() async {
+  Future<void> _toggleFavorite(bool currentIsFavorite) async {
     final user = _auth.currentUser;
     if (user == null || user.email == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3469,18 +3469,16 @@ class _MenuItemCardState extends State<MenuItemCard> {
       return;
     }
 
-    if (mounted) setState(() => _isFavorite = !_isFavorite);
-
     try {
+      // Toggle: if currently favorite, delete; otherwise, add
       await _firestore.collection('Users').doc(user.email).set({
         'favorites': {
           widget.item.id:
-              _isFavorite ? _createFavoriteItemMap() : FieldValue.delete()
+              currentIsFavorite ? FieldValue.delete() : _createFavoriteItemMap()
         },
       }, SetOptions(merge: true));
     } catch (e) {
       if (mounted) {
-        setState(() => _isFavorite = !_isFavorite);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error updating favorite: ${e.toString()}')),
         );
@@ -3491,8 +3489,10 @@ class _MenuItemCardState extends State<MenuItemCard> {
   Map<String, dynamic> _createFavoriteItemMap() => {
         'id': widget.item.id,
         'name': widget.item.name,
+        'name_ar': widget.item.nameAr,
         'imageUrl': widget.item.imageUrl,
         'price': widget.item.price,
+        'discountedPrice': widget.item.discountedPrice,
         'description': widget.item.description,
         'isSpicy': widget.item.tags['isSpicy'] ?? false,
         'addedAt': FieldValue.serverTimestamp(),
@@ -3695,26 +3695,35 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                       ),
                                     ),
                                     const SizedBox(width: 8),
-                                    Container(
-                                      width: 24,
-                                      height: 24,
-                                      alignment: Alignment.center,
-                                      child: IconButton(
-                                        padding: EdgeInsets.zero,
-                                        splashRadius: 20,
-                                        iconSize: 22,
-                                        onPressed: isAvailable
-                                            ? _toggleFavorite
-                                            : null,
-                                        icon: Icon(
-                                          _isFavorite
-                                              ? Icons.favorite
-                                              : Icons.favorite_border,
-                                          color: _isFavorite
-                                              ? Colors.red
-                                              : Colors.grey,
-                                        ),
-                                      ),
+                                    StreamBuilder<bool>(
+                                      stream: _favoriteStream,
+                                      initialData: false,
+                                      builder: (context, snapshot) {
+                                        final isFavorite =
+                                            snapshot.data ?? false;
+                                        return Container(
+                                          width: 24,
+                                          height: 24,
+                                          alignment: Alignment.center,
+                                          child: IconButton(
+                                            padding: EdgeInsets.zero,
+                                            splashRadius: 20,
+                                            iconSize: 22,
+                                            onPressed: isAvailable
+                                                ? () =>
+                                                    _toggleFavorite(isFavorite)
+                                                : null,
+                                            icon: Icon(
+                                              isFavorite
+                                                  ? Icons.favorite
+                                                  : Icons.favorite_border,
+                                              color: isFavorite
+                                                  ? Colors.red
+                                                  : Colors.grey,
+                                            ),
+                                          ),
+                                        );
+                                      },
                                     ),
                                   ],
                                 ),

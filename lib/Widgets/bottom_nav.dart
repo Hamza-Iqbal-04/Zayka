@@ -174,6 +174,7 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
             showDialog(
               context: context,
               builder: (context) => AlertDialog(
+                backgroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(20)),
                 title: Row(

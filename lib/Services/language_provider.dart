@@ -338,6 +338,8 @@ class AppStrings {
       'go_to_cart': 'Go to Cart',
       'coupon_failed': 'Coupon Failed',
       'failed_apply_coupon': 'Failed to apply coupon:',
+      'coupon_usage_limit_reached': 'This coupon has reached its usage limit',
+      'ok': 'OK',
 
       // --- Navbar ---
       'nav_home': 'Home',
@@ -642,6 +644,8 @@ class AppStrings {
       'go_to_cart': 'الذهاب للسلة',
       'coupon_failed': 'فشلت القسيمة',
       'failed_apply_coupon': 'فشل تطبيق القسيمة:',
+      'coupon_usage_limit_reached': 'هذه القسيمة وصلت لحد الاستخدام الأقصى',
+      'ok': 'حسناً',
 
       // --- Navbar ---
       'nav_home': 'الرئيسية',

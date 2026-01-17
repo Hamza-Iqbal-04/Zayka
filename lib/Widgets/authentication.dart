@@ -13,8 +13,8 @@ String _docIdFor(User user) => user.email!.toLowerCase();
 class AuthService {
   final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
 
-  Future<UserCredential> signIn(String email, String password) =>
-      _firebaseAuth.signInWithEmailAndPassword(email: email, password: password);
+  Future<UserCredential> signIn(String email, String password) => _firebaseAuth
+      .signInWithEmailAndPassword(email: email, password: password);
 
   Future<UserCredential> signUp(
       String email, String password, String name, String phone) async {
@@ -27,21 +27,21 @@ class AuthService {
         .collection('Users')
         .doc(_docIdFor(cred.user!))
         .set({'name': name, 'email': email, 'phone': phone},
-        SetOptions(merge: true));
+            SetOptions(merge: true));
 
     return cred;
   }
 
   Future<void> verifyPhoneNumber(
-      String phoneNumber, {
-        required void Function(PhoneAuthCredential) verificationCompleted,
-        required void Function(FirebaseAuthException) verificationFailed,
-        required void Function(String, int?) codeSent,
-        required void Function(String) codeAutoRetrievalTimeout,
-      }) =>
+    String phoneNumber, {
+    required void Function(PhoneAuthCredential) verificationCompleted,
+    required void Function(FirebaseAuthException) verificationFailed,
+    required void Function(String, int?) codeSent,
+    required void Function(String) codeAutoRetrievalTimeout,
+  }) =>
       _firebaseAuth.verifyPhoneNumber(
         phoneNumber:
-        phoneNumber.startsWith('+') ? phoneNumber : '+91$phoneNumber',
+            phoneNumber.startsWith('+') ? phoneNumber : '+91$phoneNumber',
         verificationCompleted: verificationCompleted,
         verificationFailed: verificationFailed,
         codeSent: codeSent,
@@ -49,13 +49,11 @@ class AuthService {
         timeout: const Duration(seconds: 60),
       );
 
-  Future<UserCredential> signInWithOtp(
-      String verificationId, String smsCode) =>
+  Future<UserCredential> signInWithOtp(String verificationId, String smsCode) =>
       _firebaseAuth.signInWithCredential(PhoneAuthProvider.credential(
           verificationId: verificationId, smsCode: smsCode));
 
-  Future<UserCredential> signInWithCredential(
-      PhoneAuthCredential credential) =>
+  Future<UserCredential> signInWithCredential(PhoneAuthCredential credential) =>
       _firebaseAuth.signInWithCredential(credential);
 
   /// Google sign-in (no UI)
@@ -71,17 +69,13 @@ class AuthService {
         idToken: googleAuth.idToken,
       );
 
-      final userCred =
-      await _firebaseAuth.signInWithCredential(credential);
+      final userCred = await _firebaseAuth.signInWithCredential(credential);
       final user = userCred.user!;
       final docId = _docIdFor(user);
 
       // Create blank profile first time
       if (userCred.additionalUserInfo?.isNewUser ?? false) {
-        await FirebaseFirestore.instance
-            .collection('Users')
-            .doc(docId)
-            .set({
+        await FirebaseFirestore.instance.collection('Users').doc(docId).set({
           'name': user.displayName ?? 'Unknown',
           'email': user.email,
           'phone': '',
@@ -106,15 +100,14 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   // controllers
   final _emailC = TextEditingController();
-  final _passC  = TextEditingController();
-  final _nameC  = TextEditingController();
+  final _passC = TextEditingController();
+  final _nameC = TextEditingController();
   final _phoneC = TextEditingController();
 
   // services
   final _auth = AuthService();
-  String? _verificationId;           // stores Firebase verificationId
-  bool _otpSending = false;          // controls loader in the sheet
-
+  String? _verificationId; // stores Firebase verificationId
+  bool _otpSending = false; // controls loader in the sheet
 
   // state
   bool _isLogin = true;
@@ -127,8 +120,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
     return showModalBottomSheet<String>(
       context: context,
-      isScrollControlled: true,                 // full-height when keyboard shows
-      backgroundColor: Colors.transparent,      // so we can add our own radius
+      isScrollControlled: true, // full-height when keyboard shows
+      backgroundColor: Colors.transparent, // so we can add our own radius
       builder: (ctx) => DraggableScrollableSheet(
         initialChildSize: 0.45,
         minChildSize: 0.35,
@@ -139,12 +132,14 @@ class _LoginScreenState extends State<LoginScreen> {
             color: AppColors.white,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           ),
-          child: ListView(                    // use ListView so it scrolls
+          child: ListView(
+            // use ListView so it scrolls
             controller: controller,
             children: [
               Center(
                 child: Container(
-                  width: 40, height: 4,
+                  width: 40,
+                  height: 4,
                   margin: const EdgeInsets.only(bottom: 24),
                   decoration: BoxDecoration(
                     color: Colors.grey.shade300,
@@ -170,7 +165,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   onChanged: (p) => e164 = p.completeNumber,
                   validator: (p) =>
-                  (p == null || p.number.isEmpty) ? 'Required' : null,
+                      (p == null || p.number.isEmpty) ? 'Required' : null,
                 ),
               ),
               const SizedBox(height: 24),
@@ -189,7 +184,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     }
                   },
                   child: Text('Save',
-                      style: AppTextStyles.buttonText.copyWith(color: Colors.white)),
+                      style: AppTextStyles.buttonText
+                          .copyWith(color: Colors.white)),
                 ),
               ),
               const SizedBox(height: 8),
@@ -206,7 +202,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-
   // ───────── Google button handler (UI layer)
   Future<void> _handleGoogle() async {
     setState(() => _loading = true);
@@ -214,16 +209,13 @@ class _LoginScreenState extends State<LoginScreen> {
       final cred = await _auth.signInWithGoogle();
       if (cred == null) throw Exception('Sign-in aborted');
 
-      final user  = cred.user!;
+      final user = cred.user!;
       final docId = _docIdFor(user);
 
       // Read Firestore to see if phone exists
-      final snap = await FirebaseFirestore.instance
-          .collection('Users')
-          .doc(docId)
-          .get();
-      final hasPhone =
-          (snap.data()?['phone'] as String?)?.isNotEmpty ?? false;
+      final snap =
+          await FirebaseFirestore.instance.collection('Users').doc(docId).get();
+      final hasPhone = (snap.data()?['phone'] as String?)?.isNotEmpty ?? false;
 
       if (!hasPhone) {
         final phone = await _promptForPhone();
@@ -254,11 +246,11 @@ class _LoginScreenState extends State<LoginScreen> {
   // Add this inside _LoginScreenState — complete, drop-in replacement
   void _showMobileSignInSheet(BuildContext context) {
     final phoneC = TextEditingController();
-    final otpC   = TextEditingController();
+    final otpC = TextEditingController();
     final formKey = GlobalKey<FormState>();
 
-    String? e164Phone;                  // phone in +974… format
-    bool    localLoading = false;       // sheet-scoped spinner
+    String? e164Phone; // phone in +974… format
+    bool localLoading = false; // sheet-scoped spinner
 
     showModalBottomSheet(
       context: context,
@@ -270,14 +262,14 @@ class _LoginScreenState extends State<LoginScreen> {
         maxChildSize: 0.9,
         builder: (_, controller) => StatefulBuilder(
           builder: (ctx, setSheetState) => Padding(
-            padding: EdgeInsets.only(
-                bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            padding:
+                EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
             child: Container(
               padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
               decoration: BoxDecoration(
                 color: AppColors.white,
                 borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(28)),
+                    const BorderRadius.vertical(top: Radius.circular(28)),
               ),
               child: ListView(
                 controller: controller,
@@ -294,8 +286,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   Text('Mobile OTP Login',
-                      style:
-                      AppTextStyles.headline1.copyWith(fontSize: 20)),
+                      style: AppTextStyles.headline1.copyWith(fontSize: 20)),
                   const SizedBox(height: 20),
 
                   // ───────── PHONE FIELD ─────────
@@ -303,13 +294,11 @@ class _LoginScreenState extends State<LoginScreen> {
                     key: formKey,
                     child: IntlPhoneField(
                       controller: phoneC,
-                      initialCountryCode: 'QA',        // default Qatar
+                      initialCountryCode: 'QA', // default Qatar
                       decoration: _fieldDeco('Phone Number'),
                       onChanged: (p) => e164Phone = p.completeNumber,
                       validator: (p) =>
-                      (p == null || p.number.isEmpty)
-                          ? 'Required'
-                          : null,
+                          (p == null || p.number.isEmpty) ? 'Required' : null,
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -327,39 +316,37 @@ class _LoginScreenState extends State<LoginScreen> {
                       onPressed: localLoading
                           ? null
                           : () async {
-                        if (!formKey.currentState!.validate() ||
-                            e164Phone == null) return;
+                              if (!formKey.currentState!.validate() ||
+                                  e164Phone == null) return;
 
-                        setSheetState(() => localLoading = true);
+                              setSheetState(() => localLoading = true);
 
-                        await _auth.verifyPhoneNumber(
-                          e164Phone!,
-                          verificationCompleted:
-                              (PhoneAuthCredential cred) async {
-                            await _auth.signInWithCredential(cred);
-                            if (mounted) Navigator.pop(context);
-                          },
-                          verificationFailed: (e) {
-                            _showErr(e.message ?? 'SMS failed');
-                            setSheetState(
-                                    () => localLoading = false);
-                          },
-                          codeSent: (id, _) {
-                            _verificationId = id;
-                            _showErr('OTP sent');
-                            setSheetState(
-                                    () => localLoading = false);
-                          },
-                          codeAutoRetrievalTimeout: (id) =>
-                          _verificationId = id,
-                        );
-                      },
+                              await _auth.verifyPhoneNumber(
+                                e164Phone!,
+                                verificationCompleted:
+                                    (PhoneAuthCredential cred) async {
+                                  await _auth.signInWithCredential(cred);
+                                  if (mounted) Navigator.pop(context);
+                                },
+                                verificationFailed: (e) {
+                                  _showErr(e.message ?? 'SMS failed');
+                                  setSheetState(() => localLoading = false);
+                                },
+                                codeSent: (id, _) {
+                                  _verificationId = id;
+                                  _showErr('OTP sent');
+                                  setSheetState(() => localLoading = false);
+                                },
+                                codeAutoRetrievalTimeout: (id) =>
+                                    _verificationId = id,
+                              );
+                            },
                       child: localLoading
                           ? const SizedBox(
-                          height: 22,
-                          width: 22,
-                          child: CircularProgressIndicator(
-                              color: Colors.white, strokeWidth: 3))
+                              height: 22,
+                              width: 22,
+                              child: CircularProgressIndicator(
+                                  color: Colors.white, strokeWidth: 3))
                           : const Text('Send OTP'),
                     ),
                   ),
@@ -402,7 +389,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           if (extra == null) return;
 
                           final email = extra['email']!;
-                          final name  = extra['name']!;
+                          final name = extra['name']!;
                           final docId = email.toLowerCase();
 
                           await FirebaseFirestore.instance
@@ -410,7 +397,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               .doc(docId)
                               .set({
                             'email': email,
-                            'name' : name,
+                            'name': name,
                             'phone': cred.user?.phoneNumber ?? '',
                           }, SetOptions(merge: true));
 
@@ -438,12 +425,11 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-
   // bottom-sheet that matches _promptForPhone() styling
   Future<Map<String, String>?> _promptForEmailAndName() {
     final emailC = TextEditingController();
-    final nameC  = TextEditingController();
-    final key    = GlobalKey<FormState>();
+    final nameC = TextEditingController();
+    final key = GlobalKey<FormState>();
 
     return showModalBottomSheet<Map<String, String>>(
       context: context,
@@ -451,8 +437,8 @@ class _LoginScreenState extends State<LoginScreen> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => DraggableScrollableSheet(
         initialChildSize: 0.55,
-        minChildSize:   0.45,
-        maxChildSize:   0.85,
+        minChildSize: 0.45,
+        maxChildSize: 0.85,
         builder: (_, controller) => Padding(
           padding: EdgeInsets.only(
               bottom: MediaQuery.of(ctx).viewInsets.bottom), // keyboard gap
@@ -461,7 +447,7 @@ class _LoginScreenState extends State<LoginScreen> {
             decoration: BoxDecoration(
               color: AppColors.white,
               borderRadius:
-              const BorderRadius.vertical(top: Radius.circular(28)),
+                  const BorderRadius.vertical(top: Radius.circular(28)),
             ),
             child: ListView(
               controller: controller,
@@ -488,8 +474,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         controller: emailC,
                         keyboardType: TextInputType.emailAddress,
                         decoration: _fieldDeco('Email'),
-                        validator: (v) =>
-                        (v == null || !v.contains('@'))
+                        validator: (v) => (v == null || !v.contains('@'))
                             ? 'Valid e-mail required'
                             : null,
                       ),
@@ -497,8 +482,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       TextFormField(
                         controller: nameC,
                         decoration: _fieldDeco('Full Name'),
-                        validator: (v) =>
-                        (v == null || v.trim().isEmpty)
+                        validator: (v) => (v == null || v.trim().isEmpty)
                             ? 'Name required'
                             : null,
                       ),
@@ -519,7 +503,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       if (key.currentState!.validate()) {
                         Navigator.of(ctx).pop({
                           'email': emailC.text.trim(),
-                          'name' : nameC.text.trim(),
+                          'name': nameC.text.trim(),
                         });
                       }
                     },
@@ -545,14 +529,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
 // same decoration helper used by _promptForPhone()
   InputDecoration _fieldDeco(String hint) => InputDecoration(
-    hintText: hint,
-    filled: true,
-    fillColor: AppColors.lightGrey,
-    border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: BorderSide.none,
-    ),
-  );
+        hintText: hint,
+        filled: true,
+        fillColor: AppColors.lightGrey,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+      );
 
   // ───────── Email / password auth
   Future<void> _authenticate() async {
@@ -582,17 +566,20 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ───────── error dialog helper
   void _showErr(String m) => showDialog(
-    context: context,
-    builder: (c) => AlertDialog(
-      title: const Text('Error'),
-      content: Text(m),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.of(c).pop(),
-            child: const Text('OK')),
-      ],
-    ),
-  );
+        context: context,
+        builder: (c) => AlertDialog(
+          backgroundColor: Colors.white,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Error'),
+          content: Text(m),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(c).pop(),
+                child: const Text('OK')),
+          ],
+        ),
+      );
 
   // ───────── UI
   @override
@@ -601,7 +588,11 @@ class _LoginScreenState extends State<LoginScreen> {
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.blue.shade900, AppColors.primaryBlue, Colors.black87],
+            colors: [
+              Colors.blue.shade900,
+              AppColors.primaryBlue,
+              Colors.black87
+            ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -624,8 +615,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.fastfood,
-                      size: 60, color: AppColors.primaryBlue),
+                  Icon(Icons.fastfood, size: 60, color: AppColors.primaryBlue),
                   const SizedBox(height: 16),
                   Text(
                     _isLogin ? 'Welcome Back' : 'Create Account',
@@ -648,8 +638,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Column(
                       children: [
                         if (!_isLogin) ...[
-                          _buildField(_nameC,  'Full Name',     Icons.person_outline),
-                          _buildField(_phoneC, 'Phone Number',  Icons.phone_outlined,
+                          _buildField(
+                              _nameC, 'Full Name', Icons.person_outline),
+                          _buildField(
+                              _phoneC, 'Phone Number', Icons.phone_outlined,
                               keyType: TextInputType.phone),
                         ],
                       ],
@@ -676,13 +668,13 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       child: _loading
                           ? const SizedBox(
-                          height: 24,
-                          width: 24,
-                          child: CircularProgressIndicator(
-                              color: Colors.white, strokeWidth: 3))
+                              height: 24,
+                              width: 24,
+                              child: CircularProgressIndicator(
+                                  color: Colors.white, strokeWidth: 3))
                           : Text(_isLogin ? 'Login' : 'Sign Up',
-                          style: AppTextStyles.buttonText
-                              .copyWith(color: Colors.white)),
+                              style: AppTextStyles.buttonText
+                                  .copyWith(color: Colors.white)),
                     ),
                   ),
 
@@ -728,8 +720,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       icon: Icon(Icons.phone_iphone_rounded,
                           color: AppColors.darkGrey, size: 22),
                       label: const Text('Sign in with Mobile'),
-                      onPressed:
-                      _loading ? null : () => _showMobileSignInSheet(context),
+                      onPressed: _loading
+                          ? null
+                          : () => _showMobileSignInSheet(context),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.darkGrey,
                         side: BorderSide(color: Colors.grey.shade300),
@@ -743,8 +736,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   // switch login/signup
                   TextButton(
-                    onPressed:
-                    _loading ? null : () => setState(() => _isLogin = !_isLogin),
+                    onPressed: _loading
+                        ? null
+                        : () => setState(() => _isLogin = !_isLogin),
                     child: Text(
                       _isLogin
                           ? "Don't have an account? Sign Up"
@@ -782,7 +776,7 @@ class _LoginScreenState extends State<LoginScreen> {
             borderSide: BorderSide.none,
           ),
           contentPadding:
-          const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+              const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
         ),
         style: AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey),
       ),
