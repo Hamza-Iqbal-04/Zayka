@@ -65,6 +65,21 @@ class AppStrings {
       'free': 'Free',
       'error': 'Error:',
 
+      // --- Onboarding ---
+      'onboarding_title_1': 'Order Directly From Us',
+      'onboarding_subtitle_1':
+          'Explore our full menu and place your order in just a few taps.',
+      'onboarding_title_2': 'Lightning Fast Delivery',
+      'onboarding_subtitle_2':
+          'Our riders are always on the move to bring your food quickly and safely.',
+      'onboarding_title_3': 'Right To Your Doorstep',
+      'onboarding_subtitle_3':
+          'Fresh, hot food delivered straight to your home. Every time.',
+      'next': 'Next',
+      'get_started': 'Get Started',
+      'terms_privacy_agreement':
+          'By continuing, you agree to our Terms & Privacy Policy',
+
       // --- Home & Menu ---
       'popular_items': 'Popular Items',
       'offers': 'Offers',
@@ -374,6 +389,20 @@ class AppStrings {
       'kms': 'كم)',
       'free': 'مجاني',
       'error': 'خطأ:',
+
+      // --- Onboarding ---
+      'onboarding_title_1': 'اطلب مباشرة منا',
+      'onboarding_subtitle_1': 'استكشف قائمتنا الكاملة وقدم طلبك بنقرات قليلة.',
+      'onboarding_title_2': 'توصيل سريع كالبرق',
+      'onboarding_subtitle_2':
+          'سائقونا دائماً في الطريق لإيصال طعامك بسرعة وأمان.',
+      'onboarding_title_3': 'حتى باب منزلك',
+      'onboarding_subtitle_3':
+          'طعام طازج وساخن يصلك مباشرة إلى منزلك. في كل مرة.',
+      'next': 'التالي',
+      'get_started': 'ابدأ الآن',
+      'terms_privacy_agreement':
+          'بالمتابعة، أنت توافق على شروط الاستخدام وسياسة الخصوصية',
 
       // --- Home & Menu ---
       'popular_items': 'الأكثر طلباً',
