@@ -4441,18 +4441,19 @@ class CartService extends ChangeNotifier {
             'Minimum order amount of QAR ${coupon.minSubtotal} not met');
       }
 
-      // Check if coupon has usage limit (maxUsesPerUser > 0 means limited uses)
-      if (coupon.maxUsesPerUser <= 0) {
-        throw Exception('This coupon has reached its usage limit');
-      }
+      // Check if user has already used this coupon the maximum allowed times
+      if (coupon.maxUsesPerUser > 0 && userId != null) {
+        final userUsage = await FirebaseFirestore.instance
+            .collection('coupon_usage')
+            .where('couponId', isEqualTo: coupon.id)
+            .where('userId', isEqualTo: userId)
+            .get();
 
-      // Decrement the maxUsesPerUser count in Firestore
-      await FirebaseFirestore.instance
-          .collection('coupons')
-          .doc(coupon.id)
-          .update({
-        'maxUsesPerUser': FieldValue.increment(-1),
-      });
+        if (userUsage.docs.length >= coupon.maxUsesPerUser) {
+          throw Exception(
+              'You have already used this coupon the maximum number of times');
+        }
+      }
 
       double discount = 0;
       if (coupon.type == 'percentage') {
@@ -4486,19 +4487,8 @@ class CartService extends ChangeNotifier {
   }
 
   Future<void> removeCoupon() async {
-    // Increment maxUsesPerUser back in Firestore if coupon was applied
-    if (_appliedCoupon != null) {
-      try {
-        await FirebaseFirestore.instance
-            .collection('coupons')
-            .doc(_appliedCoupon!.id)
-            .update({
-          'maxUsesPerUser': FieldValue.increment(1),
-        });
-      } catch (e) {
-        debugPrint('Error incrementing coupon usage: $e');
-      }
-    }
+    // No need to update Firestore - usage is tracked in coupon_usage collection
+    // and only recorded after successful order payment
 
     for (var item in _items) {
       item.couponDiscount = null;
