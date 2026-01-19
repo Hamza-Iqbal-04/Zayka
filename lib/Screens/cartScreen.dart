@@ -394,7 +394,9 @@ class _CartScreenState extends State<CartScreen> {
       debugPrint('Error setting branch: $e');
       if (mounted) {
         setState(() {
-          _currentBranchIds = ['Old_Airport']; // Fallback
+          _currentBranchIds = [
+            BranchService.getDefaultBranchIdSync()
+          ]; // Fallback
           _isFindingNearestBranch = false;
         });
       }
@@ -1448,16 +1450,11 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   String _getBranchDisplayName(String branchId) {
-    switch (branchId) {
-      case 'Old_Airport':
-        return 'Old Airport Branch';
-      case 'Mansoura':
-        return 'Mansoura Branch';
-      case 'West_Bay':
-        return 'West Bay Branch';
-      default:
-        return branchId.replaceAll('_', ' ') + ' Branch';
+    // Dynamic branch name formatting
+    if (branchId == 'default_branch' || branchId.isEmpty) {
+      return 'Default Branch';
     }
+    return branchId.replaceAll('_', ' ') + ' Branch';
   }
 
   String _getBranchesDisplayName(List<String> branchIds) {
@@ -2153,7 +2150,7 @@ class _CartScreenState extends State<CartScreen> {
                             .collection('Branch')
                             .doc(_currentBranchIds.isNotEmpty
                                 ? _currentBranchIds.first
-                                : 'Old_Airport')
+                                : BranchService.getDefaultBranchIdSync())
                             .snapshots(),
                         builder: (context, snapshot) {
                           // Default to the ID if loading or no data
@@ -3242,7 +3239,7 @@ class _CartScreenState extends State<CartScreen> {
                   .collection('Branch')
                   .doc(_currentBranchIds.isNotEmpty
                       ? _currentBranchIds.first
-                      : 'Old_Airport')
+                      : BranchService.getDefaultBranchIdSync())
                   .snapshots(),
               builder: (context, snapshot) {
                 // Default to the ID if loading or no data
@@ -4180,7 +4177,7 @@ class CartService extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   CouponModel? _appliedCoupon;
   double _couponDiscount = 0;
-  List<String> _currentBranchIds = ['Old_Airport'];
+  List<String> _currentBranchIds = []; // Will be initialized dynamically
   Timer? _stockMonitorTimer;
 
   List<CartModel> get items => _items;
@@ -4223,7 +4220,7 @@ class CartService extends ChangeNotifier {
         } else if (cartData['branchId'] != null) {
           _currentBranchIds = [cartData['branchId'] as String];
         } else {
-          _currentBranchIds = ['Old_Airport'];
+          _currentBranchIds = [BranchService.getDefaultBranchIdSync()];
         }
 
         notifyListeners();

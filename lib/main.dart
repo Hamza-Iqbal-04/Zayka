@@ -11,7 +11,7 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_localizations/flutter_localizations.dart'; // Added for localization
 
-import 'package:mitra_da_dhaba/Screens/welcome_screen.dart';
+import 'package:zayka_customer/Screens/welcome_screen.dart';
 import 'Services/NotificationService.dart';
 import 'Widgets/appbar.dart';
 import 'Widgets/authentication.dart';
@@ -51,7 +51,8 @@ Future<void> main() async {
         ChangeNotifierProvider<CartService>(create: (_) => CartService()),
         // 4️⃣ Language Provider (New)
         ChangeNotifierProvider<LanguageProvider>(
-            create: (_) => LanguageProvider()),
+          create: (_) => LanguageProvider(),
+        ),
       ],
       // No ConnectivityGate here; overlay is added inside MaterialApp.builder
       child: const MyApp(),
@@ -63,11 +64,7 @@ Future<void> main() async {
 class AppImageCache {
   static const key = 'img_cache_v1';
   static final instance = CacheManager(
-    Config(
-      key,
-      stalePeriod: const Duration(days: 7),
-      maxNrOfCacheObjects: 400,
-    ),
+    Config(key, stalePeriod: const Duration(days: 7), maxNrOfCacheObjects: 400),
   );
 }
 
@@ -78,6 +75,9 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
+  // Global navigator key for notification navigation
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
   // This logic checks if it's the user's first time opening the app.
   final Future<bool> _initializationFuture = _initializeDependencies();
 
@@ -91,23 +91,24 @@ class _MyAppState extends State<MyApp> {
     // Wrap MaterialApp with Consumer to rebuild when language changes
     return Consumer<LanguageProvider>(
       builder: (context, languageProvider, child) {
+        // Connect navigator key to NotificationService for tap-to-navigate
+        NotificationService.navigatorKey = _navigatorKey;
+
         return MaterialApp(
+          navigatorKey: _navigatorKey,
           title: 'Mitra Da Dhaba',
           debugShowCheckedModeBanner: false,
 
           // --- Localization Setup ---
           locale: languageProvider.appLocale,
-          supportedLocales: const [
-            Locale('en', 'US'),
-            Locale('ar', 'AE'),
-          ],
+          supportedLocales: const [Locale('en', 'US'), Locale('ar', 'AE')],
           localizationsDelegates: const [
             GlobalMaterialLocalizations.delegate,
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          // --------------------------
 
+          // --------------------------
           theme: ThemeData(
             useMaterial3: true,
             scaffoldBackgroundColor: Colors.white,
@@ -141,7 +142,7 @@ class _MyAppState extends State<MyApp> {
 class AppLoader extends StatefulWidget {
   final Future<bool> initializationFuture;
   const AppLoader({Key? key, required this.initializationFuture})
-      : super(key: key);
+    : super(key: key);
 
   @override
   State<AppLoader> createState() => _AppLoaderState();
@@ -207,7 +208,9 @@ class FirestoreService {
 
   // Save or update user data
   Future<void> saveUserData(
-      String userId, Map<String, dynamic> userData) async {
+    String userId,
+    Map<String, dynamic> userData,
+  ) async {
     try {
       await _db
           .collection(_usersCollection)
@@ -242,11 +245,9 @@ class FirestoreService {
 
   // Stream user data for real-time updates
   Stream<AppUser?> streamUserData(String userId) {
-    return _db
-        .collection(_usersCollection)
-        .doc(userId)
-        .snapshots()
-        .map((snapshot) {
+    return _db.collection(_usersCollection).doc(userId).snapshots().map((
+      snapshot,
+    ) {
       if (snapshot.exists) {
         return AppUser.fromFirestore(snapshot);
       } else {

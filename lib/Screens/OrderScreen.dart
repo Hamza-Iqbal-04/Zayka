@@ -18,6 +18,7 @@ import 'dart:ui';
 import '../Services/language_provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import '../Services/BranchService.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({Key? key}) : super(key: key);
@@ -719,7 +720,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     _listenToOrderUpdates();
     // Initialize Future once to avoid re-fetching on build
     _restaurantGeoFuture = _fetchRestaurantGeo(
-        _currentOrder['restaurantId'] as String? ?? 'Old_Airport');
+        _currentOrder['restaurantId'] as String? ??
+            BranchService.getDefaultBranchIdSync());
   }
 
   void _listenToOrderUpdates() {

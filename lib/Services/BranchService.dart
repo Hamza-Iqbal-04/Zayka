@@ -29,7 +29,11 @@ class BranchLocator extends ChangeNotifier {
     for (final d in docs.docs) {
       final GeoPoint pt = d['address']['geolocation'];
       final dist = Geolocator.distanceBetween(
-          userPt.latitude, userPt.longitude, pt.latitude, pt.longitude);
+        userPt.latitude,
+        userPt.longitude,
+        pt.latitude,
+        pt.longitude,
+      );
       if (dist < best) {
         best = dist;
         bestId = d.id;
@@ -50,7 +54,12 @@ class BranchDistance {
   final bool isInRange;
 
   BranchDistance(
-      this.id, this.name, this.distance, this.isOpen, this.isInRange);
+    this.id,
+    this.name,
+    this.distance,
+    this.isOpen,
+    this.isInRange,
+  );
 }
 
 class BranchSelectionResult {
@@ -72,6 +81,45 @@ class BranchSelectionResult {
 class BranchService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  // Cached default branch ID for fallback
+  static String? _cachedDefaultBranchId;
+
+  /// Get the default branch ID dynamically from Firestore.
+  /// Caches the result for subsequent calls.
+  static Future<String> getDefaultBranchId() async {
+    if (_cachedDefaultBranchId != null) {
+      return _cachedDefaultBranchId!;
+    }
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('Branch')
+          .where('isActive', isEqualTo: true)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        _cachedDefaultBranchId = snapshot.docs.first.id;
+        return _cachedDefaultBranchId!;
+      }
+    } catch (e) {
+      debugPrint('Error fetching default branch: $e');
+    }
+
+    // Ultimate fallback - should rarely happen
+    return 'default_branch';
+  }
+
+  /// Sync version for places that need immediate fallback (uses cache)
+  static String getDefaultBranchIdSync() {
+    return _cachedDefaultBranchId ?? 'default_branch';
+  }
+
+  /// Clear cached default branch (call on logout or branch changes)
+  static void clearCache() {
+    _cachedDefaultBranchId = null;
+  }
 
   Future<BranchSelectionResult> findBestBranch({
     required GeoPoint userLocation,
@@ -106,16 +154,17 @@ class BranchService {
 
           final bool isOpen = data['isOpen'] ?? true;
           final String name = data['name'] ?? doc.id;
-          final double noDeliveryRange =
-              (data['noDeliveryRange'] ?? 0).toDouble();
+          final double noDeliveryRange = (data['noDeliveryRange'] ?? 0)
+              .toDouble();
 
           // Rule: If delivery, range matters. If pickup, range doesn't matter.
           final bool isInRange = orderType == 'pickup'
               ? true
               : (noDeliveryRange > 0 && distance <= noDeliveryRange);
 
-          sortedBranches
-              .add(BranchDistance(doc.id, name, distance, isOpen, isInRange));
+          sortedBranches.add(
+            BranchDistance(doc.id, name, distance, isOpen, isInRange),
+          );
         }
       }
 
@@ -126,8 +175,9 @@ class BranchService {
 
       // 3. FILTERING FOR DELIVERY
       if (orderType == 'delivery') {
-        final branchesInRange =
-            sortedBranches.where((b) => b.isInRange).toList();
+        final branchesInRange = sortedBranches
+            .where((b) => b.isInRange)
+            .toList();
 
         if (branchesInRange.isEmpty) {
           return BranchSelectionResult(noDeliveryAvailable: true);
@@ -158,8 +208,9 @@ class BranchService {
       BranchDistance? nearestClosed;
 
       // Find the absolute closest branch (ignoring open status) within the filtered list
-      final geometricNearest = sortedBranches
-          .reduce((curr, next) => curr.distance < next.distance ? curr : next);
+      final geometricNearest = sortedBranches.reduce(
+        (curr, next) => curr.distance < next.distance ? curr : next,
+      );
 
       // If we picked an open branch that isn't the geometric nearest, it means the nearest was closed
       if (selectedBranch.id != geometricNearest.id &&
@@ -178,15 +229,16 @@ class BranchService {
     } catch (e) {
       debugPrint('Error finding best branch: $e');
       // FAIL SAFE: Do NOT return allClosed=true, as this blocks the app.
-      // Instead, return a fallback branch (e.g. Old_Airport) assuming it's open.
+      // Instead, return a fallback branch assuming it's open.
+      final fallbackId = await getDefaultBranchId();
       return BranchSelectionResult(
         selectedBranch: BranchDistance(
-            'Old_Airport',
-            'Old Airport Branch',
-            0.0,
-            true, // Assume open on error to avoid blocking
-            true // Assume in range on error to avoid blocking
-            ),
+          fallbackId,
+          'Default Branch',
+          0.0,
+          true, // Assume open on error to avoid blocking
+          true, // Assume in range on error to avoid blocking
+        ),
         allClosed: false,
         noDeliveryAvailable: false,
       );
@@ -201,13 +253,15 @@ class BranchService {
 
       final user = _auth.currentUser;
       if (user == null || user.email == null) {
-        return 'Old_Airport';
+        return await getDefaultBranchId();
       }
 
-      final userDoc =
-          await _firestore.collection('Users').doc(user.email).get();
+      final userDoc = await _firestore
+          .collection('Users')
+          .doc(user.email)
+          .get();
       if (!userDoc.exists) {
-        return 'Old_Airport';
+        return await getDefaultBranchId();
       }
 
       final userData = userDoc.data() as Map<String, dynamic>;
@@ -215,7 +269,7 @@ class BranchService {
           (userData['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
 
       if (addresses.isEmpty) {
-        return 'Old_Airport';
+        return await getDefaultBranchId();
       }
 
       Map<String, dynamic> defaultAddress;
@@ -226,7 +280,7 @@ class BranchService {
       }
 
       if (defaultAddress['geolocation'] == null) {
-        return 'Old_Airport';
+        return await getDefaultBranchId();
       }
 
       final userGeoPoint = defaultAddress['geolocation'] as GeoPoint;
@@ -241,7 +295,7 @@ class BranchService {
       // Let's stick to the original behavior for this method to ensure stability.
 
       final branches = await _getAllBranches();
-      if (branches.isEmpty) return 'Old_Airport';
+      if (branches.isEmpty) return await getDefaultBranchId();
 
       Branch nearestBranch = branches.first;
       double shortestDistance = double.infinity;
@@ -265,7 +319,7 @@ class BranchService {
       return nearestBranch.id;
     } catch (e) {
       debugPrint('❌ Error finding nearest branch by address: $e');
-      return 'Old_Airport';
+      return await getDefaultBranchId();
     }
   }
 
@@ -275,7 +329,7 @@ class BranchService {
       Position userPosition = await _getCurrentLocation();
 
       final branches = await _getAllBranches();
-      if (branches.isEmpty) return 'Old_Airport';
+      if (branches.isEmpty) return await getDefaultBranchId();
 
       Branch nearestBranch = branches.first;
       double shortestDistance = double.infinity;
@@ -298,7 +352,7 @@ class BranchService {
       return nearestBranch.id;
     } catch (e) {
       debugPrint('❌ Error finding nearest branch by GPS: $e');
-      return 'Old_Airport';
+      return await getDefaultBranchId();
     }
   }
 
@@ -311,25 +365,25 @@ class BranchService {
   }
 
   String getBranchDisplayName(String branchId) {
-    switch (branchId) {
-      case 'Old_Airport':
-        return 'Old Airport Branch';
-      case 'Mansoura':
-        return 'Mansoura Branch';
-      case 'West_Bay':
-        return 'West Bay Branch';
-      default:
-        return branchId.replaceAll('_', ' ') + ' Branch';
+    // Dynamic display name - format the branch ID nicely
+    if (branchId == 'default_branch') {
+      return 'Default Branch';
     }
+    // Format any branch ID: replace underscores with spaces and add " Branch"
+    return branchId.replaceAll('_', ' ') + ' Branch';
   }
 
   Future<bool> canBranchDeliverToAddress(
-      String branchId, String userEmail) async {
+    String branchId,
+    String userEmail,
+  ) async {
     try {
       if (userEmail.isEmpty) return true;
 
-      final branchDoc =
-          await _firestore.collection('Branch').doc(branchId).get();
+      final branchDoc = await _firestore
+          .collection('Branch')
+          .doc(branchId)
+          .get();
       if (!branchDoc.exists) return false;
 
       final branchData = branchDoc.data() as Map<String, dynamic>;
@@ -362,7 +416,8 @@ class BranchService {
 
       final branchGeoPoint = branchAddress['geolocation'] as GeoPoint;
 
-      final distance = Geolocator.distanceBetween(
+      final distance =
+          Geolocator.distanceBetween(
             userGeoPoint.latitude,
             userGeoPoint.longitude,
             branchGeoPoint.latitude,
@@ -429,20 +484,131 @@ class BranchService {
     );
   }
 
-  Future<String> getDynamicEtaForUser(String branchId,
-      {String orderType = 'delivery'}) async {
-    // Mock implementation
-    return "30-45 mins";
+  /// Calculate dynamic ETA based on user's address and branch location
+  /// Returns estimated time range like "25-35 mins"
+  Future<String> getDynamicEtaForUser(
+    String branchId, {
+    String orderType = 'delivery',
+  }) async {
+    try {
+      // 1. Get user's delivery address from their saved addresses
+      final user = _auth.currentUser;
+      if (user == null || user.email == null) {
+        return _getDefaultEta(orderType);
+      }
+
+      final userDoc = await _firestore
+          .collection('Users')
+          .doc(user.email)
+          .get();
+      if (!userDoc.exists) {
+        return _getDefaultEta(orderType);
+      }
+
+      final userData = userDoc.data() as Map<String, dynamic>;
+      final addresses =
+          (userData['address'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+      if (addresses.isEmpty) {
+        return _getDefaultEta(orderType);
+      }
+
+      // Find default address or use first one
+      Map<String, dynamic> deliveryAddress;
+      try {
+        deliveryAddress = addresses.firstWhere((a) => a['isDefault'] == true);
+      } catch (e) {
+        deliveryAddress = addresses.first;
+      }
+
+      final userGeo = deliveryAddress['geolocation'] as GeoPoint?;
+      if (userGeo == null) {
+        return _getDefaultEta(orderType);
+      }
+
+      // 2. Get branch location
+      final branchDoc = await _firestore
+          .collection('Branch')
+          .doc(branchId)
+          .get();
+      if (!branchDoc.exists) {
+        return _getDefaultEta(orderType);
+      }
+
+      final branchData = branchDoc.data() as Map<String, dynamic>;
+      final branchAddress = branchData['address'] as Map<String, dynamic>?;
+      final branchGeo = branchAddress?['geolocation'] as GeoPoint?;
+
+      if (branchGeo == null) {
+        return _getDefaultEta(orderType);
+      }
+
+      // 3. Calculate distance in km
+      final distanceKm = _calculateDistance(
+        userGeo.latitude,
+        userGeo.longitude,
+        branchGeo.latitude,
+        branchGeo.longitude,
+      );
+
+      // 4. Get prep time from branch settings or use default
+      final avgPrepTime = (branchData['avgPrepTime'] as num?)?.toInt() ?? 15;
+
+      // 5. Calculate delivery time
+      // Average delivery speed: 25 km/h (accounts for traffic, stops, etc.)
+      // For pickup/takeaway, no delivery time needed
+      int deliveryTimeMin = 0;
+      if (orderType == 'delivery') {
+        deliveryTimeMin = (distanceKm / 25.0 * 60).ceil();
+        // Minimum 5 min delivery time for very close distances
+        deliveryTimeMin = deliveryTimeMin < 5 ? 5 : deliveryTimeMin;
+      }
+
+      // 6. Calculate total time with buffer
+      final baseTime = avgPrepTime + deliveryTimeMin;
+      final bufferTime = (baseTime * 0.2).ceil(); // 20% buffer
+      final lowerBound = baseTime;
+      final upperBound = baseTime + bufferTime + 5; // +5 for variance
+
+      // 7. Format response based on order type
+      if (orderType == 'pickup' || orderType == 'takeaway') {
+        return "$lowerBound-$upperBound mins";
+      }
+
+      return "$lowerBound-$upperBound mins";
+    } catch (e) {
+      print('Error calculating ETA: $e');
+      return _getDefaultEta(orderType);
+    }
+  }
+
+  /// Default ETA fallback values by order type
+  String _getDefaultEta(String orderType) {
+    switch (orderType) {
+      case 'pickup':
+      case 'takeaway':
+        return "15-25 mins";
+      case 'dine_in':
+        return "20-30 mins";
+      case 'delivery':
+      default:
+        return "30-45 mins";
+    }
   }
 
   // Helper: Haversine distance in km
   double _calculateDistance(
-      double lat1, double lon1, double lat2, double lon2) {
+    double lat1,
+    double lon1,
+    double lat2,
+    double lon2,
+  ) {
     const double earthRadius = 6371; // km
     double dLat = _toRadians(lat2 - lat1);
     double dLon = _toRadians(lon2 - lon1);
 
-    double a = sin(dLat / 2) * sin(dLat / 2) +
+    double a =
+        sin(dLat / 2) * sin(dLat / 2) +
         cos(_toRadians(lat1)) *
             cos(_toRadians(lat2)) *
             sin(dLon / 2) *

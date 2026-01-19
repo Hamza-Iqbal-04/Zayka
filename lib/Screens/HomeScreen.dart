@@ -11,14 +11,14 @@ import 'package:collection/collection.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:smooth_page_indicator/smooth_page_indicator.dart';
-import 'package:mitra_da_dhaba/Widgets/models.dart';
-import 'package:mitra_da_dhaba/Screens/Profile.dart';
-import 'package:mitra_da_dhaba/Screens/cartScreen.dart';
-import 'package:mitra_da_dhaba/Screens/OrderScreen.dart';
+import 'package:zayka_customer/Widgets/models.dart';
+import 'package:zayka_customer/Screens/Profile.dart';
+import 'package:zayka_customer/Screens/cartScreen.dart';
+import 'package:zayka_customer/Screens/OrderScreen.dart';
 import 'package:shimmer/shimmer.dart';
 import '../Widgets/bottom_nav.dart';
 import '../Services/language_provider.dart';
-import 'package:mitra_da_dhaba/Services/BranchService.dart';
+import 'package:zayka_customer/Services/BranchService.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const Color kChipActive = AppColors.primaryBlue;
@@ -37,7 +37,7 @@ class _HomeScreenState extends State<HomeScreen>
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   // Branch / user UI state
-  String _currentBranchId = 'Old_Airport'; // Make it mutable
+  String _currentBranchId = ''; // Will be set dynamically
   final BranchService _branchService = BranchService();
   String _estimatedTime = 'Loading...';
   String _userAddressLabel = 'Loading...';
@@ -210,7 +210,8 @@ class _HomeScreenState extends State<HomeScreen>
         content: const Text('Choose a branch to test functionality:'),
         actions: [
           TextButton(
-            onPressed: () => _switchBranch('Old_Airport'),
+            onPressed: () =>
+                _switchBranch(BranchService.getDefaultBranchIdSync()),
             child: const Text('Old Airport'),
           ),
           TextButton(
@@ -3905,9 +3906,10 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
     try {
       final cart = CartService();
       final currentBranchIds = cart.currentBranchIds;
-      // Default to Old_Airport if cart is empty, similar to main logic
-      final branchToCheck =
-          currentBranchIds.isNotEmpty ? currentBranchIds.first : 'Old_Airport';
+      // Default to dynamic fallback if cart is empty, similar to main logic
+      final branchToCheck = currentBranchIds.isNotEmpty
+          ? currentBranchIds.first
+          : BranchService.getDefaultBranchIdSync();
 
       final isAvailable = widget.item.isAvailableInBranch(branchToCheck);
 

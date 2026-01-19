@@ -64,7 +64,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '21940943998',
     projectId: 'mddprod-2954f',
     storageBucket: 'mddprod-2954f.firebasestorage.app',
-    iosBundleId: 'com.example.mitraDaDhaba',
+    iosBundleId: 'com.zayka.customer',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
@@ -73,7 +73,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '21940943998',
     projectId: 'mddprod-2954f',
     storageBucket: 'mddprod-2954f.firebasestorage.app',
-    iosBundleId: 'com.example.mitraDaDhaba',
+    iosBundleId: 'com.zayka.customer',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
