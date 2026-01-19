@@ -719,9 +719,17 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     _currentOrder = widget.order;
     _listenToOrderUpdates();
     // Initialize Future once to avoid re-fetching on build
-    _restaurantGeoFuture = _fetchRestaurantGeo(
-        _currentOrder['restaurantId'] as String? ??
-            BranchService.getDefaultBranchIdSync());
+    String? branchId = _currentOrder['restaurantId'] as String?;
+    if ((branchId == null || branchId.isEmpty) &&
+        _currentOrder['branchIds'] is List &&
+        (_currentOrder['branchIds'] as List).isNotEmpty) {
+      branchId = (_currentOrder['branchIds'] as List).first.toString();
+    }
+
+    final finalBranchId = branchId ?? BranchService.getDefaultBranchIdSync();
+    debugPrint("InitState: Fetching geo for branchId: $finalBranchId");
+
+    _restaurantGeoFuture = _fetchRestaurantGeo(finalBranchId);
   }
 
   void _listenToOrderUpdates() {
@@ -993,6 +1001,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isArabic = Provider.of<LanguageProvider>(context).isArabic;
     final items =
         (_currentOrder['items'] as List? ?? []).cast<Map<String, dynamic>>();
     final status = _getEffectiveStatus();
@@ -1004,7 +1013,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final timestamp = _currentOrder['timestamp'] as Timestamp?;
     String formattedDate = '--';
     if (timestamp != null) {
-      final isArabic = Provider.of<LanguageProvider>(context).isArabic;
       final locale = isArabic ? 'ar' : 'en';
       final dateStr =
           DateFormat('d MMM, h:mm a', locale).format(timestamp.toDate());
@@ -1249,10 +1257,77 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 Center(
                   child: Padding(
                     padding: const EdgeInsets.only(bottom: 16.0),
-                    child: Text(
-                      '${AppStrings.get('placed_on', context)} $formattedDate',
-                      style:
-                          TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                    child: Column(
+                      children: [
+                        Text(
+                          '${AppStrings.get('placed_on', context)} $formattedDate',
+                          style: TextStyle(
+                              fontSize: 14, color: Colors.grey.shade600),
+                        ),
+                        if ([
+                          'picked_up',
+                          'pickedup',
+                          'picked up',
+                          'on_the_way',
+                          'on the way',
+                          'out_for_delivery',
+                          'out for delivery',
+                          'ontheway',
+                          'rider_assigned',
+                          'rider assigned'
+                        ].contains(statusClean))
+                          FutureBuilder<GeoPoint?>(
+                            future: _restaurantGeoFuture,
+                            builder: (context, snapshot) {
+                              if (snapshot.hasData &&
+                                  snapshot.data != null &&
+                                  userGeo != null) {
+                                final eta = _calculateTravelTimeEta(
+                                    snapshot.data!, userGeo);
+                                if (eta.isNotEmpty) {
+                                  final arrivingLabel =
+                                      isArabic ? "يصل خلال" : "Arriving in";
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 12.0),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 24, vertical: 12),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.primaryBlue,
+                                        borderRadius: BorderRadius.circular(30),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: AppColors.primaryBlue
+                                                .withOpacity(0.3),
+                                            blurRadius: 8,
+                                            offset: const Offset(0, 4),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.timer_outlined,
+                                              size: 22, color: Colors.white),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            "$arrivingLabel $eta",
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }
+                              }
+                              return const SizedBox.shrink();
+                            },
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -1399,6 +1474,30 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         ],
       ),
     );
+  }
+
+  String _calculateTravelTimeEta(GeoPoint start, GeoPoint end) {
+    try {
+      final distance = const Distance().as(
+        LengthUnit.Kilometer,
+        LatLng(start.latitude, start.longitude),
+        LatLng(end.latitude, end.longitude),
+      );
+
+      // Average speed: 25 km/h
+      // Buffer: 10 minutes
+      final travelTimeMinutes = (distance / 25.0) * 60;
+      final totalMinutes = (travelTimeMinutes + 10).round();
+
+      final minsText = AppStrings.get('mins', context);
+      final formattedNumber =
+          AppStrings.formatNumber(totalMinutes.toString(), context);
+
+      return "$formattedNumber $minsText";
+    } catch (e) {
+      debugPrint('Error calculating ETA: $e');
+      return "";
+    }
   }
 
   Widget _buildSectionCard({

@@ -8,7 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:collection/collection.dart';
-import 'package:intl/intl.dart';
+
 import 'package:provider/provider.dart';
 import 'package:smooth_page_indicator/smooth_page_indicator.dart';
 import 'package:zayka_customer/Widgets/models.dart';
@@ -2291,7 +2291,11 @@ class _HomeScreenState extends State<HomeScreen>
                                       size: 16, color: Colors.blue),
                                   const SizedBox(width: 4),
                                   Text(
-                                    _estimatedTime,
+                                    AppStrings.formatNumber(
+                                      _estimatedTime.replaceAll('mins',
+                                          AppStrings.get('mins', context)),
+                                      context,
+                                    ),
                                     style: const TextStyle(
                                         fontSize: 12,
                                         fontWeight: FontWeight.w700,
@@ -4492,6 +4496,11 @@ class RestaurantService {
       final double storeLatitude = storeGeolocationField.latitude;
       final double storeLongitude = storeGeolocationField.longitude;
 
+      // Get estimatedTime and bufferTime from Branch (in minutes)
+      final double estimatedTime =
+          (branchData?['estimatedTime'] ?? 15).toDouble();
+      final double bufferTime = (branchData?['bufferTime'] ?? 5).toDouble();
+
       final user = FirebaseAuth.instance.currentUser;
       if (user == null || user.email == null)
         throw Exception('User not logged in');
@@ -4533,13 +4542,18 @@ class RestaurantService {
         storeLongitude,
       );
 
-      const double basePrepTimeMinutes = 15.0;
-      const double averageSpeedMetersPerMinute = 300.0;
-      final double travelTimeMinutes =
-          distanceInMeters / averageSpeedMetersPerMinute;
+      // Calculate travel time: distance in km / average speed (25 km/h) * 60 mins
+      final double distanceInKm = distanceInMeters / 1000;
+      final double travelTimeMinutes = (distanceInKm / 25.0) * 60;
+      // Minimum 5 min travel time for very close distances
+      final double adjustedTravelTime =
+          travelTimeMinutes < 5 ? 5 : travelTimeMinutes;
 
+      // Total ETA = estimatedTime + bufferTime + travelTime
       int totalEstimatedTimeMinutes =
-          (basePrepTimeMinutes + travelTimeMinutes).round().clamp(15, 120);
+          (estimatedTime + bufferTime + adjustedTravelTime)
+              .round()
+              .clamp(15, 120);
       return '$totalEstimatedTimeMinutes mins';
     } catch (e) {
       debugPrint('Error calculating delivery ETA: $e');
@@ -4549,22 +4563,24 @@ class RestaurantService {
 
   Future<String> _calculatePickupTime(String branchId) async {
     try {
-      const double basePrepTimeMinutes = 15.0;
+      // Get branch data for estimatedTime and bufferTime
+      final branchDoc = await FirebaseFirestore.instance
+          .collection('Branch')
+          .doc(branchId)
+          .get();
 
-      final now = DateTime.now();
-      final today = DateFormat('yyyy-MM-dd').format(now);
-      final ordersSnapshot = await FirebaseFirestore.instance
-          .collection('Orders')
-          .where('branchId', isEqualTo: branchId)
-          .where('date', isEqualTo: today)
-          .where('status', whereIn: ['preparing', 'pending', 'accepted']).get();
+      double estimatedTime = 15.0;
+      double bufferTime = 5.0;
 
-      final activeOrderCount = ordersSnapshot.docs.length;
+      if (branchDoc.exists) {
+        final branchData = branchDoc.data();
+        estimatedTime = (branchData?['estimatedTime'] ?? 15).toDouble();
+        bufferTime = (branchData?['bufferTime'] ?? 5).toDouble();
+      }
 
-      final loadAdjustment = (activeOrderCount * 5).toDouble();
-      final totalPrepTime = basePrepTimeMinutes + loadAdjustment;
-
-      int totalEstimatedTimeMinutes = totalPrepTime.round().clamp(10, 60);
+      // Total ETA for pickup = estimatedTime + bufferTime (no travel time)
+      int totalEstimatedTimeMinutes =
+          (estimatedTime + bufferTime).round().clamp(10, 60);
       return '$totalEstimatedTimeMinutes mins';
     } catch (e) {
       debugPrint('Error calculating pickup ETA: $e');

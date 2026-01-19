@@ -154,8 +154,8 @@ class BranchService {
 
           final bool isOpen = data['isOpen'] ?? true;
           final String name = data['name'] ?? doc.id;
-          final double noDeliveryRange = (data['noDeliveryRange'] ?? 0)
-              .toDouble();
+          final double noDeliveryRange =
+              (data['noDeliveryRange'] ?? 0).toDouble();
 
           // Rule: If delivery, range matters. If pickup, range doesn't matter.
           final bool isInRange = orderType == 'pickup'
@@ -175,9 +175,8 @@ class BranchService {
 
       // 3. FILTERING FOR DELIVERY
       if (orderType == 'delivery') {
-        final branchesInRange = sortedBranches
-            .where((b) => b.isInRange)
-            .toList();
+        final branchesInRange =
+            sortedBranches.where((b) => b.isInRange).toList();
 
         if (branchesInRange.isEmpty) {
           return BranchSelectionResult(noDeliveryAvailable: true);
@@ -256,10 +255,8 @@ class BranchService {
         return await getDefaultBranchId();
       }
 
-      final userDoc = await _firestore
-          .collection('Users')
-          .doc(user.email)
-          .get();
+      final userDoc =
+          await _firestore.collection('Users').doc(user.email).get();
       if (!userDoc.exists) {
         return await getDefaultBranchId();
       }
@@ -380,10 +377,8 @@ class BranchService {
     try {
       if (userEmail.isEmpty) return true;
 
-      final branchDoc = await _firestore
-          .collection('Branch')
-          .doc(branchId)
-          .get();
+      final branchDoc =
+          await _firestore.collection('Branch').doc(branchId).get();
       if (!branchDoc.exists) return false;
 
       final branchData = branchDoc.data() as Map<String, dynamic>;
@@ -416,8 +411,7 @@ class BranchService {
 
       final branchGeoPoint = branchAddress['geolocation'] as GeoPoint;
 
-      final distance =
-          Geolocator.distanceBetween(
+      final distance = Geolocator.distanceBetween(
             userGeoPoint.latitude,
             userGeoPoint.longitude,
             branchGeoPoint.latitude,
@@ -485,7 +479,7 @@ class BranchService {
   }
 
   /// Calculate dynamic ETA based on user's address and branch location
-  /// Returns estimated time range like "25-35 mins"
+  /// Returns estimated time like "35 mins"
   Future<String> getDynamicEtaForUser(
     String branchId, {
     String orderType = 'delivery',
@@ -497,10 +491,8 @@ class BranchService {
         return _getDefaultEta(orderType);
       }
 
-      final userDoc = await _firestore
-          .collection('Users')
-          .doc(user.email)
-          .get();
+      final userDoc =
+          await _firestore.collection('Users').doc(user.email).get();
       if (!userDoc.exists) {
         return _getDefaultEta(orderType);
       }
@@ -526,11 +518,9 @@ class BranchService {
         return _getDefaultEta(orderType);
       }
 
-      // 2. Get branch location
-      final branchDoc = await _firestore
-          .collection('Branch')
-          .doc(branchId)
-          .get();
+      // 2. Get branch location and ETA settings
+      final branchDoc =
+          await _firestore.collection('Branch').doc(branchId).get();
       if (!branchDoc.exists) {
         return _getDefaultEta(orderType);
       }
@@ -543,7 +533,12 @@ class BranchService {
         return _getDefaultEta(orderType);
       }
 
-      // 3. Calculate distance in km
+      // 3. Get estimatedTime and bufferTime from Branch (in minutes)
+      final int estimatedTime =
+          (branchData['estimatedTime'] as num?)?.toInt() ?? 15;
+      final int bufferTime = (branchData['bufferTime'] as num?)?.toInt() ?? 5;
+
+      // 4. Calculate distance in km
       final distanceKm = _calculateDistance(
         userGeo.latitude,
         userGeo.longitude,
@@ -551,31 +546,20 @@ class BranchService {
         branchGeo.longitude,
       );
 
-      // 4. Get prep time from branch settings or use default
-      final avgPrepTime = (branchData['avgPrepTime'] as num?)?.toInt() ?? 15;
-
       // 5. Calculate delivery time
       // Average delivery speed: 25 km/h (accounts for traffic, stops, etc.)
       // For pickup/takeaway, no delivery time needed
-      int deliveryTimeMin = 0;
+      int travelTimeMin = 0;
       if (orderType == 'delivery') {
-        deliveryTimeMin = (distanceKm / 25.0 * 60).ceil();
+        travelTimeMin = (distanceKm / 25.0 * 60).ceil();
         // Minimum 5 min delivery time for very close distances
-        deliveryTimeMin = deliveryTimeMin < 5 ? 5 : deliveryTimeMin;
+        travelTimeMin = travelTimeMin < 5 ? 5 : travelTimeMin;
       }
 
-      // 6. Calculate total time with buffer
-      final baseTime = avgPrepTime + deliveryTimeMin;
-      final bufferTime = (baseTime * 0.2).ceil(); // 20% buffer
-      final lowerBound = baseTime;
-      final upperBound = baseTime + bufferTime + 5; // +5 for variance
+      // 6. Calculate total time: estimatedTime + bufferTime + travelTime
+      final totalTime = estimatedTime + bufferTime + travelTimeMin;
 
-      // 7. Format response based on order type
-      if (orderType == 'pickup' || orderType == 'takeaway') {
-        return "$lowerBound-$upperBound mins";
-      }
-
-      return "$lowerBound-$upperBound mins";
+      return "$totalTime mins";
     } catch (e) {
       print('Error calculating ETA: $e');
       return _getDefaultEta(orderType);
@@ -607,8 +591,7 @@ class BranchService {
     double dLat = _toRadians(lat2 - lat1);
     double dLon = _toRadians(lon2 - lon1);
 
-    double a =
-        sin(dLat / 2) * sin(dLat / 2) +
+    double a = sin(dLat / 2) * sin(dLat / 2) +
         cos(_toRadians(lat1)) *
             cos(_toRadians(lat2)) *
             sin(dLon / 2) *
