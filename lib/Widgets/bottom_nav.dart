@@ -1,8 +1,11 @@
 // bottom_nav.dart
+import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:convex_bottom_bar/convex_bottom_bar.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../Utils/platform_utils.dart';
 import 'package:zayka_customer/Screens/Profile.dart';
 import 'package:provider/provider.dart';
 import 'package:zayka_customer/Screens/CouponsScreen.dart';
@@ -259,6 +262,111 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
   }
 
   Widget _buildBottomNav(CartService cart) {
+    // User requested to keep Android-style ConvexAppBar on iOS as well
+    return _buildMaterialNav(cart);
+  }
+
+  /// Cupertino Tab Bar for iOS with glassmorphism effect
+  Widget _buildCupertinoNav(CartService cart) {
+    return Container(
+      decoration: BoxDecoration(
+        // Glassmorphism effect with blur
+        color: CupertinoColors.systemBackground
+            .resolveFrom(context)
+            .withOpacity(0.9),
+        border: Border(
+          top: BorderSide(
+            color: CupertinoColors.separator.resolveFrom(context),
+            width: 0.0,
+          ),
+        ),
+      ),
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
+          child: CupertinoTabBar(
+            currentIndex: _currentIndex,
+            activeColor: AppColors.primaryBlue,
+            inactiveColor: CupertinoColors.inactiveGray,
+            backgroundColor: Colors.transparent,
+            items: [
+              BottomNavigationBarItem(
+                icon: const Icon(CupertinoIcons.home),
+                activeIcon: const Icon(CupertinoIcons.house_fill),
+                label: AppStrings.get('nav_home', context),
+              ),
+              BottomNavigationBarItem(
+                icon: const Icon(CupertinoIcons.doc_text),
+                activeIcon: const Icon(CupertinoIcons.doc_text_fill),
+                label: AppStrings.get('nav_orders', context),
+              ),
+              BottomNavigationBarItem(
+                icon: const Icon(CupertinoIcons.tag),
+                activeIcon: const Icon(CupertinoIcons.tag_fill),
+                label: AppStrings.get('nav_offers', context),
+              ),
+              BottomNavigationBarItem(
+                icon: _cupertinoCartIcon(_cartItemCount, false),
+                activeIcon: _cupertinoCartIcon(_cartItemCount, true),
+                label: AppStrings.get('nav_cart', context),
+              ),
+              BottomNavigationBarItem(
+                icon: const Icon(CupertinoIcons.person),
+                activeIcon: const Icon(CupertinoIcons.person_fill),
+                label: AppStrings.get('nav_profile', context),
+              ),
+            ],
+            onTap: (i) {
+              if (_currentIndex == i) return;
+              _tabController.animateTo(i);
+              setState(() => _currentIndex = i);
+              BottomNavController.index.value = i;
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Cupertino-style cart icon with badge for iOS
+  Widget _cupertinoCartIcon(int itemCount, bool isActive) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Icon(
+          isActive ? CupertinoIcons.cart_fill : CupertinoIcons.cart,
+        ),
+        if (itemCount > 0)
+          Positioned(
+            right: -6,
+            top: -4,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: const BoxDecoration(
+                color: CupertinoColors.systemRed,
+                shape: BoxShape.circle,
+              ),
+              constraints: const BoxConstraints(
+                minWidth: 16,
+                minHeight: 16,
+              ),
+              child: Text(
+                itemCount > 9 ? '9+' : itemCount.toString(),
+                style: const TextStyle(
+                  color: CupertinoColors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Material ConvexAppBar for Android
+  Widget _buildMaterialNav(CartService cart) {
     return ConvexAppBar(
       // 6. Provide the controller to the AppBar
       controller: _tabController,

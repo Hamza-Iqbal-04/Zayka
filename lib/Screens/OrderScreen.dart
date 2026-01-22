@@ -19,6 +19,7 @@ import '../Services/language_provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../Services/BranchService.dart';
+import '../Widgets/authentication.dart'; // Added import
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({Key? key}) : super(key: key);
@@ -98,7 +99,7 @@ class _OrderScreenState extends State<OrdersScreen> {
   Query<Map<String, dynamic>> _buildBaseQuery(User user) {
     Query<Map<String, dynamic>> query = _firestore
         .collection('Orders')
-        .where('customerId', isEqualTo: user.email)
+        .where('customerId', isEqualTo: AuthUtils.getDocId(user))
         .orderBy('timestamp', descending: true);
 
     if (_selectedFilterKey != 'all') {
@@ -125,7 +126,7 @@ class _OrderScreenState extends State<OrdersScreen> {
     if (_isFetchingMore || !_hasMore) return;
 
     final user = _auth.currentUser;
-    if (user == null || user.email == null) {
+    if (user == null) {
       setState(() {
         _isInitialLoading = false;
         _isFetchingMore = false;
@@ -1273,8 +1274,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                           'out_for_delivery',
                           'out for delivery',
                           'ontheway',
-                          'rider_assigned',
-                          'rider assigned'
                         ].contains(statusClean))
                           FutureBuilder<GeoPoint?>(
                             future: _restaurantGeoFuture,
@@ -1326,6 +1325,37 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                               }
                               return const SizedBox.shrink();
                             },
+                          )
+                        else if ((_currentOrder['originalEstimatedDuration']
+                                    as String? ??
+                                '')
+                            .isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12.0),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 24, vertical: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade200,
+                                borderRadius: BorderRadius.circular(30),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.access_time,
+                                      size: 20, color: Colors.grey.shade700),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "${isArabic ? 'وقت التوصيل المتوقع' : 'Estimated Delivery'}: ${_currentOrder['originalEstimatedDuration']}",
+                                    style: TextStyle(
+                                      color: Colors.grey.shade800,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                       ],
                     ),

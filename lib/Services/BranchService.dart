@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:geolocator/geolocator.dart';
 import '../Widgets/models.dart';
 import 'AddressService.dart';
+import '../Widgets/authentication.dart'; // Added import
 
 class BranchLocator extends ChangeNotifier {
   final AddressService addrSvc;
@@ -251,12 +252,10 @@ class BranchService {
       debugPrint('🔍 Finding nearest branch by default address...');
 
       final user = _auth.currentUser;
-      if (user == null || user.email == null) {
-        return await getDefaultBranchId();
-      }
+      // Use AuthUtils to get the correct document ID (Phone or Email)
+      final userId = AuthUtils.getDocId(user);
 
-      final userDoc =
-          await _firestore.collection('Users').doc(user.email).get();
+      final userDoc = await _firestore.collection('Users').doc(userId).get();
       if (!userDoc.exists) {
         return await getDefaultBranchId();
       }
@@ -372,10 +371,10 @@ class BranchService {
 
   Future<bool> canBranchDeliverToAddress(
     String branchId,
-    String userEmail,
+    String userId,
   ) async {
     try {
-      if (userEmail.isEmpty) return true;
+      if (userId.isEmpty) return true;
 
       final branchDoc =
           await _firestore.collection('Branch').doc(branchId).get();
@@ -386,7 +385,7 @@ class BranchService {
 
       if (noDeliveryRange == 0) return true;
 
-      final userDoc = await _firestore.collection('Users').doc(userEmail).get();
+      final userDoc = await _firestore.collection('Users').doc(userId).get();
       if (!userDoc.exists) return true;
 
       final userData = userDoc.data() as Map<String, dynamic>;
@@ -487,12 +486,10 @@ class BranchService {
     try {
       // 1. Get user's delivery address from their saved addresses
       final user = _auth.currentUser;
-      if (user == null || user.email == null) {
-        return _getDefaultEta(orderType);
-      }
+      // Use AuthUtils to get the correct document ID
+      final userId = AuthUtils.getDocId(user);
 
-      final userDoc =
-          await _firestore.collection('Users').doc(user.email).get();
+      final userDoc = await _firestore.collection('Users').doc(userId).get();
       if (!userDoc.exists) {
         return _getDefaultEta(orderType);
       }

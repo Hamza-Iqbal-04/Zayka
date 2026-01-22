@@ -22,6 +22,8 @@ import '../Services/PaymentService.dart';
 import '../Services/language_provider.dart';
 import '../Services/BranchService.dart';
 import '../Services/WorkingHoursService.dart';
+import '../Widgets/authentication.dart'; // Added import for AuthUtils
+import '../Services/AuthConfigService.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({Key? key}) : super(key: key);
@@ -711,13 +713,13 @@ class _CartScreenState extends State<CartScreen> {
   Future<GeoPoint?> _getUserLocationFromAddress() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null || user.email == null) return null;
+      if (user == null) return null; // Removed email check
 
       Map<String, dynamic>? address = _cachedAddress;
       if (address == null) {
         final userDoc = await FirebaseFirestore.instance
             .collection('Users')
-            .doc(user.email)
+            .doc(AuthUtils.getDocId(user)) // Use AuthUtils
             .get();
 
         if (!userDoc.exists) return null;
@@ -820,13 +822,16 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  Future<void> _loadUserAddress(String userEmail) async {
+  Future<void> _loadUserAddress() async {
     if (_isLoadingAddress) return;
 
     setState(() => _isLoadingAddress = true);
 
     try {
-      final address = await _getUserAddressFuture(userEmail);
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('User not logged in');
+
+      final address = await _getUserAddressFuture(user);
       if (mounted) {
         setState(() {
           _cachedAddress = address;
@@ -842,12 +847,11 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  Future<Map<String, dynamic>?> _getUserAddressFuture(String userEmail) async {
+  Future<Map<String, dynamic>?> _getUserAddressFuture(User user) async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('Users')
-          .doc(userEmail)
-          .get();
+      final docId = AuthUtils.getDocId(user);
+      final doc =
+          await FirebaseFirestore.instance.collection('Users').doc(docId).get();
 
       if (!doc.exists) return null;
 
@@ -872,6 +876,28 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Future<void> _proceedToCheckout() async {
+    // --- 0. GUEST VERIFICATION (Configurable Auth Mode) ---
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null ||
+        (currentUser.phoneNumber == null && currentUser.email == null)) {
+      // If no valid contact info (Anonymous/Guest), enforce login
+      // Show Phone or Email Login Sheet based on config
+      final bool? success = await showModalBottomSheet<bool>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) => AuthConfigService.isPhoneAuth
+            ? const PhoneLoginSheet()
+            : const EmailLoginSheet(),
+      );
+
+      // If they didn't verify successfully, stop checkout
+      if (success != true) return;
+
+      // If success, user is updated. Continue.
+      setState(() {});
+    }
+
     // --- 1. NEW: FINAL SAFETY CHECK (Real-Time) ---
     // Fetch the latest status of the selected branch right now
     if (_currentBranchIds.isNotEmpty) {
@@ -964,14 +990,17 @@ class _CartScreenState extends State<CartScreen> {
         throw Exception(AppStrings.get("your_cart_empty", context));
 
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null || user.email == null)
+      // Allow guest/phone users as long as we have a valid user object
+      if (user == null)
         throw Exception(AppStrings.get("user_not_authenticated", context));
+
+      final docId = AuthUtils.getDocId(user);
 
       Map<String, dynamic>? defaultAddress;
       if (_orderType == 'delivery') {
         final userDoc = await FirebaseFirestore.instance
             .collection('Users')
-            .doc(user.email)
+            .doc(docId)
             .get();
         if (!userDoc.exists)
           throw Exception(AppStrings.get("user_doc_not_found", context));
@@ -987,10 +1016,8 @@ class _CartScreenState extends State<CartScreen> {
             orElse: () => addresses[0]);
       }
 
-      final userDoc = await FirebaseFirestore.instance
-          .collection('Users')
-          .doc(user.email)
-          .get();
+      final userDoc =
+          await FirebaseFirestore.instance.collection('Users').doc(docId).get();
       final userData = userDoc.data() as Map<String, dynamic>;
       final String userName = userData['name'] ?? 'Customer';
       final String userPhone = userData['phone'] ?? '12345678';
@@ -1028,7 +1055,7 @@ class _CartScreenState extends State<CartScreen> {
           paymentMethodId: _selectedMfPaymentMethod!.paymentMethodId!,
           amount: totalForPayment,
           customerName: userName,
-          customerEmail: user.email!,
+          customerEmail: user.email ?? 'no-email@zayka.com', // Safe fallback
           customerMobile: userPhone,
           onSuccess: (String invoiceId) async {
             debugPrint("Payment Success! Invoice: $invoiceId");
@@ -2212,13 +2239,13 @@ class _CartScreenState extends State<CartScreen> {
 
   Widget _buildAddressSection() {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null || user.email == null) {
+    if (user == null) {
       return Text(AppStrings.get('please_login_address', context));
       ;
     }
 
     if (_cachedAddress == null && !_isLoadingAddress) {
-      _loadUserAddress(user.email!);
+      _loadUserAddress();
     }
 
     if (_isLoadingAddress) {
@@ -2882,7 +2909,8 @@ class _CartScreenState extends State<CartScreen> {
   void _showAddressBottomSheet(
       Function(String label, String fullAddress) onAddressSelected) {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null || user.email == null) return;
+    final docId = AuthUtils.getDocId(user);
+    if (user == null || docId == 'guest') return;
 
     showModalBottomSheet(
       context: context,
@@ -2891,7 +2919,7 @@ class _CartScreenState extends State<CartScreen> {
       builder: (context) => StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance
             .collection('Users')
-            .doc(user.email)
+            .doc(docId)
             .snapshots(),
         builder: (context, snapshot) {
           if (!snapshot.hasData)
@@ -2914,7 +2942,7 @@ class _CartScreenState extends State<CartScreen> {
               setModalState(() {});
               await FirebaseFirestore.instance
                   .collection('Users')
-                  .doc(user.email)
+                  .doc(docId)
                   .update({'address': addresses});
               final selected = addresses[index];
               final detailed = [
@@ -3157,7 +3185,7 @@ class _CartScreenState extends State<CartScreen> {
         'orderId': orderId,
         'dailyOrderNumber': dailyCount,
         'date': today,
-        'customerId': user.email,
+        'customerId': AuthUtils.getDocId(user),
         'items': items,
         'customerName': userName,
         'customerPhone': userPhone,
@@ -3177,6 +3205,7 @@ class _CartScreenState extends State<CartScreen> {
           'couponDiscount': cartService.couponDiscount,
         if (cartService.appliedCoupon != null)
           'couponId': cartService.appliedCoupon!.id,
+        'originalEstimatedDuration': _estimatedTime,
       };
 
       transaction.set(orderDoc, orderData);
@@ -3195,10 +3224,10 @@ class _CartScreenState extends State<CartScreen> {
 
     final cartService = CartService();
     if (cartService.appliedCoupon != null &&
-        FirebaseAuth.instance.currentUser?.email != null) {
+        FirebaseAuth.instance.currentUser != null) {
       await FirebaseFirestore.instance.collection('coupon_usage').add({
         'couponId': cartService.appliedCoupon!.id,
-        'userId': FirebaseAuth.instance.currentUser!.email,
+        'userId': AuthUtils.getDocId(FirebaseAuth.instance.currentUser),
         'orderId': orderDoc.id,
         'usedAt': FieldValue.serverTimestamp(),
         'discountAmount': cartService.couponDiscount,

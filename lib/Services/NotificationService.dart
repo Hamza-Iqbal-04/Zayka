@@ -4,6 +4,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../Screens/OrderScreen.dart';
+import '../Widgets/authentication.dart'; // Added import
 
 // Must be a top-level function (not a class method)
 @pragma('vm:entry-point')
@@ -18,14 +19,14 @@ class NotificationService {
   static final FirebaseMessaging _firebaseMessaging =
       FirebaseMessaging.instance;
   static final FlutterLocalNotificationsPlugin
-  _flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+      _flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
   // Global navigator key - must be set from main.dart MaterialApp
   static GlobalKey<NavigatorState>? navigatorKey;
 
   // 1. Define the High-Priority Channel
-  static const AndroidNotificationChannel
-  _driverArrivalChannel = AndroidNotificationChannel(
+  static const AndroidNotificationChannel _driverArrivalChannel =
+      AndroidNotificationChannel(
     'driver_arrival_channel', // A unique ID
     'Driver Arrivals', // Title shown to user in settings
     description:
@@ -37,19 +38,18 @@ class NotificationService {
   // Order Updates Channel (for pickup ready notifications)
   static const AndroidNotificationChannel _orderUpdatesChannel =
       AndroidNotificationChannel(
-        'order_updates', // Must match channelId in Cloud Function
-        'Order Updates',
-        description: 'Notifications about your order status',
-        importance: Importance.max,
-        playSound: true,
-      );
+    'order_updates', // Must match channelId in Cloud Function
+    'Order Updates',
+    description: 'Notifications about your order status',
+    importance: Importance.max,
+    playSound: true,
+  );
 
   static Future<void> initialize() async {
     // --- Setup for Notification Channels ---
-    final androidPlugin = _flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
+    final androidPlugin =
+        _flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
 
     await androidPlugin?.createNotificationChannel(_driverArrivalChannel);
     await androidPlugin?.createNotificationChannel(_orderUpdatesChannel);
@@ -88,8 +88,8 @@ class NotificationService {
     FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
 
     // Handle notification tap when app was TERMINATED (killed state)
-    RemoteMessage? initialMessage = await _firebaseMessaging
-        .getInitialMessage();
+    RemoteMessage? initialMessage =
+        await _firebaseMessaging.getInitialMessage();
     if (initialMessage != null) {
       // Delay slightly to ensure navigator is ready
       Future.delayed(const Duration(milliseconds: 500), () {
@@ -185,10 +185,11 @@ class NotificationService {
   static Future<void> _saveTokenToFirestore(String? token) async {
     if (token != null) {
       final user = FirebaseAuth.instance.currentUser;
-      if (user != null && user.email != null) {
+      if (user != null) {
+        final docId = AuthUtils.getDocId(user);
         await FirebaseFirestore.instance
             .collection('Users')
-            .doc(user.email)
+            .doc(docId)
             .set({'fcmToken': token}, SetOptions(merge: true));
       }
     }

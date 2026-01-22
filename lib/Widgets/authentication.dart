@@ -4,33 +4,35 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
-import 'bottom_nav.dart';
 import 'models.dart';
+import '../Services/AuthConfigService.dart';
+import '../Screens/phone_login_screen.dart';
+import '../Screens/email_login_screen.dart';
 
-String _docIdFor(User user) => user.email!.toLowerCase();
+// ───────────────────────── HELPER ─────────────────────────
+class AuthUtils {
+  /// Returns the Firestore Document ID for a user.
+  static String getDocId(User? user) {
+    if (user == null) return 'guest';
+    if (user.phoneNumber != null && user.phoneNumber!.isNotEmpty) {
+      return user.phoneNumber!;
+    }
+    if (user.email != null && user.email!.isNotEmpty) {
+      return user.email!.toLowerCase();
+    }
+    return user.uid;
+  }
+}
 
-// ───────────────────────── AUTH SERVICE (logic only) ─────────────────────────
+// ───────────────────────── AUTH SERVICE ─────────────────────────
 class AuthService {
   final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
 
   Future<UserCredential> signIn(String email, String password) => _firebaseAuth
       .signInWithEmailAndPassword(email: email, password: password);
 
-  Future<UserCredential> signUp(
-      String email, String password, String name, String phone) async {
-    final cred = await _firebaseAuth.createUserWithEmailAndPassword(
-        email: email, password: password);
-
-    await cred.user!.updateDisplayName(name);
-
-    await FirebaseFirestore.instance
-        .collection('Users')
-        .doc(_docIdFor(cred.user!))
-        .set({'name': name, 'email': email, 'phone': phone},
-            SetOptions(merge: true));
-
-    return cred;
-  }
+  Future<UserCredential> signInAnonymously() =>
+      _firebaseAuth.signInAnonymously();
 
   Future<void> verifyPhoneNumber(
     String phoneNumber, {
@@ -56,10 +58,9 @@ class AuthService {
   Future<UserCredential> signInWithCredential(PhoneAuthCredential credential) =>
       _firebaseAuth.signInWithCredential(credential);
 
-  /// Google sign-in (no UI)
   Future<UserCredential?> signInWithGoogle() async {
     try {
-      await GoogleSignIn().signOut(); // force account picker
+      await GoogleSignIn().signOut();
       final googleUser = await GoogleSignIn().signIn();
       if (googleUser == null) return null;
 
@@ -71,9 +72,8 @@ class AuthService {
 
       final userCred = await _firebaseAuth.signInWithCredential(credential);
       final user = userCred.user!;
-      final docId = _docIdFor(user);
+      final docId = AuthUtils.getDocId(user);
 
-      // Create blank profile first time
       if (userCred.additionalUserInfo?.isNewUser ?? false) {
         await FirebaseFirestore.instance.collection('Users').doc(docId).set({
           'name': user.displayName ?? 'Unknown',
@@ -89,83 +89,190 @@ class AuthService {
   }
 }
 
-// ───────────────────────── LOGIN / SIGN-UP SCREEN ───────────────────────────
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({Key? key}) : super(key: key);
+// ───────────────────────── PHONE LOGIN SHEET (FOR CART/OVERLAYS) ─────────────────────────
+class PhoneLoginSheet extends StatefulWidget {
+  const PhoneLoginSheet({Key? key}) : super(key: key);
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  State<PhoneLoginSheet> createState() => _PhoneLoginSheetState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
-  // controllers
-  final _emailC = TextEditingController();
-  final _passC = TextEditingController();
-  final _nameC = TextEditingController();
-  final _phoneC = TextEditingController();
-
-  // services
+class _PhoneLoginSheetState extends State<PhoneLoginSheet> {
   final _auth = AuthService();
-  String? _verificationId; // stores Firebase verificationId
-  bool _otpSending = false; // controls loader in the sheet
+  final _phoneC = TextEditingController();
+  final _otpC = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
 
-  // state
-  bool _isLogin = true;
+  String? _completePhoneNumber;
+  String? _verificationId;
   bool _loading = false;
+  bool _codeSent = false;
 
-  // ───────── phone dialog (with country picker)
-  Future<String?> _promptForPhone() {
-    String? e164;
-    final _formKey = GlobalKey<FormState>();
+  void _showErr(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
 
-    return showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true, // full-height when keyboard shows
-      backgroundColor: Colors.transparent, // so we can add our own radius
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.45,
-        minChildSize: 0.35,
-        maxChildSize: 0.8,
-        builder: (_, controller) => Container(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-          decoration: BoxDecoration(
-            color: AppColors.white,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-          child: ListView(
-            // use ListView so it scrolls
-            controller: controller,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 24),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
+  Future<void> _sendOtp() async {
+    if (!_formKey.currentState!.validate() || _completePhoneNumber == null)
+      return;
+    setState(() => _loading = true);
+
+    await _auth.verifyPhoneNumber(
+      _completePhoneNumber!,
+      verificationCompleted: (PhoneAuthCredential cred) async {
+        await _signIn(cred);
+      },
+      verificationFailed: (FirebaseAuthException e) {
+        setState(() => _loading = false);
+        _showErr(e.message ?? 'Verification failed');
+      },
+      codeSent: (String verificationId, int? resendToken) {
+        setState(() {
+          _loading = false;
+          _codeSent = true;
+          _verificationId = verificationId;
+        });
+      },
+      codeAutoRetrievalTimeout: (String verificationId) {
+        if (mounted) setState(() => _verificationId = verificationId);
+      },
+    );
+  }
+
+  Future<void> _verifyOtp() async {
+    final smsCode = _otpC.text.trim();
+    if (_verificationId == null || smsCode.length != 6) {
+      _showErr('Please enter the 6-digit code');
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      final cred = PhoneAuthProvider.credential(
+          verificationId: _verificationId!, smsCode: smsCode);
+      await _signIn(cred);
+    } catch (e) {
+      setState(() => _loading = false);
+      _showErr('Invalid OTP: $e');
+    }
+  }
+
+  Future<void> _signIn(PhoneAuthCredential cred) async {
+    try {
+      final userCred = await _auth.signInWithCredential(cred);
+      final user = userCred.user!;
+      final docId = AuthUtils.getDocId(user);
+
+      final docSnap =
+          await FirebaseFirestore.instance.collection('Users').doc(docId).get();
+      if (!docSnap.exists) {
+        await FirebaseFirestore.instance.collection('Users').doc(docId).set({
+          'phone': user.phoneNumber,
+          'createdAt': FieldValue.serverTimestamp(),
+          'name': 'New User',
+        }, SetOptions(merge: true));
+      }
+
+      if (mounted) {
+        Navigator.pop(context, true); // Return true on success
+      }
+    } catch (e) {
+      setState(() => _loading = false);
+      _showErr('Login failed: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: Color(0xFFF5F5F5), // Changed to Light Grey
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_codeSent ? 'Enter Verification Code' : 'Mobile Login',
+                style: const TextStyle(
+                    color: AppColors.primaryBlue, // Changed to Blue
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            if (!_codeSent) ...[
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white, // Changed to White for contrast
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Form(
+                  key: _formKey,
+                  child: IntlPhoneField(
+                    controller: _phoneC,
+                    initialCountryCode: 'QA',
+                    dropdownTextStyle:
+                        const TextStyle(color: Colors.black), // Black text
+                    style: const TextStyle(color: Colors.black), // Black text
+                    decoration: const InputDecoration(
+                      hintText: 'Mobile Number',
+                      hintStyle: TextStyle(color: Colors.grey),
+                      border: InputBorder.none,
+                      counterText: '',
+                    ),
+                    onChanged: (phone) {
+                      _completePhoneNumber = phone.completeNumber;
+                    },
                   ),
                 ),
               ),
-              Text('Add phone number',
-                  style: AppTextStyles.headline1.copyWith(fontSize: 20)),
-              const SizedBox(height: 16),
-              Form(
-                key: _formKey,
-                child: IntlPhoneField(
-                  initialCountryCode: 'QAR',
-                  decoration: InputDecoration(
-                    hintText: 'Phone Number',
-                    filled: true,
-                    fillColor: AppColors.lightGrey,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : _sendOtp,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryBlue, // Changed to Blue
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(25)),
                   ),
-                  onChanged: (p) => e164 = p.completeNumber,
-                  validator: (p) =>
-                      (p == null || p.number.isEmpty) ? 'Required' : null,
+                  child: _loading
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2))
+                      : const Text('Send OTP',
+                          style: TextStyle(
+                              color: Colors.white, // Text inside white
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ] else ...[
+              Text('Enter the 6-digit code sent to $_completePhoneNumber',
+                  style: const TextStyle(color: Colors.grey, fontSize: 14)),
+              const SizedBox(height: 24),
+              TextField(
+                controller: _otpC,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                style: const TextStyle(
+                    color: Colors.black,
+                    fontSize: 24,
+                    letterSpacing: 8), // Black text
+                textAlign: TextAlign.center,
+                decoration: const InputDecoration(
+                  counterText: "",
+                  enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.grey)),
+                  focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(
+                          color: AppColors.primaryBlue)), // Blue accent
                 ),
               ),
               const SizedBox(height: 24),
@@ -173,612 +280,235 @@ class _LoginScreenState extends State<LoginScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryBlue,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    backgroundColor: AppColors.primaryBlue, // Changed to Blue
+                    padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(25)),
                   ),
-                  onPressed: () {
-                    if (_formKey.currentState!.validate()) {
-                      Navigator.of(ctx).pop(e164);
-                    }
-                  },
-                  child: Text('Save',
-                      style: AppTextStyles.buttonText
-                          .copyWith(color: Colors.white)),
+                  onPressed: _verifyOtp,
+                  child: const Text('Verify',
+                      style: TextStyle(color: Colors.white, fontSize: 16)),
                 ),
               ),
-              const SizedBox(height: 8),
-              Center(
-                child: TextButton(
-                  child: const Text('Cancel'),
-                  onPressed: () => Navigator.of(ctx).pop(null),
-                ),
-              )
             ],
-          ),
+            const SizedBox(height: 16),
+          ],
         ),
       ),
     );
   }
+}
 
-  // ───────── Google button handler (UI layer)
-  Future<void> _handleGoogle() async {
+// ───────────────────────── LOGIN SCREEN ROUTER ─────────────────────────
+// This widget routes to the appropriate login screen based on auth config.
+// The actual screens are in separate files for independent maintenance.
+
+class LoginScreen extends StatelessWidget {
+  const LoginScreen({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    // Route based on configured auth method
+    if (AuthConfigService.isPhoneAuth) {
+      return const PhoneLoginScreen();
+    } else {
+      return const EmailLoginScreen();
+    }
+  }
+}
+
+// ───────────────────────── EMAIL LOGIN SHEET (FOR CART/OVERLAYS) ─────────────────────────
+class EmailLoginSheet extends StatefulWidget {
+  const EmailLoginSheet({Key? key}) : super(key: key);
+
+  @override
+  State<EmailLoginSheet> createState() => _EmailLoginSheetState();
+}
+
+class _EmailLoginSheetState extends State<EmailLoginSheet> {
+  final _auth = AuthService();
+  final _emailC = TextEditingController();
+  final _passC = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  bool _loading = false;
+  bool _isLogin = true;
+
+  void _showErr(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _handleAuth() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _loading = true);
+
+    try {
+      if (_isLogin) {
+        // Login with existing account
+        await _auth.signIn(_emailC.text.trim(), _passC.text.trim());
+      } else {
+        // Sign up with new account
+        final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+            email: _emailC.text.trim(), password: _passC.text.trim());
+
+        final docId = AuthUtils.getDocId(cred.user!);
+        await FirebaseFirestore.instance.collection('Users').doc(docId).set({
+          'email': _emailC.text.trim(),
+          'name': 'New User',
+          'phone': '',
+          'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+
+      if (mounted) {
+        Navigator.pop(context, true); // Return true on success
+      }
+    } on FirebaseAuthException catch (e) {
+      setState(() => _loading = false);
+      _showErr(e.message ?? 'Auth error');
+    } catch (e) {
+      setState(() => _loading = false);
+      _showErr(e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _handleGoogleSignIn() async {
     setState(() => _loading = true);
     try {
       final cred = await _auth.signInWithGoogle();
-      if (cred == null) throw Exception('Sign-in aborted');
-
-      final user = cred.user!;
-      final docId = _docIdFor(user);
-
-      // Read Firestore to see if phone exists
-      final snap =
-          await FirebaseFirestore.instance.collection('Users').doc(docId).get();
-      final hasPhone = (snap.data()?['phone'] as String?)?.isNotEmpty ?? false;
-
-      if (!hasPhone) {
-        final phone = await _promptForPhone();
-        if (phone == null || phone.isEmpty) {
-          await FirebaseAuth.instance.signOut();
-          _showErr('Phone number required.');
-          setState(() => _loading = false);
-          return;
-        }
-        await FirebaseFirestore.instance
-            .collection('Users')
-            .doc(docId)
-            .set({'phone': phone}, SetOptions(merge: true));
+      if (cred == null) {
+        setState(() => _loading = false);
+        return;
       }
-
       if (mounted) {
-        Navigator.pushReplacement(
-            context, MaterialPageRoute(builder: (_) => const MainApp()));
+        Navigator.pop(context, true);
       }
     } catch (e) {
-      _showErr(e.toString().replaceFirst('Exception: ', ''));
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      setState(() => _loading = false);
+      _showErr('Google sign-in failed: $e');
     }
   }
 
-  // ───────── show OTP sign in
-  // Add this inside _LoginScreenState — complete, drop-in replacement
-  void _showMobileSignInSheet(BuildContext context) {
-    final phoneC = TextEditingController();
-    final otpC = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-
-    String? e164Phone; // phone in +974… format
-    bool localLoading = false; // sheet-scoped spinner
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.55,
-        minChildSize: 0.45,
-        maxChildSize: 0.9,
-        builder: (_, controller) => StatefulBuilder(
-          builder: (ctx, setSheetState) => Padding(
-            padding:
-                EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-              decoration: BoxDecoration(
-                color: AppColors.white,
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(28)),
-              ),
-              child: ListView(
-                controller: controller,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 24),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  Text('Mobile OTP Login',
-                      style: AppTextStyles.headline1.copyWith(fontSize: 20)),
-                  const SizedBox(height: 20),
-
-                  // ───────── PHONE FIELD ─────────
-                  Form(
-                    key: formKey,
-                    child: IntlPhoneField(
-                      controller: phoneC,
-                      initialCountryCode: 'QA', // default Qatar
-                      decoration: _fieldDeco('Phone Number'),
-                      onChanged: (p) => e164Phone = p.completeNumber,
-                      validator: (p) =>
-                          (p == null || p.number.isEmpty) ? 'Required' : null,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // ───────── SEND / RESEND OTP ─────────
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryBlue,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: localLoading
-                          ? null
-                          : () async {
-                              if (!formKey.currentState!.validate() ||
-                                  e164Phone == null) return;
-
-                              setSheetState(() => localLoading = true);
-
-                              await _auth.verifyPhoneNumber(
-                                e164Phone!,
-                                verificationCompleted:
-                                    (PhoneAuthCredential cred) async {
-                                  await _auth.signInWithCredential(cred);
-                                  if (mounted) Navigator.pop(context);
-                                },
-                                verificationFailed: (e) {
-                                  _showErr(e.message ?? 'SMS failed');
-                                  setSheetState(() => localLoading = false);
-                                },
-                                codeSent: (id, _) {
-                                  _verificationId = id;
-                                  _showErr('OTP sent');
-                                  setSheetState(() => localLoading = false);
-                                },
-                                codeAutoRetrievalTimeout: (id) =>
-                                    _verificationId = id,
-                              );
-                            },
-                      child: localLoading
-                          ? const SizedBox(
-                              height: 22,
-                              width: 22,
-                              child: CircularProgressIndicator(
-                                  color: Colors.white, strokeWidth: 3))
-                          : const Text('Send OTP'),
-                    ),
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // ───────── OTP INPUT ─────────
-                  TextField(
-                    controller: otpC,
-                    keyboardType: TextInputType.number,
-                    maxLength: 6,
-                    decoration: _fieldDeco('Enter 6-digit OTP')
-                        .copyWith(counterText: ''),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // ───────── VERIFY BUTTON ─────────
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primaryBlue,
-                        side: BorderSide(color: AppColors.primaryBlue),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: () async {
-                        if ((_verificationId ?? '').isEmpty ||
-                            otpC.text.trim().length != 6) {
-                          _showErr('Enter phone & OTP first');
-                          return;
-                        }
-                        try {
-                          final cred = await _auth.signInWithOtp(
-                              _verificationId!, otpC.text.trim());
-
-                          // prompt for e-mail + name
-                          final extra = await _promptForEmailAndName();
-                          if (extra == null) return;
-
-                          final email = extra['email']!;
-                          final name = extra['name']!;
-                          final docId = email.toLowerCase();
-
-                          await FirebaseFirestore.instance
-                              .collection('Users')
-                              .doc(docId)
-                              .set({
-                            'email': email,
-                            'name': name,
-                            'phone': cred.user?.phoneNumber ?? '',
-                          }, SetOptions(merge: true));
-
-                          if (mounted) {
-                            Navigator.pop(context); // close sheet
-                            Navigator.pushReplacement(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => const MainApp()),
-                            );
-                          }
-                        } on FirebaseAuthException catch (e) {
-                          _showErr(e.message ?? 'Invalid OTP');
-                        }
-                      },
-                      child: const Text('Verify & Login'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // bottom-sheet that matches _promptForPhone() styling
-  Future<Map<String, String>?> _promptForEmailAndName() {
-    final emailC = TextEditingController();
-    final nameC = TextEditingController();
-    final key = GlobalKey<FormState>();
-
-    return showModalBottomSheet<Map<String, String>>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.55,
-        minChildSize: 0.45,
-        maxChildSize: 0.85,
-        builder: (_, controller) => Padding(
-          padding: EdgeInsets.only(
-              bottom: MediaQuery.of(ctx).viewInsets.bottom), // keyboard gap
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-            decoration: BoxDecoration(
-              color: AppColors.white,
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(28)),
-            ),
-            child: ListView(
-              controller: controller,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 24),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                Text('Complete your profile',
-                    style: AppTextStyles.headline1.copyWith(fontSize: 20)),
-                const SizedBox(height: 20),
-                Form(
-                  key: key,
-                  child: Column(
-                    children: [
-                      TextFormField(
-                        controller: emailC,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: _fieldDeco('Email'),
-                        validator: (v) => (v == null || !v.contains('@'))
-                            ? 'Valid e-mail required'
-                            : null,
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: nameC,
-                        decoration: _fieldDeco('Full Name'),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Name required'
-                            : null,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryBlue,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    onPressed: () {
-                      if (key.currentState!.validate()) {
-                        Navigator.of(ctx).pop({
-                          'email': emailC.text.trim(),
-                          'name': nameC.text.trim(),
-                        });
-                      }
-                    },
-                    child: Text('Save',
-                        style: AppTextStyles.buttonText
-                            .copyWith(color: Colors.white)),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Center(
-                  child: TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(null),
-                    child: const Text('Cancel'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-// same decoration helper used by _promptForPhone()
-  InputDecoration _fieldDeco(String hint) => InputDecoration(
-        hintText: hint,
-        filled: true,
-        fillColor: AppColors.lightGrey,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-      );
-
-  // ───────── Email / password auth
-  Future<void> _authenticate() async {
-    setState(() => _loading = true);
-    try {
-      if (_isLogin) {
-        await _auth.signIn(_emailC.text.trim(), _passC.text.trim());
-      } else {
-        if (_nameC.text.isEmpty || _phoneC.text.isEmpty) {
-          throw Exception('Name and phone required.');
-        }
-        await _auth.signUp(_emailC.text.trim(), _passC.text.trim(),
-            _nameC.text.trim(), _phoneC.text.trim());
-      }
-      if (mounted) {
-        Navigator.pushReplacement(
-            context, MaterialPageRoute(builder: (_) => const MainApp()));
-      }
-    } on FirebaseAuthException catch (e) {
-      _showErr(e.message ?? 'Auth error');
-    } catch (e) {
-      _showErr(e.toString().replaceFirst('Exception: ', ''));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  // ───────── error dialog helper
-  void _showErr(String m) => showDialog(
-        context: context,
-        builder: (c) => AlertDialog(
-          backgroundColor: Colors.white,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Error'),
-          content: Text(m),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.of(c).pop(),
-                child: const Text('OK')),
-          ],
-        ),
-      );
-
-  // ───────── UI
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Colors.blue.shade900,
-              AppColors.primaryBlue,
-              Colors.black87
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
+    return Padding(
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: Color(0xFFF5F5F5),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-            child: Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: AppColors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 20,
-                      offset: const Offset(0, 10)),
-                ],
-              ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_isLogin ? 'Login to Continue' : 'Create Account',
+                style: const TextStyle(
+                    color: AppColors.primaryBlue,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            Form(
+              key: _formKey,
               child: Column(
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.fastfood, size: 60, color: AppColors.primaryBlue),
-                  const SizedBox(height: 16),
-                  Text(
-                    _isLogin ? 'Welcome Back' : 'Create Account',
-                    style: AppTextStyles.headline1
-                        .copyWith(color: Colors.black87, fontSize: 26),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Please fill in the details to continue',
-                    style: AppTextStyles.bodyText2
-                        .copyWith(color: AppColors.darkGrey),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 32),
-
-                  // extra sign-up fields
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut,
-                    child: Column(
-                      children: [
-                        if (!_isLogin) ...[
-                          _buildField(
-                              _nameC, 'Full Name', Icons.person_outline),
-                          _buildField(
-                              _phoneC, 'Phone Number', Icons.phone_outlined,
-                              keyType: TextInputType.phone),
-                        ],
-                      ],
-                    ),
-                  ),
-                  _buildField(_emailC, 'Email Address', Icons.email_outlined,
-                      keyType: TextInputType.emailAddress),
-                  _buildField(_passC, 'Password', Icons.lock_outline,
-                      obscure: true),
-                  const SizedBox(height: 24),
-
-                  // main button
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _loading ? null : _authenticate,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryBlue,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        elevation: 5,
-                        shadowColor: AppColors.primaryBlue.withOpacity(0.4),
-                      ),
-                      child: _loading
-                          ? const SizedBox(
-                              height: 24,
-                              width: 24,
-                              child: CircularProgressIndicator(
-                                  color: Colors.white, strokeWidth: 3))
-                          : Text(_isLogin ? 'Login' : 'Sign Up',
-                              style: AppTextStyles.buttonText
-                                  .copyWith(color: Colors.white)),
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // divider
-                  Row(
-                    children: [
-                      const Expanded(child: Divider()),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text('OR',
-                            style: AppTextStyles.bodyText2
-                                .copyWith(color: Colors.grey.shade600)),
-                      ),
-                      const Expanded(child: Divider()),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-
-                  // google button
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      icon: Image.asset('assets/google.png', height: 22),
-                      label: const Text('Continue with Google'),
-                      onPressed: _loading ? null : _handleGoogle,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.darkGrey,
-                        side: BorderSide(color: Colors.grey.shade300),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
+                  TextFormField(
+                    controller: _emailC,
+                    keyboardType: TextInputType.emailAddress,
+                    style: const TextStyle(color: Colors.black),
+                    decoration: InputDecoration(
+                      hintText: 'Email',
+                      hintStyle: const TextStyle(color: Colors.grey),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
                       ),
                     ),
+                    validator: (v) => (v == null || !v.contains('@'))
+                        ? 'Valid email required'
+                        : null,
                   ),
                   const SizedBox(height: 12),
-
-                  // mobile sheet trigger
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      icon: Icon(Icons.phone_iphone_rounded,
-                          color: AppColors.darkGrey, size: 22),
-                      label: const Text('Sign in with Mobile'),
-                      onPressed: _loading
-                          ? null
-                          : () => _showMobileSignInSheet(context),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.darkGrey,
-                        side: BorderSide(color: Colors.grey.shade300),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
+                  TextFormField(
+                    controller: _passC,
+                    obscureText: true,
+                    style: const TextStyle(color: Colors.black),
+                    decoration: InputDecoration(
+                      hintText: 'Password',
+                      hintStyle: const TextStyle(color: Colors.grey),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // switch login/signup
-                  TextButton(
-                    onPressed: _loading
-                        ? null
-                        : () => setState(() => _isLogin = !_isLogin),
-                    child: Text(
-                      _isLogin
-                          ? "Don't have an account? Sign Up"
-                          : "Already have an account? Login",
-                      style: TextStyle(
-                          color: AppColors.primaryBlue,
-                          fontWeight: FontWeight.bold),
-                    ),
+                    validator: (v) => (v == null || v.length < 6)
+                        ? 'Password must be 6+ characters'
+                        : null,
                   ),
                 ],
               ),
             ),
-          ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _loading ? null : _handleAuth,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryBlue,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(25)),
+                ),
+                child: _loading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                    : Text(_isLogin ? 'Login' : 'Sign Up',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Google Sign In button
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                icon: Icon(Icons.g_translate, color: AppColors.darkGrey),
+                label: const Text('Continue with Google'),
+                onPressed: _loading ? null : _handleGoogleSignIn,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.darkGrey,
+                  side: BorderSide(color: Colors.grey.shade300),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed:
+                  _loading ? null : () => setState(() => _isLogin = !_isLogin),
+              child: Text(
+                _isLogin
+                    ? "Don't have an account? Sign Up"
+                    : "Already have an account? Login",
+                style: TextStyle(
+                    color: AppColors.primaryBlue, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
         ),
-      ),
-    );
-  }
-
-  // text-field builder
-  Widget _buildField(TextEditingController c, String label, IconData icon,
-      {bool obscure = false, TextInputType keyType = TextInputType.text}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: TextField(
-        controller: c,
-        obscureText: obscure,
-        keyboardType: keyType,
-        decoration: InputDecoration(
-          labelText: label,
-          prefixIcon: Icon(icon, color: AppColors.primaryBlue.withOpacity(0.7)),
-          filled: true,
-          fillColor: AppColors.lightGrey,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          contentPadding:
-              const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-        ),
-        style: AppTextStyles.bodyText1.copyWith(color: AppColors.darkGrey),
       ),
     );
   }

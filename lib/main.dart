@@ -22,7 +22,8 @@ import 'firebase_options.dart';
 import 'Widgets/models.dart';
 import 'Services/AddressService.dart';
 import 'Services/BranchService.dart';
-import 'Services/language_provider.dart'; // Make sure you created this file as per previous steps
+import 'Services/language_provider.dart';
+import 'Services/AuthConfigService.dart';
 
 const Color kChipActive = Color(0xFF1E88E5);
 
@@ -30,6 +31,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await NotificationService.initialize();
+  await AuthConfigService.loadConfig(); // Load auth mode config
 
   // Keep orientation and any other system UI config you use
   await SystemChrome.setPreferredOrientations([
@@ -83,7 +85,8 @@ class _MyAppState extends State<MyApp> {
 
   static Future<bool> _initializeDependencies() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('isFirstLaunch') ?? true;
+    // Use hasSeenOnboarding instead of isFirstLaunch for clarity
+    return prefs.getBool('hasSeenOnboarding') ?? false;
   }
 
   @override
@@ -142,7 +145,7 @@ class _MyAppState extends State<MyApp> {
 class AppLoader extends StatefulWidget {
   final Future<bool> initializationFuture;
   const AppLoader({Key? key, required this.initializationFuture})
-    : super(key: key);
+      : super(key: key);
 
   @override
   State<AppLoader> createState() => _AppLoaderState();
@@ -156,30 +159,36 @@ class _AppLoaderState extends State<AppLoader> {
   @override
   void initState() {
     super.initState();
-    // Firebase caches auth state, so this is synchronous
-    final User? currentUser = FirebaseAuth.instance.currentUser;
-
-    if (currentUser != null) {
-      // User is logged in - show MainApp (HomeScreen with shimmers)
-      _initialScreen = const MainApp();
-    } else {
-      // Not logged in - show a temporary container while we check first launch
-      _initialScreen = const Scaffold(body: SizedBox.shrink());
-      _initializeForNonAuthenticatedUser();
-    }
+    // Always check onboarding state first
+    _initialScreen = const Scaffold(body: SizedBox.shrink());
+    _initializeNavigation();
   }
 
-  Future<void> _initializeForNonAuthenticatedUser() async {
+  Future<void> _initializeNavigation() async {
     try {
-      final isFirstLaunch = await widget.initializationFuture;
+      // hasSeenOnboarding: true if user has completed onboarding, false otherwise
+      final hasSeenOnboarding = await widget.initializationFuture;
       if (!mounted || _hasNavigated) return;
 
       _hasNavigated = true;
+
+      final User? currentUser = FirebaseAuth.instance.currentUser;
+
+      Widget targetScreen;
+      if (!hasSeenOnboarding) {
+        // First time user - always show welcome screen
+        targetScreen = const WelcomeScreen();
+      } else if (currentUser != null) {
+        // Returning user who is logged in - go to app
+        targetScreen = const MainApp();
+      } else {
+        // Returning user who is not logged in - go to login
+        targetScreen = const LoginScreen();
+      }
+
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
-          pageBuilder: (context, animation1, animation2) {
-            return isFirstLaunch ? const WelcomeScreen() : const LoginScreen();
-          },
+          pageBuilder: (context, animation1, animation2) => targetScreen,
           transitionDuration: Duration.zero,
         ),
       );

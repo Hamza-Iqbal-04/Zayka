@@ -20,6 +20,8 @@ import '../Widgets/bottom_nav.dart';
 import '../Services/language_provider.dart';
 import 'package:zayka_customer/Services/BranchService.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../Widgets/authentication.dart'; // Added import
+import '../Widgets/authentication.dart'; // Added import
 
 const Color kChipActive = AppColors.primaryBlue;
 
@@ -399,7 +401,7 @@ class _HomeScreenState extends State<HomeScreen>
   void _setupOrdersStream() {
     try {
       final user = _auth.currentUser;
-      if (user == null || user.email == null) {
+      if (user == null) {
         if (mounted) {
           setState(() {
             ordersStream = Stream.value(const <Order>[]);
@@ -412,7 +414,7 @@ class _HomeScreenState extends State<HomeScreen>
         setState(() {
           ordersStream = _firestore
               .collection('Orders')
-              .where('customerId', isEqualTo: user.email)
+              .where('customerId', isEqualTo: AuthUtils.getDocId(user))
               .where('status', whereNotIn: [
                 'delivered',
                 'cancelled',
@@ -491,7 +493,7 @@ class _HomeScreenState extends State<HomeScreen>
   // Update this method in your _HomeScreenState class
   Future<void> _setupCancellationListener() async {
     final user = _auth.currentUser;
-    if (user == null || user.email == null) return;
+    if (user == null) return;
 
     // 1. Load the last seen ID from storage BEFORE starting the stream
     final prefs = await SharedPreferences.getInstance();
@@ -505,7 +507,7 @@ class _HomeScreenState extends State<HomeScreen>
     // 3. NOW start listening to Firestore
     _cancellationSubscription = _firestore
         .collection('Orders')
-        .where('customerId', isEqualTo: user.email)
+        .where('customerId', isEqualTo: AuthUtils.getDocId(user))
         .orderBy('timestamp', descending: true)
         .limit(1)
         .snapshots()
@@ -548,7 +550,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _setupDeliveryListener() async {
     final user = _auth.currentUser;
-    if (user == null || user.email == null) return;
+    if (user == null) return;
 
     final prefs = await SharedPreferences.getInstance();
     final lastShownId = prefs.getString('last_delivered_popup_id');
@@ -559,7 +561,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     _deliverySubscription = _firestore
         .collection('Orders')
-        .where('customerId', isEqualTo: user.email)
+        .where('customerId', isEqualTo: AuthUtils.getDocId(user))
         .where('status', isEqualTo: 'delivered')
         .orderBy('timestamp', descending: true)
         .limit(1)
@@ -585,7 +587,7 @@ class _HomeScreenState extends State<HomeScreen>
           if (timestamp != null) {
             final now = DateTime.now();
             final date = timestamp.toDate();
-            if (now.difference(date).inHours > 24) {
+            if (now.difference(date).inHours > 3) {
               isRecent = false;
             }
           }
@@ -610,7 +612,7 @@ class _HomeScreenState extends State<HomeScreen>
   /// Listens for pickup orders that become 'prepared' to show a ready notification
   Future<void> _setupPickupReadyListener() async {
     final user = _auth.currentUser;
-    if (user == null || user.email == null) return;
+    if (user == null) return;
 
     final prefs = await SharedPreferences.getInstance();
     final lastShownId = prefs.getString('last_pickup_ready_popup_id');
@@ -621,7 +623,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     _pickupReadySubscription = _firestore
         .collection('Orders')
-        .where('customerId', isEqualTo: user.email)
+        .where('customerId', isEqualTo: AuthUtils.getDocId(user))
         .where('Order_type', isEqualTo: 'pickup')
         .where('status', isEqualTo: 'prepared')
         .orderBy('timestamp', descending: true)
@@ -743,9 +745,13 @@ class _HomeScreenState extends State<HomeScreen>
     String timeText = '';
     if (createdAt != null) {
       final duration = DateTime.now().difference(createdAt.toDate());
-      final minutes = duration.inMinutes; // e.g. 45
-      // If minutes is very small (e.g. 0), display "< 1 min"
-      if (minutes < 1) {
+      final minutes = duration.inMinutes;
+
+      // Logic to prevent "19999 minutes":
+      // Only show the specific time if it's within a reasonable range (e.g., < 2 hours)
+      if (minutes > 120) {
+        timeText = "Order Delivered!";
+      } else if (minutes < 1) {
         timeText = "We reached you in < 1 minute!";
       } else {
         timeText = "We reached you in $minutes minutes!";
@@ -1452,11 +1458,13 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _loadUserAddresses() async {
     try {
       final user = _auth.currentUser;
-      if (user == null || user.email == null) {
+      final userId = AuthUtils.getDocId(user);
+
+      if (user == null || userId == 'guest') {
         throw Exception('Not logged in');
       }
 
-      final doc = await _firestore.collection('Users').doc(user.email).get();
+      final doc = await _firestore.collection('Users').doc(userId).get();
 
       // --- NEW CHECK START ---
       // Check if doc doesn't exist OR address field is missing OR address list is empty
@@ -1610,7 +1618,9 @@ class _HomeScreenState extends State<HomeScreen>
   void _showAddressBottomSheet(
       Function(String label, String fullAddress) onAddressSelected) {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null || user.email == null) return;
+    final userId = AuthUtils.getDocId(user);
+
+    if (user == null || userId == 'guest') return;
 
     showModalBottomSheet(
       context: context,
@@ -1620,7 +1630,7 @@ class _HomeScreenState extends State<HomeScreen>
         return StreamBuilder<DocumentSnapshot>(
           stream: FirebaseFirestore.instance
               .collection('Users')
-              .doc(user.email)
+              .doc(userId)
               .snapshots(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) {
@@ -4502,11 +4512,10 @@ class RestaurantService {
       final double bufferTime = (branchData?['bufferTime'] ?? 5).toDouble();
 
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null || user.email == null)
-        throw Exception('User not logged in');
+      if (user == null) throw Exception('User not logged in');
       final userDoc = await FirebaseFirestore.instance
           .collection('Users')
-          .doc(user.email)
+          .doc(AuthUtils.getDocId(user))
           .get();
       if (!userDoc.exists) throw Exception('User data not found');
       final userData = userDoc.data();

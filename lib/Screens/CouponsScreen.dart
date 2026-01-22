@@ -8,6 +8,7 @@ import '../Services/language_provider.dart';
 import '../Widgets/bottom_nav.dart';
 import '../Widgets/models.dart';
 import 'cartScreen.dart';
+import '../Widgets/authentication.dart';
 
 class CouponsScreen extends StatefulWidget {
   final CartService cartService;
@@ -34,7 +35,7 @@ class _CouponsScreenState extends State<CouponsScreen> {
   Future<void> _loadAvailableCoupons() async {
     try {
       final user = _auth.currentUser;
-      final userId = user?.email;
+      final userId = user != null ? AuthUtils.getDocId(user) : null;
       final snapshot = await FirebaseFirestore.instance
           .collection('coupons')
           .where('active', isEqualTo: true)

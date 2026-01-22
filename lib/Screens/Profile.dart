@@ -79,8 +79,10 @@ class _ProfileScreenState extends State<ProfileScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+
     final user = _auth.currentUser;
-    if (user == null || user.email == null) {
+    // Removed strict email check to allow Phone-only users
+    if (user == null) {
       return const Scaffold(
         body: Center(child: Text('Please sign in to view your profile.')),
       );
@@ -89,7 +91,11 @@ class _ProfileScreenState extends State<ProfileScreen>
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       body: StreamBuilder<DocumentSnapshot>(
-        stream: _firestore.collection('Users').doc(user.email).snapshots(),
+        // Use AuthUtils to determine Doc ID (Email or Phone)
+        stream: _firestore
+            .collection('Users')
+            .doc(AuthUtils.getDocId(user))
+            .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             if (!snapshot.hasData)
@@ -170,9 +176,11 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   Widget _buildModernHeader(
       BuildContext context, User user, Map<String, dynamic> userData) {
-    String displayName =
-        userData['name'] ?? user.email?.split('@').first ?? 'User';
-    String email = user.email ?? 'No email available';
+    String displayName = userData['name'] ??
+        user.phoneNumber ??
+        user.email?.split('@').first ??
+        'User';
+    String email = user.email ?? user.phoneNumber ?? 'No contact info';
     String? imageUrl = userData['imageUrl'];
 
     return SafeArea(
@@ -655,12 +663,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _loadUserData() async {
-    if (widget.user.email == null) return;
+    // if (widget.user.email == null) return; // Removed email check
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('Users')
-          .doc(widget.user.email)
-          .get();
+      final docId = AuthUtils.getDocId(widget.user);
+      final doc =
+          await FirebaseFirestore.instance.collection('Users').doc(docId).get();
       if (doc.exists && mounted) {
         final data = doc.data()!;
         setState(() {
@@ -688,16 +695,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _saveProfile() async {
-    if (!_formKey.currentState!.validate() || widget.user.email == null) return;
+    if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
     try {
-      await FirebaseFirestore.instance
-          .collection('Users')
-          .doc(widget.user.email)
-          .set({
+      final docId = AuthUtils.getDocId(widget.user);
+      await FirebaseFirestore.instance.collection('Users').doc(docId).set({
         'name': _nameController.text.trim(),
         'phone': _phoneController.text.trim(),
-        'email': widget.user.email,
+        'email': widget.user.email ?? '', // Email might be null
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       if (mounted) {
@@ -940,11 +945,12 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
   Future<void> _updateAddresses(
       List<Map<String, dynamic>> updatedAddresses) async {
     final user = _auth.currentUser;
-    if (user == null || user.email == null) return;
+    final userId = AuthUtils.getDocId(user);
+    if (user == null || userId == 'guest') return;
     try {
       await _firestore
           .collection('Users')
-          .doc(user.email)
+          .doc(userId)
           .update({'address': updatedAddresses});
     } catch (e) {
       if (mounted) {
@@ -1579,11 +1585,13 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
         elevation: 0,
         foregroundColor: Colors.black,
       ),
-      body: user == null || user.email == null
+      body: user == null || AuthUtils.getDocId(user) == 'guest'
           ? const Center(child: Text('Please sign in to view addresses.'))
           : StreamBuilder<DocumentSnapshot>(
-              stream:
-                  _firestore.collection('Users').doc(user.email).snapshots(),
+              stream: _firestore
+                  .collection('Users')
+                  .doc(AuthUtils.getDocId(user))
+                  .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -1625,10 +1633,10 @@ class _SavedAddressesScreenState extends State<SavedAddressesScreen> {
       floatingActionButton: Builder(
         builder: (context) {
           final user = _auth.currentUser;
-          if (user == null || user.email == null)
-            return const SizedBox.shrink();
+          final userId = AuthUtils.getDocId(user);
+          if (user == null || userId == 'guest') return const SizedBox.shrink();
           return StreamBuilder<DocumentSnapshot>(
-            stream: _firestore.collection('Users').doc(user.email).snapshots(),
+            stream: _firestore.collection('Users').doc(userId).snapshots(),
             builder: (context, snapshot) {
               if (!snapshot.hasData || !snapshot.data!.exists) {
                 return FloatingActionButton.extended(

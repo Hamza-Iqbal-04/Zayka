@@ -33,7 +33,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   // Set the flag so this screen doesn't show again on subsequent launches
   Future<void> _setFirstLaunchFlag() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isFirstLaunch', false);
+    await prefs.setBool('hasSeenOnboarding', true);
   }
 
   void _nextPage() {
@@ -62,7 +62,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF5F5F5), // Changed to Light Grey
       body: SafeArea(
         child: Column(
           children: [
@@ -76,7 +76,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                   child: Text(
                     'Skip',
                     style: TextStyle(
-                      color: Colors.grey.shade600,
+                      color: AppColors.primaryBlue, // Changed to Blue
                       fontSize: 16,
                       fontWeight: FontWeight.w500,
                     ),
@@ -208,7 +208,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
             style: TextStyle(
               fontSize: 28,
               fontWeight: FontWeight.bold,
-              color: Colors.black87,
+              color: AppColors.primaryBlue, // Changed to Blue
               height: 1.2,
             ),
             textAlign: TextAlign.center,
