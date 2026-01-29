@@ -1,14 +1,15 @@
 import 'dart:async';
+import 'dart:convert'; // For JSON
+import 'dart:math'; // For Random OTP
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http; // Add this to pubspec.yaml
 import 'package:intl_phone_field/intl_phone_field.dart';
 import '../Widgets/bottom_nav.dart';
 import '../Widgets/models.dart';
-import '../Widgets/authentication.dart'; // For AuthUtils and AuthService
+import '../Widgets/authentication.dart';
 
-/// Phone OTP Login Screen
-/// Standalone file for maintainability - can be modified independently.
 class PhoneLoginScreen extends StatefulWidget {
   const PhoneLoginScreen({Key? key}) : super(key: key);
 
@@ -17,34 +18,29 @@ class PhoneLoginScreen extends StatefulWidget {
 }
 
 class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
-  final _auth = AuthService();
+  final _auth = AuthService(); // Ensure this handles anonymous sign-in
   final _phoneC = TextEditingController();
   final _otpC = TextEditingController();
 
+  // --- ZAYKA BOT CONFIGURATION ---
+  // REPLACE THIS WITH YOUR ACTUAL ORACLE IP
+  final String _botApiUrl = "http://129.151.133.172:3000/send-otp";
+  final String _botSecret = "zayka_secret_key_123";
+  // -------------------------------
+
   String? _completePhoneNumber;
-  String? _verificationId;
+  String? _generatedOtp; // Store the OTP we generated locally
   bool _loading = false;
 
   void _showErr(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: Colors.redAccent,
+    ));
   }
 
-  Future<void> _handleSkip() async {
-    setState(() => _loading = true);
-    try {
-      await _auth.signInAnonymously();
-      if (mounted) {
-        Navigator.pushReplacement(
-            context, MaterialPageRoute(builder: (_) => const MainApp()));
-      }
-    } catch (e) {
-      _showErr('Could not sign in as guest: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _startPhoneAuth() async {
+  // --- STEP 1: GENERATE & SEND OTP VIA BOT ---
+  Future<void> _startZaykaAuth() async {
     if (_completePhoneNumber == null || _completePhoneNumber!.isEmpty) {
       _showErr('Please enter a valid phone number');
       return;
@@ -52,42 +48,91 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
 
     setState(() => _loading = true);
 
-    await _auth.verifyPhoneNumber(
-      _completePhoneNumber!,
-      verificationCompleted: (PhoneAuthCredential cred) async {
-        await _authenticateWithCredential(cred);
-      },
-      verificationFailed: (FirebaseAuthException e) {
-        setState(() => _loading = false);
-        _showErr(e.message ?? 'Verification failed');
-      },
-      codeSent: (String verificationId, int? resendToken) {
+    // 1. Generate a random 6-digit OTP
+    final random = Random();
+    final otp = (100000 + random.nextInt(900000)).toString();
+
+    // 2. Remove the '+' for the API (The bot expects raw numbers usually, but your code handles both)
+    // Let's send it clean (e.g., 97412345678)
+    final cleanPhone = _completePhoneNumber!.replaceAll('+', '');
+
+    try {
+      // 3. Call Your Bot API
+      final response = await http.post(
+        Uri.parse(_botApiUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'phone': cleanPhone,
+          'otp': otp,
+          'secret': _botSecret,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        // Success!
         setState(() {
+          _generatedOtp = otp; // Save it to verify later
           _loading = false;
-          _verificationId = verificationId;
         });
         _showOtpSheet();
-      },
-      codeAutoRetrievalTimeout: (String verificationId) {
-        _verificationId = verificationId;
-      },
-    );
+      } else {
+        // Server Error
+        final errorData = jsonDecode(response.body);
+        throw errorData['error'] ?? 'Server error';
+      }
+    } catch (e) {
+      setState(() => _loading = false);
+      _showErr('Failed to send OTP: $e');
+      print("OTP Error: $e");
+    }
   }
 
-  Future<void> _authenticateWithCredential(PhoneAuthCredential cred) async {
-    try {
-      final userCred = await _auth.signInWithCredential(cred);
-      if (userCred.user != null) {
-        final user = userCred.user!;
-        final docId = AuthUtils.getDocId(user);
+  // --- STEP 2: VERIFY OTP LOCALLY ---
+  void _verifyOtp() async {
+    final userEnteredCode = _otpC.text.trim();
 
+    if (userEnteredCode.length != 6) {
+      _showErr('Please enter the 6-digit code');
+      return;
+    }
+
+    // Compare input with the OTP we generated earlier
+    if (userEnteredCode == _generatedOtp) {
+      Navigator.pop(context); // Close sheet
+      await _finishLogin();
+    } else {
+      _showErr('Invalid OTP. Please try again.');
+    }
+  }
+
+  // --- STEP 3: AUTHENTICATE & SAVE TO FIRESTORE ---
+  Future<void> _finishLogin() async {
+    setState(() => _loading = true);
+    try {
+      // 1. Sign in Anonymously (to get a secure UID)
+      // We rely on FirebaseAuth to handle the session, even though we did the OTP ourselves.
+      UserCredential userCred = await FirebaseAuth.instance.signInAnonymously();
+
+      if (userCred.user != null) {
+        // 2. Set the custom verified phone in AuthUtils (for persistent identity)
+        await AuthUtils.setVerifiedPhone(_completePhoneNumber);
+
+        final docId = _completePhoneNumber!; // Use the phone number as the ID
+
+        // 3. Save/Update User Profile in Firestore
+        await FirebaseFirestore.instance.collection('Users').doc(docId).set({
+          'phone': _completePhoneNumber,
+          'lastLogin': FieldValue.serverTimestamp(),
+          'firebaseUid': userCred.user!.uid, // Store the UID reference
+        }, SetOptions(merge: true));
+
+        // Ensure 'createdAt' exists if it's new
         final docSnap = await FirebaseFirestore.instance
             .collection('Users')
             .doc(docId)
             .get();
-        if (!docSnap.exists) {
+        if (!docSnap.exists || !docSnap.data()!.containsKey('createdAt')) {
           await FirebaseFirestore.instance.collection('Users').doc(docId).set({
-            'phone': user.phoneNumber,
             'createdAt': FieldValue.serverTimestamp(),
             'name': 'New User',
           }, SetOptions(merge: true));
@@ -100,30 +145,29 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
       }
     } catch (e) {
       setState(() => _loading = false);
-      _showErr('Login failed: $e');
+      _showErr('Login processing failed: $e');
     }
   }
 
-  void _verifyOtp() async {
-    final smsCode = _otpC.text.trim();
-    if (_verificationId == null || smsCode.length != 6) {
-      _showErr('Please enter the 6-digit code');
-      return;
-    }
-
-    Navigator.pop(context); // Close OTP sheet
+  // --- SKIP LOGIN (Guest Mode) ---
+  Future<void> _handleSkip() async {
     setState(() => _loading = true);
-
     try {
-      final cred = PhoneAuthProvider.credential(
-          verificationId: _verificationId!, smsCode: smsCode);
-      await _authenticateWithCredential(cred);
+      await AuthUtils.setVerifiedPhone(
+          null); // Clear any previous phone identity
+      await _auth.signInAnonymously();
+      if (mounted) {
+        Navigator.pushReplacement(
+            context, MaterialPageRoute(builder: (_) => const MainApp()));
+      }
     } catch (e) {
-      setState(() => _loading = false);
-      _showErr('Invalid OTP: $e');
+      _showErr('Could not sign in as guest: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
+  // --- UI: OTP SHEET ---
   void _showOtpSheet() {
     _otpC.clear();
     showModalBottomSheet(
@@ -147,7 +191,8 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                       fontSize: 18,
                       fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
-              Text('Enter the 6-digit code sent to $_completePhoneNumber',
+              Text('Enter the code sent to $_completePhoneNumber via WhatsApp',
+                  textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.grey, fontSize: 14)),
               const SizedBox(height: 24),
               TextField(
@@ -256,7 +301,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _loading ? null : _startPhoneAuth,
+                  onPressed: _loading ? null : _startZaykaAuth,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryBlue,
                     disabledBackgroundColor:
@@ -271,7 +316,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                           width: 20,
                           child: CircularProgressIndicator(
                               color: Colors.white, strokeWidth: 2))
-                      : const Text('Continue',
+                      : const Text('Get OTP on WhatsApp',
                           style: TextStyle(
                               color: Colors.white,
                               fontSize: 16,
@@ -282,7 +327,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
               const Padding(
                 padding: EdgeInsets.only(bottom: 24.0),
                 child: Text(
-                  'We\'ll send you a one-time code via SMS or WhatsApp (if SMS fails) to verify your number. Message and data rates may apply. By clicking "Continue," you agree to our Terms and conditions',
+                  'We will send you a verification code via WhatsApp. \nEnsure you have WhatsApp installed on this number.',
                   style:
                       TextStyle(color: Colors.grey, fontSize: 12, height: 1.5),
                   textAlign: TextAlign.center,

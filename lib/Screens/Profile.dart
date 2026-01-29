@@ -13,7 +13,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter/services.dart';
-import '../Screens/HomeScreen.dart';
+import 'HomeScreen.dart';
 import '../Services/language_provider.dart';
 
 class _MapUI {
@@ -56,6 +56,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   Future<void> _logout() async {
     setState(() => _isLoggingOut = true);
     try {
+      await AuthUtils.setVerifiedPhone(null); // Clear custom identity
       await _auth.signOut();
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
@@ -1791,9 +1792,10 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
 
   Future<void> _removeFavorite(String itemId) async {
     final user = _auth.currentUser;
-    if (user == null || user.email == null) return;
+    final docId = AuthUtils.getDocId(user);
+    if (docId == 'guest') return;
     try {
-      await _firestore.collection('Users').doc(user.email).update({
+      await _firestore.collection('Users').doc(docId).update({
         'favorites.$itemId': FieldValue.delete(),
       });
       if (mounted) {
@@ -1861,11 +1863,13 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
         elevation: 0,
         foregroundColor: Colors.black,
       ),
-      body: user == null || user.email == null
+      body: AuthUtils.getDocId(user) == 'guest'
           ? const Center(child: Text('Please sign in to view your favorites.'))
           : StreamBuilder<DocumentSnapshot>(
-              stream:
-                  _firestore.collection('Users').doc(user.email).snapshots(),
+              stream: _firestore
+                  .collection('Users')
+                  .doc(AuthUtils.getDocId(user))
+                  .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());

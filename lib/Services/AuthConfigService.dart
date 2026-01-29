@@ -25,8 +25,14 @@ class AuthConfigService {
 
       if (doc.exists && doc.data() != null) {
         _authMethod = doc.data()?['authMethod'] ?? 'phone';
+        print('🔐 AuthConfigService: Loaded authMethod = "$_authMethod"');
+      } else {
+        print(
+            '🔐 AuthConfigService: Config doc not found, using default "phone"');
       }
     } catch (e) {
+      print(
+          '🔐 AuthConfigService: Error loading config - $e, using default "phone"');
       // Default to phone if config fetch fails
       _authMethod = 'phone';
     }

@@ -1,10 +1,13 @@
 // bottom_nav.dart
+import 'dart:async';
 import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:convex_bottom_bar/convex_bottom_bar.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'authentication.dart';
 import '../Utils/platform_utils.dart';
 import 'package:zayka_customer/Screens/Profile.dart';
 import 'package:provider/provider.dart';
@@ -16,6 +19,7 @@ import 'package:zayka_customer/Services/BranchService.dart';
 import 'package:geolocator/geolocator.dart';
 import '../Services/language_provider.dart';
 import 'models.dart';
+import 'RatingPopup.dart';
 
 class BottomNavController {
   static final ValueNotifier<int> index = ValueNotifier<int>(0);
@@ -38,6 +42,7 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
   bool _isRestaurantOpen = true;
   bool _isLoading = true;
   int _cartItemCount = 0;
+  StreamSubscription? _orderListener;
 
   @override
   void initState() {
@@ -53,6 +58,7 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       BottomNavController.index.addListener(_handleExternalIndexChange);
+      _setupRatingListener();
     });
   }
 
@@ -137,9 +143,48 @@ class _MainAppState extends State<MainApp> with SingleTickerProviderStateMixin {
     }
   }
 
+  void _setupRatingListener() {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      _orderListener = FirebaseFirestore.instance
+          .collection('Orders')
+          .where('customerId', isEqualTo: AuthUtils.getDocId(user))
+          .where('status', isEqualTo: 'delivered')
+          .orderBy('timestamp', descending: true)
+          .limit(1)
+          .snapshots()
+          .handleError((error) {
+        debugPrint('Error in rating listener: $error');
+      }).listen((snapshot) {
+        if (snapshot.docs.isNotEmpty && mounted) {
+          final orderDoc = snapshot.docs.first;
+          final data = orderDoc.data();
+          if (data['ratingPopUpShown'] != true) {
+            _showRatingPopup(data, orderDoc.id);
+          }
+        }
+      }, onError: (e) {
+        debugPrint('Stream error in rating listener: $e');
+      });
+    } catch (e) {
+      debugPrint('Exception setting up rating listener: $e');
+    }
+  }
+
+  void _showRatingPopup(Map<String, dynamic> order, String orderId) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => RatingPopup(order: order, orderId: orderId),
+    );
+  }
+
   @override
   void dispose() {
     BottomNavController.index.removeListener(_handleExternalIndexChange);
+    _orderListener?.cancel();
     // 5. Dispose controller
     _tabController.dispose();
     super.dispose();

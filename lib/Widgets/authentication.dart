@@ -9,17 +9,52 @@ import '../Services/AuthConfigService.dart';
 import '../Screens/phone_login_screen.dart';
 import '../Screens/email_login_screen.dart';
 
+import 'dart:convert';
+import 'dart:math';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
 // ───────────────────────── HELPER ─────────────────────────
 class AuthUtils {
+  static String? _verifiedPhone;
+
+  /// Loads the verified phone number from local storage (called at app start)
+  static Future<void> loadVerifiedPhone() async {
+    final prefs = await SharedPreferences.getInstance();
+    _verifiedPhone = prefs.getString('verified_phone');
+  }
+
+  /// Sets the verified phone number locally
+  static Future<void> setVerifiedPhone(String? phone) async {
+    _verifiedPhone = phone;
+    final prefs = await SharedPreferences.getInstance();
+    if (phone == null) {
+      await prefs.remove('verified_phone');
+    } else {
+      await prefs.setString('verified_phone', phone);
+    }
+  }
+
   /// Returns the Firestore Document ID for a user.
   static String getDocId(User? user) {
     if (user == null) return 'guest';
+
+    // 1. Check local bot-verified phone (Custom system)
+    if (_verifiedPhone != null && _verifiedPhone!.isNotEmpty) {
+      return _verifiedPhone!;
+    }
+
+    // 2. Check Firebase native phone
     if (user.phoneNumber != null && user.phoneNumber!.isNotEmpty) {
       return user.phoneNumber!;
     }
+
+    // 3. Check Email
     if (user.email != null && user.email!.isNotEmpty) {
       return user.email!.toLowerCase();
     }
+
+    // 4. Fallback to UID (Anonymous/Guest/Other)
     return user.uid;
   }
 }
@@ -98,13 +133,16 @@ class PhoneLoginSheet extends StatefulWidget {
 }
 
 class _PhoneLoginSheetState extends State<PhoneLoginSheet> {
-  final _auth = AuthService();
   final _phoneC = TextEditingController();
   final _otpC = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
+  // --- Bot Config ---
+  final String _botApiUrl = "http://129.151.133.172:3000/send-otp";
+  final String _botSecret = "zayka_secret_key_123";
+
   String? _completePhoneNumber;
-  String? _verificationId;
+  String? _generatedOtp;
   bool _loading = false;
   bool _codeSent = false;
 
@@ -118,63 +156,78 @@ class _PhoneLoginSheetState extends State<PhoneLoginSheet> {
       return;
     setState(() => _loading = true);
 
-    await _auth.verifyPhoneNumber(
-      _completePhoneNumber!,
-      verificationCompleted: (PhoneAuthCredential cred) async {
-        await _signIn(cred);
-      },
-      verificationFailed: (FirebaseAuthException e) {
-        setState(() => _loading = false);
-        _showErr(e.message ?? 'Verification failed');
-      },
-      codeSent: (String verificationId, int? resendToken) {
+    final random = Random();
+    final otp = (100000 + random.nextInt(900000)).toString();
+    final cleanPhone = _completePhoneNumber!.replaceAll('+', '');
+
+    try {
+      final response = await http.post(
+        Uri.parse(_botApiUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'phone': cleanPhone,
+          'otp': otp,
+          'secret': _botSecret,
+        }),
+      );
+
+      if (response.statusCode == 200) {
         setState(() {
           _loading = false;
           _codeSent = true;
-          _verificationId = verificationId;
+          _generatedOtp = otp;
         });
-      },
-      codeAutoRetrievalTimeout: (String verificationId) {
-        if (mounted) setState(() => _verificationId = verificationId);
-      },
-    );
+      } else {
+        throw 'Server error sending OTP';
+      }
+    } catch (e) {
+      setState(() => _loading = false);
+      _showErr('Failed to send OTP: $e');
+    }
   }
 
   Future<void> _verifyOtp() async {
-    final smsCode = _otpC.text.trim();
-    if (_verificationId == null || smsCode.length != 6) {
+    final userEnteredCode = _otpC.text.trim();
+    if (userEnteredCode.length != 6) {
       _showErr('Please enter the 6-digit code');
       return;
     }
-    setState(() => _loading = true);
-    try {
-      final cred = PhoneAuthProvider.credential(
-          verificationId: _verificationId!, smsCode: smsCode);
-      await _signIn(cred);
-    } catch (e) {
-      setState(() => _loading = false);
-      _showErr('Invalid OTP: $e');
+
+    if (userEnteredCode == _generatedOtp) {
+      await _manualSignIn();
+    } else {
+      _showErr('Invalid OTP. Please try again.');
     }
   }
 
-  Future<void> _signIn(PhoneAuthCredential cred) async {
+  Future<void> _manualSignIn() async {
+    setState(() => _loading = true);
     try {
-      final userCred = await _auth.signInWithCredential(cred);
-      final user = userCred.user!;
-      final docId = AuthUtils.getDocId(user);
+      UserCredential userCred = await FirebaseAuth.instance.signInAnonymously();
+      if (userCred.user != null) {
+        await AuthUtils.setVerifiedPhone(_completePhoneNumber);
+        final docId = _completePhoneNumber!;
 
-      final docSnap =
-          await FirebaseFirestore.instance.collection('Users').doc(docId).get();
-      if (!docSnap.exists) {
         await FirebaseFirestore.instance.collection('Users').doc(docId).set({
-          'phone': user.phoneNumber,
-          'createdAt': FieldValue.serverTimestamp(),
-          'name': 'New User',
+          'phone': _completePhoneNumber,
+          'lastLogin': FieldValue.serverTimestamp(),
+          'firebaseUid': userCred.user!.uid,
         }, SetOptions(merge: true));
-      }
 
-      if (mounted) {
-        Navigator.pop(context, true); // Return true on success
+        final docSnap = await FirebaseFirestore.instance
+            .collection('Users')
+            .doc(docId)
+            .get();
+        if (!docSnap.exists || !docSnap.data()!.containsKey('createdAt')) {
+          await FirebaseFirestore.instance.collection('Users').doc(docId).set({
+            'createdAt': FieldValue.serverTimestamp(),
+            'name': 'New User',
+          }, SetOptions(merge: true));
+        }
+
+        if (mounted) {
+          Navigator.pop(context, true);
+        }
       }
     } catch (e) {
       setState(() => _loading = false);

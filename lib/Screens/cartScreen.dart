@@ -5,7 +5,8 @@ import 'dart:ui';
 import 'package:geolocator/geolocator.dart';
 import 'package:myfatoorah_flutter/MFModels.dart';
 import 'package:provider/provider.dart';
-import '../Screens/HomeScreen.dart';
+import 'package:collection/collection.dart';
+import 'HomeScreen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -53,7 +54,8 @@ class _CartScreenState extends State<CartScreen> {
   bool _isCheckingOut = false;
   bool _isValidatingStock = false;
   String _orderType = 'delivery';
-  String _paymentType = 'Cash on Delivery';
+  String _paymentType =
+      AuthConfigService.isEmailAuth ? 'Online Payment' : 'Cash on Delivery';
   bool _isInitialized = false;
 
   Map<String, dynamic>? _cachedAddress;
@@ -1035,8 +1037,7 @@ class _CartScreenState extends State<CartScreen> {
       final double totalForPayment = cartService.totalAfterDiscount +
           (_orderType == 'delivery' ? deliveryFee : 0.0);
 
-      if (_paymentType == 'Cash on Delivery' ||
-          _selectedMfPaymentMethod == null) {
+      if (_paymentType == 'Cash on Delivery') {
         final paymentMeta = _composePaymentMeta(totalForPayment);
         await orderDoc.update(paymentMeta);
 
@@ -1046,7 +1047,7 @@ class _CartScreenState extends State<CartScreen> {
         });
 
         _showOrderConfirmationDialog();
-      } else {
+      } else if (_selectedMfPaymentMethod != null) {
         if (_selectedMfPaymentMethod?.paymentMethodId == null) {
           throw Exception(AppStrings.get("invalid_payment_method", context));
         }
@@ -2643,6 +2644,23 @@ class _CartScreenState extends State<CartScreen> {
                   setSheetState(() {
                     _mfPaymentMethods = methods;
                     _isLoadingPaymentMethods = false;
+
+                    // AUTO-SELECT Apple Pay for Email users if not already set
+                    if (AuthConfigService.isEmailAuth &&
+                        _selectedMfPaymentMethod == null) {
+                      final applePay = methods.firstWhereOrNull((m) =>
+                          (m.paymentMethodEn ?? '')
+                              .toLowerCase()
+                              .contains('apple pay'));
+                      if (applePay != null) {
+                        _selectedMfPaymentMethod = applePay;
+                        _paymentType = applePay.paymentMethodEn ?? 'Apple Pay';
+                      } else if (methods.isNotEmpty) {
+                        // Fallback to first method if Apple Pay not found
+                        _selectedMfPaymentMethod = methods.first;
+                        _paymentType = methods.first.paymentMethodEn ?? 'Card';
+                      }
+                    }
                   });
                   setState(() {});
                 }
@@ -2677,31 +2695,32 @@ class _CartScreenState extends State<CartScreen> {
                   Text(AppStrings.get('select_payment_method', context),
                       style: AppTextStyles.headline2),
                   const SizedBox(height: 16),
-                  ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: AppColors.lightGrey,
-                      child: Icon(Icons.money_outlined,
-                          color: AppColors.primaryBlue),
+                  if (!AuthConfigService.isEmailAuth)
+                    ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: AppColors.lightGrey,
+                        child: Icon(Icons.money_outlined,
+                            color: AppColors.primaryBlue),
+                      ),
+                      title: Text(
+                          // UPDATED: Localized text for cash on delivery
+                          AppStrings.get('cash_on_delivery', context),
+                          style: AppTextStyles.bodyText1.copyWith(
+                              fontWeight: _paymentType == 'Cash on Delivery'
+                                  ? FontWeight.bold
+                                  : FontWeight.normal)),
+                      trailing: _paymentType == 'Cash on Delivery'
+                          ? const Icon(Icons.check_circle, color: Colors.green)
+                          : null,
+                      onTap: () {
+                        setState(() {
+                          _paymentType = 'Cash on Delivery';
+                          _selectedMfPaymentMethod = null;
+                        });
+                        Navigator.pop(context);
+                      },
                     ),
-                    title: Text(
-                        // UPDATED: Localized text for cash on delivery
-                        AppStrings.get('cash_on_delivery', context),
-                        style: AppTextStyles.bodyText1.copyWith(
-                            fontWeight: _paymentType == 'Cash on Delivery'
-                                ? FontWeight.bold
-                                : FontWeight.normal)),
-                    trailing: _paymentType == 'Cash on Delivery'
-                        ? const Icon(Icons.check_circle, color: Colors.green)
-                        : null,
-                    onTap: () {
-                      setState(() {
-                        _paymentType = 'Cash on Delivery';
-                        _selectedMfPaymentMethod = null;
-                      });
-                      Navigator.pop(context);
-                    },
-                  ),
-                  const Divider(),
+                  if (!AuthConfigService.isEmailAuth) const Divider(),
                   if (_isLoadingPaymentMethods)
                     const Padding(
                       padding: EdgeInsets.all(16.0),
@@ -3206,6 +3225,7 @@ class _CartScreenState extends State<CartScreen> {
         if (cartService.appliedCoupon != null)
           'couponId': cartService.appliedCoupon!.id,
         'originalEstimatedDuration': _estimatedTime,
+        'ratingPopUpShown': false,
       };
 
       transaction.set(orderDoc, orderData);
@@ -4462,6 +4482,16 @@ class CartService extends ChangeNotifier {
         throw Exception('Coupon not valid for this order');
       }
 
+      // Calculate total amount from items that DON'T have a discounted price
+      final eligibleItems =
+          _items.where((item) => item.discountedPrice == null).toList();
+      final totalEligibleAmount = eligibleItems.fold(
+          0.0, (sum, item) => sum + (item.price * item.quantity));
+
+      if (totalEligibleAmount <= 0) {
+        throw Exception('Coupon cannot be applied to already discounted items');
+      }
+
       if (totalAmount < coupon.minSubtotal) {
         throw Exception(
             'Minimum order amount of QAR ${coupon.minSubtotal} not met');
@@ -4483,20 +4513,28 @@ class CartService extends ChangeNotifier {
 
       double discount = 0;
       if (coupon.type == 'percentage') {
-        discount = totalAmount * (coupon.value / 100);
+        // Percentage discount only applies to eligible items
+        discount = totalEligibleAmount * (coupon.value / 100);
         if (coupon.maxDiscount > 0 && discount > coupon.maxDiscount) {
           discount = coupon.maxDiscount;
         }
       } else {
+        // Fixed amount discount
         discount = coupon.value;
       }
 
-      final totalBeforeDiscount = totalAmount;
-
-      if (totalBeforeDiscount > 0) {
+      // Distribute discount ONLY among eligible items
+      if (totalEligibleAmount > 0) {
+        // Reset all items first
         for (var item in _items) {
+          item.couponDiscount = null;
+          item.couponCode = null;
+          item.couponId = null;
+        }
+
+        for (var item in eligibleItems) {
           final itemPercentage =
-              (item.finalPrice * item.quantity) / totalBeforeDiscount;
+              (item.price * item.quantity) / totalEligibleAmount;
           item.couponDiscount = discount * itemPercentage;
           item.couponCode = coupon.code;
           item.couponId = coupon.id;

@@ -10,7 +10,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_localizations/flutter_localizations.dart'; // Added for localization
-
 import 'package:zayka_customer/Screens/welcome_screen.dart';
 import 'Services/NotificationService.dart';
 import 'Widgets/appbar.dart';
@@ -32,6 +31,7 @@ Future<void> main() async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await NotificationService.initialize();
   await AuthConfigService.loadConfig(); // Load auth mode config
+  await AuthUtils.loadVerifiedPhone(); // Load custom phone identity if exists
 
   // Keep orientation and any other system UI config you use
   await SystemChrome.setPreferredOrientations([

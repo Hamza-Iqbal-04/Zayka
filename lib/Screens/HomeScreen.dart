@@ -16,12 +16,11 @@ import 'package:zayka_customer/Screens/Profile.dart';
 import 'package:zayka_customer/Screens/cartScreen.dart';
 import 'package:zayka_customer/Screens/OrderScreen.dart';
 import 'package:shimmer/shimmer.dart';
-import '../Widgets/bottom_nav.dart';
-import '../Services/language_provider.dart';
+import 'package:zayka_customer/Widgets/bottom_nav.dart';
+import 'package:zayka_customer/Services/language_provider.dart';
 import 'package:zayka_customer/Services/BranchService.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../Widgets/authentication.dart'; // Added import
-import '../Widgets/authentication.dart'; // Added import
+import 'package:zayka_customer/Widgets/authentication.dart';
 
 const Color kChipActive = AppColors.primaryBlue;
 
@@ -55,9 +54,6 @@ class _HomeScreenState extends State<HomeScreen>
   final Set<String> _processedCancelledOrders = {};
   StreamSubscription? _cancellationSubscription;
 
-  final Set<String> _processedDeliveredOrders = {};
-  StreamSubscription? _deliverySubscription;
-
   // Pickup ready popup tracking
   final Set<String> _processedPickupReadyOrders = {};
   StreamSubscription? _pickupReadySubscription;
@@ -70,6 +66,12 @@ class _HomeScreenState extends State<HomeScreen>
   String? _errorMessage;
   final TextEditingController _searchController = TextEditingController();
   String get _searchQuery => _searchController.text;
+
+  // Search/Filter state
+  bool _filterVeg = false;
+  bool _filterNonVeg = false;
+  bool _filterHealthy = false;
+  int? _maxCalories;
 
   // User addresses
   List<Map<String, dynamic>> _allAddresses = [];
@@ -382,7 +384,6 @@ class _HomeScreenState extends State<HomeScreen>
     _initializeScreen();
     _setupOrdersStream();
     _setupCancellationListener();
-    _setupDeliveryListener();
     _setupPickupReadyListener();
 
     _bounceController = AnimationController(
@@ -473,7 +474,6 @@ class _HomeScreenState extends State<HomeScreen>
     _menuItemsSubscription?.cancel();
     _menuItemsSubscription?.cancel();
     _cancellationSubscription?.cancel();
-    _deliverySubscription?.cancel();
     _pickupReadySubscription?.cancel();
     _bottomBarController.dispose();
     super.dispose();
@@ -511,7 +511,9 @@ class _HomeScreenState extends State<HomeScreen>
         .orderBy('timestamp', descending: true)
         .limit(1)
         .snapshots()
-        .listen((snapshot) {
+        .handleError((error) {
+      debugPrint('Error in cancellation listener: $error');
+    }).listen((snapshot) {
       if (snapshot.docs.isNotEmpty) {
         final doc = snapshot.docs.first;
         final data = doc.data();
@@ -548,67 +550,6 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
-  Future<void> _setupDeliveryListener() async {
-    final user = _auth.currentUser;
-    if (user == null) return;
-
-    final prefs = await SharedPreferences.getInstance();
-    final lastShownId = prefs.getString('last_delivered_popup_id');
-
-    if (lastShownId != null) {
-      _processedDeliveredOrders.add(lastShownId);
-    }
-
-    _deliverySubscription = _firestore
-        .collection('Orders')
-        .where('customerId', isEqualTo: AuthUtils.getDocId(user))
-        .where('status', isEqualTo: 'delivered')
-        .orderBy('timestamp', descending: true)
-        .limit(1)
-        .snapshots()
-        .listen((snapshot) {
-      if (snapshot.docs.isNotEmpty) {
-        final doc = snapshot.docs.first;
-        final orderId = doc.id;
-        final data = doc.data();
-        final timestamp = data['timestamp'] as Timestamp?;
-        final orderType = data['Order_type'] as String? ?? 'delivery';
-
-        // Skip delivered popup for pickup orders - they use 'collected' status instead
-        if (orderType.toLowerCase() == 'pickup') {
-          _processedDeliveredOrders.add(orderId);
-          return;
-        }
-
-        if (!_processedDeliveredOrders.contains(orderId)) {
-          // Check recency (e.g., delivered within last 24 hours to avoid showing ancient orders)
-          // If no timestamp, skip or assume recent? Assume recent if it just appeared in snapshot.
-          bool isRecent = true;
-          if (timestamp != null) {
-            final now = DateTime.now();
-            final date = timestamp.toDate();
-            if (now.difference(date).inHours > 3) {
-              isRecent = false;
-            }
-          }
-
-          if (isRecent) {
-            _processedDeliveredOrders.add(orderId);
-            prefs.setString('last_delivered_popup_id', orderId);
-
-            if (mounted) {
-              _showDeliverySuccessDialog(timestamp);
-            }
-          } else {
-            // Mark as processed anyway to stop checking it
-            _processedDeliveredOrders.add(orderId);
-            prefs.setString('last_delivered_popup_id', orderId);
-          }
-        }
-      }
-    });
-  }
-
   /// Listens for pickup orders that become 'prepared' to show a ready notification
   Future<void> _setupPickupReadyListener() async {
     final user = _auth.currentUser;
@@ -629,7 +570,9 @@ class _HomeScreenState extends State<HomeScreen>
         .orderBy('timestamp', descending: true)
         .limit(1)
         .snapshots()
-        .listen((snapshot) {
+        .handleError((error) {
+      debugPrint('Error in pickup ready listener: $error');
+    }).listen((snapshot) {
       if (snapshot.docs.isNotEmpty) {
         final doc = snapshot.docs.first;
         final orderId = doc.id;
@@ -707,101 +650,6 @@ class _HomeScreenState extends State<HomeScreen>
             const SizedBox(height: 12),
             Text(
               AppStrings.get('pickup_ready_msg', context),
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.grey.shade600,
-                fontWeight: FontWeight.w500,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryBlue,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  elevation: 0,
-                ),
-                child: Text(
-                  AppStrings.get('great', context),
-                  style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white),
-                ),
-              ),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showDeliverySuccessDialog(Timestamp? createdAt) {
-    String timeText = '';
-    if (createdAt != null) {
-      final duration = DateTime.now().difference(createdAt.toDate());
-      final minutes = duration.inMinutes;
-
-      // Logic to prevent "19999 minutes":
-      // Only show the specific time if it's within a reasonable range (e.g., < 2 hours)
-      if (minutes > 120) {
-        timeText = "Order Delivered!";
-      } else if (minutes < 1) {
-        timeText = "We reached you in < 1 minute!";
-      } else {
-        timeText = "We reached you in $minutes minutes!";
-      }
-    } else {
-      timeText = "Order Delivered!";
-    }
-
-    showDialog(
-      context: context,
-      barrierDismissible: true, // Allow user to dismiss easily
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        contentPadding:
-            const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TweenAnimationBuilder<double>(
-              duration: const Duration(milliseconds: 800),
-              tween: Tween(begin: 0.0, end: 1.0),
-              curve: Curves.elasticOut,
-              builder: (context, value, child) {
-                return Transform.scale(
-                  scale: value,
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.green.shade50,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.check_rounded,
-                        color: Colors.green, size: 50),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'Enjoy your meal!',
-              style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              timeText,
               style: TextStyle(
                 fontSize: 16,
                 color: Colors.grey.shade600,
@@ -1307,7 +1155,9 @@ class _HomeScreenState extends State<HomeScreen>
         .where('branchIds', arrayContains: _currentBranchId)
         .where('isAvailable', isEqualTo: true)
         .snapshots()
-        .listen((snapshot) {
+        .handleError((error) {
+      debugPrint('Error in menu items listener: $error');
+    }).listen((snapshot) {
       if (!mounted) return;
 
       final allItems =
@@ -1421,13 +1271,222 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  bool _applyFilters(MenuItem item) {
+    if (_searchQuery.isNotEmpty) {
+      final matchesSearch = item
+          .getLocalizedName(context)
+          .toLowerCase()
+          .contains(_searchQuery.toLowerCase());
+      if (!matchesSearch) return false;
+    }
+
+    // Veg/Non-Veg Filter
+    if (_filterVeg && !item.isVeg) return false;
+    if (_filterNonVeg && item.isVeg) return false;
+
+    // Healthy Filter
+    if (_filterHealthy && item.tags['Healthy'] != true) return false;
+
+    // Calories Filter
+    if (_maxCalories != null) {
+      if (item.calories == null || item.calories! > _maxCalories!) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  void _showFilterBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Filters',
+                        style: TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.bold),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _filterVeg = false;
+                            _filterNonVeg = false;
+                            _filterHealthy = false;
+                            _maxCalories = null;
+                            _updateAndGroupMenuItems(_allMenuItems);
+                          });
+                          Navigator.pop(context);
+                        },
+                        child: const Text('Clear All'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  // Veg Toggle
+                  _buildFilterToggle(
+                    'Vegetarian',
+                    _filterVeg,
+                    (val) {
+                      setSheetState(() => _filterVeg = val);
+                      setState(() {
+                        _filterVeg = val;
+                        _updateAndGroupMenuItems(_allMenuItems);
+                      });
+                    },
+                  ),
+                  // Non-Veg Toggle
+                  _buildFilterToggle(
+                    'Non-Vegetarian',
+                    _filterNonVeg,
+                    (val) {
+                      setSheetState(() => _filterNonVeg = val);
+                      setState(() {
+                        _filterNonVeg = val;
+                        _updateAndGroupMenuItems(_allMenuItems);
+                      });
+                    },
+                  ),
+                  // Healthy Toggle
+                  _buildFilterToggle(
+                    'Healthy Choice',
+                    _filterHealthy,
+                    (val) {
+                      setSheetState(() => _filterHealthy = val);
+                      setState(() {
+                        _filterHealthy = val;
+                        _updateAndGroupMenuItems(_allMenuItems);
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Max Calories',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 16),
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      activeTrackColor: AppColors.primaryBlue,
+                      inactiveTrackColor: Colors.blue.withOpacity(0.1),
+                      thumbColor: AppColors.primaryBlue,
+                      overlayColor: AppColors.primaryBlue.withOpacity(0.1),
+                    ),
+                    child: Slider(
+                      value: _maxCalories?.toDouble() ?? 2000.0,
+                      min: 0,
+                      max: 2000,
+                      divisions: 20,
+                      label:
+                          _maxCalories == null ? 'Any' : '${_maxCalories} kcal',
+                      onChanged: (val) {
+                        final intVal = val.toInt();
+                        setSheetState(() {
+                          _maxCalories = intVal >= 2000 ? null : intVal;
+                        });
+                        setState(() {
+                          _maxCalories = intVal >= 2000 ? null : intVal;
+                          _updateAndGroupMenuItems(_allMenuItems);
+                        });
+                      },
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('0 kcal',
+                          style: TextStyle(color: Colors.grey)),
+                      Text(
+                        _maxCalories == null ? 'Any' : '${_maxCalories} kcal',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primaryBlue),
+                      ),
+                      const Text('2000+ kcal',
+                          style: TextStyle(color: Colors.grey)),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryBlue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text(
+                        'Show Results',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildFilterToggle(
+      String title, bool value, Function(bool) onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+          ),
+          CupertinoSwitch(
+            value: value,
+            activeColor: AppColors.primaryBlue,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+
   void _updateAndGroupMenuItems(List<MenuItem> allItems) {
-    final filteredItems = allItems
-        .where((item) => item
-            .getLocalizedName(context)
-            .toLowerCase()
-            .contains(_searchQuery.toLowerCase()))
-        .toList();
+    final filteredItems =
+        allItems.where((item) => _applyFilters(item)).toList();
 
     final discountedItems = filteredItems
         .where(
@@ -1925,8 +1984,13 @@ class _HomeScreenState extends State<HomeScreen>
     bestIndex ??= _activeCategoryIndexNotifier.value;
 
     if (bestIndex != _activeCategoryIndexNotifier.value) {
-      _activeCategoryIndexNotifier.value = bestIndex;
-      _centerCategoryChip(bestIndex);
+      final updatedIndex = bestIndex;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _activeCategoryIndexNotifier.value = updatedIndex;
+          _centerCategoryChip(updatedIndex);
+        }
+      });
     }
   }
 
@@ -2233,92 +2297,156 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
                 ),
-                title: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                    child: GestureDetector(
-                      onTap: () {
-                        _showAddressBottomSheet((selectedLabel, selectedAddr) {
-                          if (mounted) {
-                            setState(() {
-                              _userAddressLabel = selectedLabel;
-                              _userAddress = selectedAddr;
-                            });
-                          }
-                        });
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.75),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                              color: const Color(0xFF1E88E5).withOpacity(0.12),
-                              width: 1.5),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.location_on,
-                                color: Colors.blue, size: 18),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    _userAddressLabel,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.black),
-                                  ),
-                                  Text(
-                                    _userAddress,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontSize: 12, color: Colors.black54),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Container(
+                title: Row(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                          child: GestureDetector(
+                            onTap: () {
+                              _showAddressBottomSheet(
+                                  (selectedLabel, selectedAddr) {
+                                if (mounted) {
+                                  setState(() {
+                                    _userAddressLabel = selectedLabel;
+                                    _userAddress = selectedAddr;
+                                  });
+                                }
+                              });
+                            },
+                            child: Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 6),
+                                  horizontal: 12, vertical: 8),
                               decoration: BoxDecoration(
-                                color: Colors.blue.withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(14),
+                                color: Colors.white.withOpacity(0.75),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                    color: const Color(0xFF1E88E5)
+                                        .withOpacity(0.12),
+                                    width: 1.5),
                               ),
                               child: Row(
                                 children: [
-                                  const Icon(Icons.timer_outlined,
-                                      size: 16, color: Colors.blue),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    AppStrings.formatNumber(
-                                      _estimatedTime.replaceAll('mins',
-                                          AppStrings.get('mins', context)),
-                                      context,
+                                  const Icon(Icons.location_on,
+                                      color: Colors.blue, size: 18),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          _userAddressLabel,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w700,
+                                              color: Colors.black),
+                                        ),
+                                        Text(
+                                          _userAddress,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.black54),
+                                        ),
+                                      ],
                                     ),
-                                    style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.blue),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.timer_outlined,
+                                            size: 16, color: Colors.blue),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          AppStrings.formatNumber(
+                                            _estimatedTime.replaceAll(
+                                                'mins',
+                                                AppStrings.get(
+                                                    'mins', context)),
+                                            context,
+                                          ),
+                                          style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                              color: Colors.blue),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ],
                               ),
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    // Filter Icon
+                    GestureDetector(
+                      onTap: _showFilterBottomSheet,
+                      child: Stack(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.75),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: (_filterVeg ||
+                                        _filterNonVeg ||
+                                        _filterHealthy ||
+                                        _maxCalories != null)
+                                    ? AppColors.primaryBlue
+                                    : const Color(0xFF1E88E5).withOpacity(0.12),
+                                width: 1.5,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.filter_alt_rounded,
+                              size: 20,
+                              color: (_filterVeg ||
+                                      _filterNonVeg ||
+                                      _filterHealthy ||
+                                      _maxCalories != null)
+                                  ? AppColors.primaryBlue
+                                  : Colors.blueGrey,
+                            ),
+                          ),
+                          if (_filterVeg ||
+                              _filterNonVeg ||
+                              _filterHealthy ||
+                              _maxCalories != null)
+                            Positioned(
+                              right: 2,
+                              top: 2,
+                              child: Container(
+                                width: 8,
+                                height: 8,
+                                decoration: const BoxDecoration(
+                                  color: Colors.red,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
               // Carousel
@@ -2750,8 +2878,11 @@ class _HomeScreenState extends State<HomeScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_popularItems.isNotEmpty)
-            _buildPopularItemsSection(_popularItems, cardW, imgH),
+          if (_popularItems.where((i) => _applyFilters(i)).isNotEmpty)
+            _buildPopularItemsSection(
+                _popularItems.where((i) => _applyFilters(i)).toList(),
+                cardW,
+                imgH),
           _buildGroupedMenuSections(),
         ],
       ),
@@ -2960,7 +3091,7 @@ class _HomeScreenState extends State<HomeScreen>
                   const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         ),
         SizedBox(
-          height: 230,
+          height: 250,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -3307,16 +3438,42 @@ class _PopularItemCard extends StatelessWidget {
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: Text(
-                item.getLocalizedName(context),
-                textAlign: TextAlign.left,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 15,
-                  color: isAvailable ? Colors.black : Colors.grey,
-                ),
+              child: Row(
+                children: [
+                  // Veg/Non-Veg Indicator
+                  Container(
+                    width: 12,
+                    height: 12,
+                    padding: const EdgeInsets.all(1.5),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: item.isVeg ? Colors.green : Colors.red,
+                        width: 1,
+                      ),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: item.isVeg ? Colors.green : Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      item.getLocalizedName(context),
+                      textAlign: TextAlign.left,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                        color: isAvailable ? Colors.black : Colors.grey,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 2),
@@ -3325,21 +3482,49 @@ class _PopularItemCard extends StatelessWidget {
               child: _buildPriceSection(context, item, isAvailable),
             ),
             const SizedBox(height: 4),
-            if (item.tags['isSpicy'] == true)
+            if (item.tags['isSpicy'] == true ||
+                (item.tags['Healthy'] == true) ||
+                (item.calories != null))
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.start,
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
                   children: [
-                    Icon(Icons.local_fire_department_rounded,
-                        color: isAvailable ? Colors.red : Colors.grey,
-                        size: 16),
-                    const SizedBox(width: 4),
-                    Text(AppStrings.get('spicy', context),
-                        style: TextStyle(
-                            color: isAvailable ? Colors.red : Colors.grey,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12.5)),
+                    if (item.tags['isSpicy'] == true)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.local_fire_department_rounded,
+                              color: isAvailable ? Colors.red : Colors.grey,
+                              size: 14),
+                          const SizedBox(width: 2),
+                          Text(AppStrings.get('spicy', context),
+                              style: TextStyle(
+                                  color: isAvailable ? Colors.red : Colors.grey,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 11)),
+                        ],
+                      ),
+                    if (item.tags['Healthy'] == true)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.eco, color: Colors.green, size: 14),
+                          const SizedBox(width: 2),
+                          const Text('Healthy',
+                              style: TextStyle(
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 11)),
+                        ],
+                      ),
+                    if (item.calories != null)
+                      Text('${item.calories} kcal',
+                          style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500,
+                              fontSize: 11)),
                   ],
                 ),
               ),
@@ -3461,23 +3646,31 @@ class _MenuItemCardState extends State<MenuItemCard> {
 
   void _initFavoriteStream() {
     final user = _auth.currentUser;
-    if (user?.email != null) {
+    final docId = AuthUtils.getDocId(user);
+
+    if (docId.isNotEmpty && docId != 'guest') {
       _favoriteStream = _firestore
           .collection('Users')
-          .doc(user!.email)
+          .doc(docId)
           .snapshots()
-          .map((doc) {
+          .handleError((e) {
+        debugPrint('Error in favorites stream: $e');
+      }).map((doc) {
         if (!doc.exists) return false;
         final favorites =
             doc.data()?['favorites'] as Map<String, dynamic>? ?? {};
         return favorites.containsKey(widget.item.id);
       });
+    } else {
+      _favoriteStream = Stream.value(false);
     }
   }
 
   Future<void> _toggleFavorite(bool currentIsFavorite) async {
     final user = _auth.currentUser;
-    if (user == null || user.email == null) {
+    final docId = AuthUtils.getDocId(user);
+
+    if (docId.isEmpty || docId == 'guest') {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please sign in to add favorites.')),
       );
@@ -3486,7 +3679,7 @@ class _MenuItemCardState extends State<MenuItemCard> {
 
     try {
       // Toggle: if currently favorite, delete; otherwise, add
-      await _firestore.collection('Users').doc(user.email).set({
+      await _firestore.collection('Users').doc(docId).set({
         'favorites': {
           widget.item.id:
               currentIsFavorite ? FieldValue.delete() : _createFavoriteItemMap()
@@ -3696,17 +3889,49 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Expanded(
-                                      child: Text(
-                                        widget.item.getLocalizedName(context),
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w700,
-                                          color: isAvailable
-                                              ? Colors.black87
-                                              : Colors.grey,
-                                        ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
+                                      child: Row(
+                                        children: [
+                                          // Veg/Non-Veg Indicator
+                                          Container(
+                                            width: 14,
+                                            height: 14,
+                                            padding: const EdgeInsets.all(2),
+                                            decoration: BoxDecoration(
+                                              border: Border.all(
+                                                color: widget.item.isVeg
+                                                    ? Colors.green
+                                                    : Colors.red,
+                                                width: 1,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(2),
+                                            ),
+                                            child: Container(
+                                              decoration: BoxDecoration(
+                                                color: widget.item.isVeg
+                                                    ? Colors.green
+                                                    : Colors.red,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Expanded(
+                                            child: Text(
+                                              widget.item
+                                                  .getLocalizedName(context),
+                                              style: TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.bold,
+                                                color: isAvailable
+                                                    ? Colors.black87
+                                                    : Colors.grey,
+                                              ),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                     const SizedBox(width: 8),
@@ -3753,6 +3978,57 @@ class _MenuItemCardState extends State<MenuItemCard> {
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
+                                // Healthy & Calories Row
+                                if ((widget.item.tags['Healthy'] == true) ||
+                                    (widget.item.calories != null))
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 8),
+                                    child: Row(
+                                      children: [
+                                        if (widget.item.tags['Healthy'] == true)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color:
+                                                  Colors.green.withOpacity(0.1),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: const Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(Icons.eco,
+                                                    color: Colors.green,
+                                                    size: 12),
+                                                SizedBox(width: 4),
+                                                Text(
+                                                  'Healthy',
+                                                  style: TextStyle(
+                                                    color: Colors.green,
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        if (widget.item.tags['Healthy'] ==
+                                                true &&
+                                            widget.item.calories != null)
+                                          const SizedBox(width: 8),
+                                        if (widget.item.calories != null)
+                                          Text(
+                                            '${widget.item.calories} kcal',
+                                            style: TextStyle(
+                                              color: Colors.grey.shade600,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
                                 const SizedBox(height: 12),
                                 Row(
                                   children: [
@@ -4239,13 +4515,39 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                widget.item.getLocalizedName(context),
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: _isItemAvailable ? Colors.black : Colors.grey,
-                ),
+              child: Row(
+                children: [
+                  // Veg/Non-Veg Indicator
+                  Container(
+                    width: 18,
+                    height: 18,
+                    padding: const EdgeInsets.all(2.5),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: widget.item.isVeg ? Colors.green : Colors.red,
+                        width: 1.5,
+                      ),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: widget.item.isVeg ? Colors.green : Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      widget.item.getLocalizedName(context),
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: _isItemAvailable ? Colors.black : Colors.grey,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 8),
@@ -4313,6 +4615,60 @@ class _DishDetailsBottomSheetState extends State<DishDetailsBottomSheet> {
                 ),
               ),
             ),
+            // Healthy & Calories Row
+            if ((widget.item.tags['Healthy'] == true) ||
+                (widget.item.calories != null))
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    if (widget.item.tags['Healthy'] == true)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.eco, color: Colors.green, size: 14),
+                            SizedBox(width: 6),
+                            Text(
+                              'Healthy Choice',
+                              style: TextStyle(
+                                color: Colors.green,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (widget.item.tags['Healthy'] == true &&
+                        widget.item.calories != null)
+                      const SizedBox(width: 12),
+                    if (widget.item.calories != null)
+                      Row(
+                        children: [
+                          Icon(Icons.local_fire_department,
+                              color: Colors.orange.shade700, size: 14),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${widget.item.calories} Calories',
+                            style: TextStyle(
+                              color: Colors.grey.shade700,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
             const SizedBox(height: 24),
             if (existingQty > 0 && existingQty != quantity && _isItemAvailable)
               Padding(
@@ -4616,6 +4972,8 @@ class MenuItem {
   final Map<String, dynamic>? variants;
   final String? offerText;
   final List<String> outOfStockBranches;
+  final bool isVeg;
+  final int? calories;
 
   MenuItem({
     required this.id,
@@ -4635,6 +4993,8 @@ class MenuItem {
     this.variants,
     this.offerText,
     required this.outOfStockBranches,
+    this.isVeg = false,
+    this.calories,
   });
 
   factory MenuItem.fromFirestore(DocumentSnapshot doc) {
@@ -4657,6 +5017,8 @@ class MenuItem {
       variants: data['variants'],
       offerText: data['offerText'],
       outOfStockBranches: List<String>.from(data['outOfStockBranches'] ?? []),
+      isVeg: data['isVeg'] ?? false,
+      calories: data['calories'] as int?,
     );
   }
 
