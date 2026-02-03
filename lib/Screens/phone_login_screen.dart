@@ -46,14 +46,25 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
       return;
     }
 
+    // 0. Check Lockout & Rate Limit
+    final lockoutMsg = await AuthUtils.getLockoutMessage(_completePhoneNumber!);
+    if (lockoutMsg != null) {
+      _showErr(lockoutMsg);
+      return;
+    }
+
+    if (!await AuthUtils.canRequestOtp(_completePhoneNumber!)) {
+      _showErr('Please wait 1 minute before requesting another OTP');
+      return;
+    }
+
     setState(() => _loading = true);
 
     // 1. Generate a random 6-digit OTP
     final random = Random();
     final otp = (100000 + random.nextInt(900000)).toString();
 
-    // 2. Remove the '+' for the API (The bot expects raw numbers usually, but your code handles both)
-    // Let's send it clean (e.g., 97412345678)
+    // 2. Remove the '+' for the API
     final cleanPhone = _completePhoneNumber!.replaceAll('+', '');
 
     try {
@@ -70,6 +81,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
 
       if (response.statusCode == 200) {
         // Success!
+        await AuthUtils.recordOtpRequest(_completePhoneNumber!);
         setState(() {
           _generatedOtp = otp; // Save it to verify later
           _loading = false;
@@ -88,20 +100,33 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   }
 
   // --- STEP 2: VERIFY OTP LOCALLY ---
-  void _verifyOtp() async {
+  void _verifyOtp(StateSetter setSheetState) async {
     final userEnteredCode = _otpC.text.trim();
 
     if (userEnteredCode.length != 6) {
-      _showErr('Please enter the 6-digit code');
+      setSheetState(() => _sheetError = 'Please enter the 6-digit code');
+      return;
+    }
+
+    // Check lockout again before verification
+    final lockoutMsg = await AuthUtils.getLockoutMessage(_completePhoneNumber!);
+    if (lockoutMsg != null) {
+      setSheetState(() => _sheetError = lockoutMsg);
       return;
     }
 
     // Compare input with the OTP we generated earlier
     if (userEnteredCode == _generatedOtp) {
+      await AuthUtils.clearFailedAttempts(_completePhoneNumber!);
       Navigator.pop(context); // Close sheet
       await _finishLogin();
     } else {
-      _showErr('Invalid OTP. Please try again.');
+      await AuthUtils.recordFailedAttempt(_completePhoneNumber!);
+      final newLockout =
+          await AuthUtils.getLockoutMessage(_completePhoneNumber!);
+      setSheetState(() {
+        _sheetError = newLockout ?? 'Invalid OTP. Please try again.';
+      });
     }
   }
 
@@ -167,66 +192,88 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     }
   }
 
+  String? _sheetError;
+
   // --- UI: OTP SHEET ---
   void _showOtpSheet() {
     _otpC.clear();
+    _sheetError = null;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          decoration: const BoxDecoration(
-            color: Color(0xFFF5F5F5),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Enter Verification Code',
-                  style: TextStyle(
-                      color: AppColors.primaryBlue,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              Text('Enter the code sent to $_completePhoneNumber via WhatsApp',
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding:
+              EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF5F5F5),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Enter Verification Code',
+                    style: TextStyle(
+                        color: AppColors.primaryBlue,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 16),
+                Text(
+                    'Enter the code sent to $_completePhoneNumber via WhatsApp',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                const SizedBox(height: 24),
+                TextField(
+                  controller: _otpC,
+                  keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  style: const TextStyle(
+                      color: Colors.black, fontSize: 24, letterSpacing: 8),
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.grey, fontSize: 14)),
-              const SizedBox(height: 24),
-              TextField(
-                controller: _otpC,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                style: const TextStyle(
-                    color: Colors.black, fontSize: 24, letterSpacing: 8),
-                textAlign: TextAlign.center,
-                decoration: const InputDecoration(
-                  counterText: "",
-                  enabledBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: Colors.grey)),
-                  focusedBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: AppColors.primaryBlue)),
-                ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryBlue,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(25)),
+                  onChanged: (v) {
+                    if (_sheetError != null)
+                      setSheetState(() => _sheetError = null);
+                  },
+                  decoration: const InputDecoration(
+                    counterText: "",
+                    enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: Colors.grey)),
+                    focusedBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: AppColors.primaryBlue)),
                   ),
-                  onPressed: _verifyOtp,
-                  child: const Text('Verify',
-                      style: TextStyle(color: Colors.white, fontSize: 16)),
                 ),
-              ),
-              const SizedBox(height: 16),
-            ],
+                if (_sheetError != null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    _sheetError!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryBlue,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(25)),
+                    ),
+                    onPressed: () => _verifyOtp(setSheetState),
+                    child: const Text('Verify',
+                        style: TextStyle(color: Colors.white, fontSize: 16)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
           ),
         ),
       ),

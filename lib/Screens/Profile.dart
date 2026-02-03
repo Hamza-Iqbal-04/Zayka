@@ -181,7 +181,10 @@ class _ProfileScreenState extends State<ProfileScreen>
         user.phoneNumber ??
         user.email?.split('@').first ??
         'User';
-    String email = user.email ?? user.phoneNumber ?? 'No contact info';
+    String email = user.email ??
+        userData['phone'] ??
+        user.phoneNumber ??
+        'No contact info';
     String? imageUrl = userData['imageUrl'];
 
     return SafeArea(

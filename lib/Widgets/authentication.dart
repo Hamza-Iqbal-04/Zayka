@@ -57,6 +57,79 @@ class AuthUtils {
     // 4. Fallback to UID (Anonymous/Guest/Other)
     return user.uid;
   }
+
+  // --- Anti-Spam Helpers (Firestore Based) ---
+
+  static Future<bool> canRequestOtp(String phone) async {
+    final doc = await FirebaseFirestore.instance
+        .collection('OTP_Security')
+        .doc(phone)
+        .get();
+    if (!doc.exists) return true;
+
+    final data = doc.data()!;
+    final lastRequest =
+        (data['lastRequestTime'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return (now - lastRequest) > 60000; // 1 minute
+  }
+
+  static Future<void> recordOtpRequest(String phone) async {
+    await FirebaseFirestore.instance.collection('OTP_Security').doc(phone).set({
+      'lastRequestTime': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  static Future<String?> getLockoutMessage(String phone) async {
+    final doc = await FirebaseFirestore.instance
+        .collection('OTP_Security')
+        .doc(phone)
+        .get();
+    if (!doc.exists) return null;
+
+    final data = doc.data()!;
+    final lockoutUntil =
+        (data['lockoutUntil'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    if (now < lockoutUntil) {
+      final remaining = Duration(milliseconds: lockoutUntil - now);
+      final hours = remaining.inHours;
+      final minutes = remaining.inMinutes % 60;
+      return "Too many failed attempts. Try again in ${hours > 0 ? '$hours hours ' : ''}$minutes minutes.";
+    }
+    return null;
+  }
+
+  static Future<void> recordFailedAttempt(String phone) async {
+    final docRef =
+        FirebaseFirestore.instance.collection('OTP_Security').doc(phone);
+    final doc = await docRef.get();
+
+    int attempts = 1;
+    if (doc.exists) {
+      attempts = (doc.data()!['failedAttempts'] ?? 0) + 1;
+    }
+
+    if (attempts >= 5) {
+      final lockoutUntil = DateTime.now().add(const Duration(hours: 3));
+      await docRef.set({
+        'lockoutUntil': Timestamp.fromDate(lockoutUntil),
+        'failedAttempts': 0, // Reset after locking
+      }, SetOptions(merge: true));
+    } else {
+      await docRef.set({
+        'failedAttempts': attempts,
+      }, SetOptions(merge: true));
+    }
+  }
+
+  static Future<void> clearFailedAttempts(String phone) async {
+    await FirebaseFirestore.instance.collection('OTP_Security').doc(phone).set({
+      'failedAttempts': 0,
+      'lockoutUntil': null,
+    }, SetOptions(merge: true));
+  }
 }
 
 // ───────────────────────── AUTH SERVICE ─────────────────────────
@@ -154,6 +227,19 @@ class _PhoneLoginSheetState extends State<PhoneLoginSheet> {
   Future<void> _sendOtp() async {
     if (!_formKey.currentState!.validate() || _completePhoneNumber == null)
       return;
+
+    // 0. Check Lockout & Rate Limit
+    final lockoutMsg = await AuthUtils.getLockoutMessage(_completePhoneNumber!);
+    if (lockoutMsg != null) {
+      _showErr(lockoutMsg);
+      return;
+    }
+
+    if (!await AuthUtils.canRequestOtp(_completePhoneNumber!)) {
+      _showErr('Please wait 1 minute before requesting another OTP');
+      return;
+    }
+
     setState(() => _loading = true);
 
     final random = Random();
@@ -172,6 +258,7 @@ class _PhoneLoginSheetState extends State<PhoneLoginSheet> {
       );
 
       if (response.statusCode == 200) {
+        await AuthUtils.recordOtpRequest(_completePhoneNumber!);
         setState(() {
           _loading = false;
           _codeSent = true;
@@ -186,17 +273,32 @@ class _PhoneLoginSheetState extends State<PhoneLoginSheet> {
     }
   }
 
+  String? _sheetError;
+
   Future<void> _verifyOtp() async {
     final userEnteredCode = _otpC.text.trim();
     if (userEnteredCode.length != 6) {
-      _showErr('Please enter the 6-digit code');
+      setState(() => _sheetError = 'Please enter the 6-digit code');
+      return;
+    }
+
+    // Check lockout
+    final lockoutMsg = await AuthUtils.getLockoutMessage(_completePhoneNumber!);
+    if (lockoutMsg != null) {
+      setState(() => _sheetError = lockoutMsg);
       return;
     }
 
     if (userEnteredCode == _generatedOtp) {
+      await AuthUtils.clearFailedAttempts(_completePhoneNumber!);
       await _manualSignIn();
     } else {
-      _showErr('Invalid OTP. Please try again.');
+      await AuthUtils.recordFailedAttempt(_completePhoneNumber!);
+      final newLockout =
+          await AuthUtils.getLockoutMessage(_completePhoneNumber!);
+      setState(() {
+        _sheetError = newLockout ?? 'Invalid OTP. Please try again.';
+      });
     }
   }
 
@@ -319,6 +421,9 @@ class _PhoneLoginSheetState extends State<PhoneLoginSheet> {
                     fontSize: 24,
                     letterSpacing: 8), // Black text
                 textAlign: TextAlign.center,
+                onChanged: (v) {
+                  if (_sheetError != null) setState(() => _sheetError = null);
+                },
                 decoration: const InputDecoration(
                   counterText: "",
                   enabledBorder: UnderlineInputBorder(
@@ -328,6 +433,17 @@ class _PhoneLoginSheetState extends State<PhoneLoginSheet> {
                           color: AppColors.primaryBlue)), // Blue accent
                 ),
               ),
+              if (_sheetError != null) ...[
+                const SizedBox(height: 16),
+                Text(
+                  _sheetError!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold),
+                ),
+              ],
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
